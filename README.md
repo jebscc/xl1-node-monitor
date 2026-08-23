@@ -1,5 +1,7 @@
 # xl1-node-monitor
 
+[![CI](https://github.com/jebscc/xl1-node-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/jebscc/xl1-node-monitor/actions/workflows/ci.yml)
+
 Monitoring for a self-hosted [XYO Layer One](https://xyo.network/layer-one/)
 block producer: a heartbeat agent for the machine running the node, and a small
 reference receiver so it works end to end out of the box.

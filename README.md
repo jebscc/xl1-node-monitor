@@ -161,5 +161,5 @@ cd agent && python -m pytest test_xl1_heartbeat.py -q
 
 ## Licence
 
-MIT. Not affiliated with XYO Network — an independent tool built by a node
+MIT. Not affiliated with XY Labs or XYO — an independent tool built by a node
 operator.

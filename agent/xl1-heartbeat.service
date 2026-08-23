@@ -1,0 +1,28 @@
+[Unit]
+Description=XL1 node heartbeat agent
+Documentation=https://github.com/XYOracleNetwork/xl1-docker-images
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/xl1-heartbeat.env
+ExecStart=/usr/bin/python3 /opt/xl1-heartbeat/xl1_heartbeat.py
+Restart=always
+RestartSec=15
+
+# The agent only reads Docker state and /proc -- it never needs root.
+# The 'docker' group is required for the Docker socket.
+User=xl1agent
+Group=docker
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

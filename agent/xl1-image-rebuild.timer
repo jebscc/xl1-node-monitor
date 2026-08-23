@@ -1,0 +1,15 @@
+[Unit]
+Description=Weekly XL1 image rebuild check
+
+[Timer]
+# Sunday early morning, with an hour of jitter so a fleet of nodes does not
+# hit the registry in lockstep.
+OnCalendar=Sun *-*-* 04:00:00
+RandomizedDelaySec=3600
+
+# Run on next boot if the machine was off when it was due. An image that has
+# quietly missed six months of rebuilds is exactly the failure this prevents.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

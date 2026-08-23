@@ -1,0 +1,707 @@
+#!/usr/bin/env python3
+"""XL1 node heartbeat agent.
+
+Runs ON the node (Raspberry Pi), collects real health/host metrics, and POSTs
+them outbound to the site backend. Nothing inbound is ever opened on the Pi.
+
+Standard library only -- no pip install needed on the Pi.
+
+Health is read by `docker exec`ing curl inside the container (the xl1 image
+ships curl), so the container's ports do NOT need to be published. If you have
+published the health port, set XL1_HEALTH_URL and it will be used instead.
+
+Configure via /etc/xl1-heartbeat.env, then run under systemd. See README.md.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+AGENT_VERSION = "1.0.0"
+
+BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
+NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
+NODE_ID = os.environ.get("NODE_ID", socket.gethostname())
+NODE_LABEL = os.environ.get("NODE_LABEL", "Raspberry Pi")
+NODE_ROLE = os.environ.get("NODE_ROLE", "producer")
+NODE_NETWORK = os.environ.get("NODE_NETWORK", "sequence")
+
+CONTAINER = os.environ.get("XL1_CONTAINER", "")        # empty => discover by image
+CONTAINER_IMAGE = os.environ.get("XL1_IMAGE", "xl1:local")
+# Substring of the node's entrypoint command. Used as a last-resort way to
+# identify the container when the image tag no longer matches.
+COMMAND_HINT = os.environ.get("XL1_COMMAND_HINT", "/opt/xl1/")
+HEALTH_PORT = os.environ.get("XL1_HEALTH_PORT", "9099")
+HEALTH_URL = os.environ.get("XL1_HEALTH_URL", "")      # set only if port is published
+
+# Local xl1-service (read-only gateway) for chain height. Empty disables it.
+HEIGHT_URL = os.environ.get("XL1_HEIGHT_URL", "http://127.0.0.1:8090/block-height")
+# Networks to report heights for. The site shows mainnet even though this node
+# runs on sequence, so both are fetched by default.
+HEIGHT_NETWORKS = [n.strip() for n in
+                   os.environ.get("XL1_HEIGHT_NETWORKS", "sequence,mainnet").split(",")
+                   if n.strip()]
+
+# Producer activity. Costs one RPC call per block inspected, so it runs on a
+# much slower cycle than the heartbeat.
+PRODUCER_URL = os.environ.get("XL1_PRODUCER_URL", "http://127.0.0.1:8090/producer")
+PRODUCER_WINDOW = int(os.environ.get("XL1_PRODUCER_WINDOW", "200"))
+PRODUCER_INTERVAL = int(os.environ.get("XL1_PRODUCER_INTERVAL", "900"))
+REWARD_ADDRESS = os.environ.get("XL1_REWARD_ADDRESS", "")
+# Blocks of history to walk back per cycle. The service fetches these in
+# batched RPC calls (~0.6 ms/block), so 50,000 is roughly 20-30 seconds of work
+# and a 565k-block chain is fully counted in about 3 hours. Set to 0 to leave
+# history uncounted.
+BACKFILL_CHUNK = int(os.environ.get("XL1_BACKFILL_CHUNK", "50000"))
+# Version checking. The image is built once and never patched unless someone
+# notices it has fallen behind, so the node reports what it runs and what is
+# current. Set XL1_CLI_REGISTRY empty to skip the outbound lookup entirely.
+CLI_REGISTRY = os.environ.get(
+    "XL1_CLI_REGISTRY", "https://registry.npmjs.org/@xyo-network/xl1-cli/latest")
+CLI_CHECK_INTERVAL = int(os.environ.get("XL1_CLI_CHECK_INTERVAL", "21600"))
+CLI_PACKAGE_PATH = "/usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json"
+# A version string reaches us from a public registry and from inside a
+# container. The backend caps these fields at 32 characters, so an unexpected
+# value would fail validation and take the WHOLE heartbeat with it -- the node
+# would read OFFLINE and raise an alert because of someone else's bad metadata.
+_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,3}(-[0-9A-Za-z.]+)?$")
+
+
+def _valid_version(value):
+    return (isinstance(value, str) and 0 < len(value) <= 32
+            and _VERSION_RE.match(value) is not None)
+
+INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "30"))
+# Generous by default: a free-tier host that has spun down can take 30-60s
+# to answer the first request. A short timeout turns that into a false alarm.
+TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "60"))
+
+
+def run(args, timeout=10):
+    """Run a command, returning stripped stdout or None on any failure."""
+    try:
+        out = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip()
+
+
+def find_container():
+    """Locate the running node container, most reliable strategy first.
+
+    Name, if configured. Otherwise the image tag. Otherwise the entrypoint
+    command.
+
+    The command fallback exists because `ancestor=` resolves the tag to an
+    image ID: once that tag is reassigned or removed, a container that is
+    still happily running stops matching and looks like it disappeared.
+    Reporting a healthy node as missing is the worst failure this agent can
+    have, so it is worth a third strategy.
+    """
+    if CONTAINER:
+        return CONTAINER if run(["docker", "inspect", "-f", "{{.Id}}", CONTAINER]) else None
+
+    out = run(["docker", "ps", "--filter", "ancestor=" + CONTAINER_IMAGE,
+               "--format", "{{.Names}}"])
+    if out:
+        name = out.splitlines()[0].strip()
+        if name:
+            return name
+
+    out = run(["docker", "ps", "--no-trunc", "--format", "{{.Names}}	{{.Image}}	{{.Command}}"])
+    if out:
+        for line in out.splitlines():
+            parts = line.split("	")
+            if len(parts) < 3:
+                continue
+            name, image, command = parts[0].strip(), parts[1].strip(), parts[2]
+            if image == CONTAINER_IMAGE or (COMMAND_HINT and COMMAND_HINT in command):
+                if name:
+                    return name
+
+    # Nothing running. Look for a STOPPED container of our image so we can
+    # report why it stopped -- otherwise a container that crashed reports as
+    # "missing", which is indistinguishable from never having existed.
+    #
+    # Deliberately matched on the image tag only, never the command hint:
+    # unrelated old node containers from other images linger in `docker ps -a`
+    # and reporting their stale exit code would be worse than saying nothing.
+    out = run(["docker", "ps", "-a", "--filter", "ancestor=" + CONTAINER_IMAGE,
+               "--format", "{{.Names}}"])
+    if out:
+        name = out.splitlines()[0].strip()
+        if name:
+            return name
+    return None
+
+
+def list_node_containers():
+    """Every running container that looks like an XL1 node.
+
+    Discovery returns one container, but more than one can be running -- an
+    old container left behind after a rebuild, say. Silently monitoring the
+    first and ignoring the rest hides exactly the situation worth flagging.
+    """
+    out = run(["docker", "ps", "--no-trunc", "--format", "{{.Names}}	{{.Image}}	{{.Command}}"])
+    if not out:
+        return []
+    names = []
+    for line in out.splitlines():
+        parts = line.split("	")
+        if len(parts) < 3:
+            continue
+        name, image, command = parts[0].strip(), parts[1].strip(), parts[2]
+        if image == CONTAINER_IMAGE or (COMMAND_HINT and COMMAND_HINT in command):
+            if name:
+                names.append(name)
+    return names
+
+
+def container_info(name):
+    """State, uptime, restart count and exit status straight from the daemon.
+
+    Exit code and finish time matter when the container is down: "exited 78"
+    (a config error) needs a different response than "exited 137" (OOM-killed),
+    and knowing which without SSHing in is most of the value of monitoring.
+    """
+    fmt = ("{{.State.Status}}|{{.State.StartedAt}}|{{.RestartCount}}|{{.Config.Image}}"
+           "|{{.State.ExitCode}}|{{.State.FinishedAt}}|{{.State.Error}}"
+           "|{{if .State.Health}}{{.State.Health.Status}}{{end}}")
+    raw = run(["docker", "inspect", "-f", fmt, name])
+    if not raw:
+        return {}
+    parts = raw.split("|")
+    if len(parts) != 8:
+        return {}
+    status, started, restarts, image, exit_code, finished, error, health = parts
+
+    def _int(value):
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+
+    info = {"container_status": status, "container_started_at": started,
+            "restart_count": _int(restarts), "image": image}
+    # Docker's own healthcheck state. "starting" is the grace period after a
+    # restart, when /livez is legitimately not answering yet -- distinguishing
+    # it from "unhealthy" is what stops every restart looking like an outage.
+    if health.strip():
+        info["health_status"] = health.strip()
+    # Only meaningful once it has stopped; a running container reports 0.
+    if status != "running":
+        info["exit_code"] = _int(exit_code)
+        info["exited_at"] = finished or None
+        if error.strip():
+            info["container_error"] = error.strip()[:200]
+    return info
+
+
+def container_stats(name):
+    """CPU/memory for the container itself (not the whole Pi)."""
+    raw = run(["docker", "stats", "--no-stream", "--format",
+               "{{.CPUPerc}}|{{.MemUsage}}", name], timeout=20)
+    if not raw:
+        return {}
+    try:
+        cpu_s, mem_s = raw.split("|")
+        cpu = float(cpu_s.strip().rstrip("%"))
+        mem = _to_mb(mem_s.split("/")[0].strip())
+    except (ValueError, IndexError):
+        return {}
+    # Raspberry Pi OS disables the kernel memory cgroup by default, so docker
+    # reports 0B here. That is "unavailable", not "zero" -- send null and let
+    # host memory stand in, rather than rendering a convincing 0 MB.
+    return {"cpu_percent": round(cpu, 2), "mem_used_mb": mem or None}
+
+
+def _to_mb(value):
+    """'412.3MiB' / '1.2GiB' -> megabytes."""
+    units = [("GIB", 1024.0), ("MIB", 1.0), ("KIB", 1 / 1024), ("B", 1 / 1024 / 1024)]
+    upper = value.upper()
+    for suffix, factor in units:
+        if upper.endswith(suffix):
+            try:
+                return round(float(value[: -len(suffix)]) * factor, 1)
+            except ValueError:
+                return None
+    return None
+
+
+def check_health(name):
+    """(live, ready). Direct HTTP if the port is published, else docker exec."""
+    if HEALTH_URL:
+        return _http_ok(HEALTH_URL), None
+    if not name:
+        return False, None
+    base = "http://127.0.0.1:" + HEALTH_PORT
+    live = run(["docker", "exec", name, "curl", "-fsS", "-m", "5", base + "/livez"]) is not None
+    if not live:
+        return False, None
+    ready = run(["docker", "exec", name, "curl", "-fsS", "-m", "5", base + "/readyz"])
+    return True, ready is not None
+
+
+def _http_ok(url):
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def fetch_block_height(network=None):
+    """Current height for one network from the local xl1-service, or None.
+
+    The service reaches XL1 through the SDK's read-only gateway; this agent
+    never speaks JSON-RPC itself. Entirely optional -- if the service is not
+    running, the heartbeat simply carries no heights.
+    """
+    if not HEIGHT_URL:
+        return None
+    url = HEIGHT_URL
+    if network:
+        url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"network": network})
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            height = json.loads(resp.read().decode("utf-8")).get("height")
+        return int(height) if isinstance(height, (int, float)) else None
+    except (urllib.error.URLError, OSError, ValueError, TypeError):
+        return None
+
+
+def fetch_block_heights():
+    """{network: height} for every configured network, skipping failures."""
+    out = {}
+    for net in HEIGHT_NETWORKS:
+        height = fetch_block_height(net)
+        if height is not None:
+            out[net] = height
+    return out
+
+
+def host_metrics():
+    """Pi vitals: SoC temperature, root disk pressure, host uptime, RAM."""
+    data = {}
+
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as fh:
+            data["temperature_c"] = round(int(fh.read().strip()) / 1000.0, 1)
+    except (OSError, ValueError):
+        pass
+
+    try:
+        with open("/proc/uptime") as fh:
+            data["host_uptime_seconds"] = int(float(fh.read().split()[0]))
+    except (OSError, ValueError, IndexError):
+        pass
+
+    try:
+        # statvfs is POSIX-only; guarded so the agent stays runnable off-Pi.
+        st = os.statvfs("/")
+        total = st.f_blocks * st.f_frsize
+        free = st.f_bavail * st.f_frsize
+        if total:
+            data["disk_used_percent"] = round((total - free) / total * 100, 1)
+    except (OSError, AttributeError):
+        pass
+
+    try:
+        meminfo = {}
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                key, _, rest = line.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    meminfo[key] = int(rest.split()[0])
+        if "MemTotal" in meminfo:
+            data["mem_total_mb"] = round(meminfo["MemTotal"] / 1024, 1)
+            if "MemAvailable" in meminfo:
+                used = meminfo["MemTotal"] - meminfo["MemAvailable"]
+                data["host_mem_used_mb"] = round(used / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        pass
+
+    return data
+
+
+_warned = set()
+
+
+def _warn_once(key, message):
+    """Say why something is not happening, once, rather than failing silently.
+
+    A component that quietly does nothing looks identical to one that is
+    working, which is the hardest kind of fault to notice.
+    """
+    if key not in _warned:
+        _warned.add(key)
+        print("WARN: %s" % message, file=sys.stderr, flush=True)
+
+
+_producer_cache = {"at": 0.0, "value": None}
+# Where to resume scanning. Supplied by the backend on every heartbeat
+# response, so this agent stores nothing durable of its own.
+# "known" flips once the backend has told us where it is up to. Until then a
+# scan would have to guess a range, and after a restart that guess overlaps
+# already-counted blocks and is rightly rejected -- burning a whole cycle.
+_producer_cursor = {"block": None, "backfill": None, "backfill_done": False,
+                    "known": False, "last_produced": None}
+
+# Explorer link for the block the panel displays, keyed by block number so it
+# is fetched once rather than on every beat.
+_explorer_link = {"block": None, "url": None}
+
+
+def read_reward_address(name):
+    """Reward address from the node container, or None.
+
+    Reads the container environment, which also holds XL1_MNEMONIC. Only the
+    reward address is extracted; nothing else is retained, logged, or sent.
+    The reward address is public -- it appears in every block the node
+    produces -- whereas the mnemonic must never leave the Pi.
+    """
+    if REWARD_ADDRESS:
+        return REWARD_ADDRESS
+    if not name:
+        return None
+    raw = run(["docker", "inspect", "-f",
+               "{{range .Config.Env}}{{println .}}{{end}}", name])
+    if not raw:
+        return None
+    for line in raw.splitlines():
+        if line.startswith("XL1_REWARD_ADDRESS="):
+            # docker --env-file does not strip quotes, so a value written as
+            # KEY="0xabc..." arrives with them attached.
+            value = line.split("=", 1)[1].strip().strip('"').strip("'")
+            if re.fullmatch(r"(0x)?[0-9a-fA-F]{40}", value):
+                return value
+            _warn_once("reward-format",
+                       "XL1_REWARD_ADDRESS in the container is not a 20-byte "
+                       "address; block production will not be counted")
+            return None
+    _warn_once("reward-missing",
+               "XL1_REWARD_ADDRESS not found in the node container; set it in "
+               "/etc/xl1-heartbeat.env to count block production")
+    return None
+
+
+def _producer_request(address, params):
+    """One call to the local producer endpoint. Returns parsed JSON or None."""
+    query = urllib.parse.urlencode({"address": address, **params})
+    try:
+        with urllib.request.urlopen(PRODUCER_URL + "?" + query, timeout=180) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        _warn_once("producer-request",
+                   "producer endpoint unreachable at %s (%s); block production "
+                   "will not be counted" % (PRODUCER_URL, type(e).__name__))
+        return None
+
+
+def fetch_backfill_chunk(name):
+    """One chunk of historical blocks, walking down toward genesis.
+
+    Returns None until forward counting has started -- the backend supplies
+    the cursor, so there is nothing to walk back from before then.
+    """
+    if not PRODUCER_URL or BACKFILL_CHUNK <= 0:
+        return None
+    if _producer_cursor["backfill_done"]:
+        return None
+    cursor = _producer_cursor["backfill"]
+    if cursor is None or cursor < 0:
+        return None
+    address = read_reward_address(name)
+    if not address:
+        return None
+    start = max(0, cursor - BACKFILL_CHUNK + 1)
+    return _producer_request(address, {"from": start, "to": cursor})
+
+
+def explorer_block_url(block):
+    """Explorer URL for one block, from the local service, or None.
+
+    The service builds it with the SDK; this agent must not assemble explorer
+    paths itself. Cached by block number, and any failure is swallowed -- a
+    cosmetic link must never cost a heartbeat.
+    """
+    if not block or not PRODUCER_URL:
+        return None
+    if _explorer_link["block"] == block:
+        return _explorer_link["url"]
+    base = PRODUCER_URL.rsplit("/producer", 1)[0]
+    url = "%s/explorer/block/%d?network=%s" % (
+        base, block, urllib.parse.quote(NODE_NETWORK))
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        link = body.get("url")
+    except Exception:
+        return None
+    if isinstance(link, str) and link.startswith("https://"):
+        _explorer_link["block"] = block
+        _explorer_link["url"] = link
+        return link
+    return None
+
+
+def fetch_producer_stats(name):
+    """Block production counts for this node's reward address, or None.
+
+    Refreshed every PRODUCER_INTERVAL seconds rather than every heartbeat.
+    The address is sent only to the service on this host's loopback; the
+    heartbeat carries counts alone, never the address.
+    """
+    if not PRODUCER_URL:
+        return None
+    if not _producer_cursor["known"]:
+        # Wait for one heartbeat response. The cursor is held by the backend so
+        # a reimaged Pi resumes correctly, which means a freshly started agent
+        # does not know it yet -- and scanning blind would overlap.
+        return None
+    now = time.monotonic()
+    # Rate limiter, not a cache to serve from: returning the previous scan
+    # would re-send an already-counted range on every heartbeat, ~30 payloads
+    # per cycle that the backend can only reject as replays. Report a scan
+    # once, when it is actually new.
+    if _producer_cache["at"] and now - _producer_cache["at"] < PRODUCER_INTERVAL:
+        return None
+
+    address = read_reward_address(name)
+    if not address:
+        return None
+    params = {"address": address, "window": PRODUCER_WINDOW}
+    if _producer_cursor["block"] is not None:
+        # Scan only what is new. ~15 blocks per 15 minutes at a 60s block time,
+        # versus re-reading the whole window every cycle.
+        params["since"] = _producer_cursor["block"]
+    stats = _producer_request(address, params)
+    if stats is None:
+        return None
+    _producer_cache["at"] = now
+    _producer_cache["value"] = stats
+    return stats
+
+
+_cli_cache = {"installed_at": 0.0, "installed": None,
+              "latest_at": 0.0, "latest": None}
+
+
+def read_cli_version(name):
+    """Version of the XL1 CLI inside the running container, or None.
+
+    Read from the container rather than the image tag: the tag can be moved
+    without recreating anything, so it is not evidence of what is running.
+    """
+    if not name:
+        return None
+    now = time.monotonic()
+    if _cli_cache["installed"] and now - _cli_cache["installed_at"] < 3600:
+        return _cli_cache["installed"]
+    raw = run(["docker", "exec", name, "cat", CLI_PACKAGE_PATH])
+    if not raw:
+        return None
+    try:
+        version = json.loads(raw).get("version")
+    except (ValueError, AttributeError):
+        return None
+    if not _valid_version(version):
+        return None
+    if version:
+        _cli_cache["installed"] = version
+        _cli_cache["installed_at"] = now
+    return version
+
+
+def fetch_cli_latest():
+    """Newest published CLI version, or None. Checked a few times a day."""
+    if not CLI_REGISTRY:
+        return None
+    now = time.monotonic()
+    if _cli_cache["latest"] and now - _cli_cache["latest_at"] < CLI_CHECK_INTERVAL:
+        return _cli_cache["latest"]
+    try:
+        with urllib.request.urlopen(CLI_REGISTRY, timeout=20) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            version = json.loads(resp.read().decode("utf-8")).get("version")
+    except (urllib.error.URLError, OSError, ValueError):
+        # Never let a registry outage affect the heartbeat.
+        return None
+    if not _valid_version(version):
+        _warn_once("cli-version-format",
+                   "registry returned an implausible version; ignoring it")
+        return None
+    if version:
+        _cli_cache["latest"] = version
+        _cli_cache["latest_at"] = now
+    return version
+
+
+def collect():
+    name = find_container()
+    live, ready = check_health(name)
+    payload = {
+        "node_id": NODE_ID, "label": NODE_LABEL, "role": NODE_ROLE,
+        "network": NODE_NETWORK, "live": live, "ready": ready,
+        "agent_version": AGENT_VERSION,
+    }
+    if name:
+        payload.update(container_info(name))
+        payload.update(container_stats(name))
+    else:
+        # Container gone entirely -- report that rather than silently sending nothing.
+        payload["container_status"] = "missing"
+    payload.update(host_metrics())
+
+    installed = read_cli_version(name)
+    if installed:
+        payload["cli_version"] = installed
+    latest = fetch_cli_latest()
+    if latest:
+        payload["cli_latest"] = latest
+
+    # Surface duplicates rather than quietly monitoring one of them.
+    node_containers = list_node_containers()
+    if node_containers:
+        payload["node_containers"] = node_containers
+
+    stats = fetch_producer_stats(name)
+    if stats:
+        # Counts only. The reward address stays on this machine.
+        payload["produced_recent"] = stats.get("produced")
+        payload["produced_window"] = stats.get("window")
+        payload["pending_transactions"] = stats.get("pendingTransactions")
+        payload["pending_blocks"] = stats.get("pendingBlocks")
+        payload["last_block_epoch"] = stats.get("latestEpoch")
+        payload["scan_from_block"] = stats.get("fromBlock")
+        payload["scan_to_block"] = stats.get("toBlock")
+        payload["scan_produced"] = stats.get("produced")
+        # The head the scan was bounded by, and the floor it will not read
+        # below. Both let the backend report whether counting is keeping up.
+        payload["finalized_head"] = stats.get("height")
+        payload["indexer_floor"] = stats.get("floor")
+        # Whether that head really was the finalized one. A scan bounded by
+        # the latest block instead can count a block that a reorg later
+        # removes, and the cursor never goes back to correct it.
+        payload["scan_finalized"] = stats.get("finalized")
+        # Only report a sighting; absence here means "none in this range",
+        # not "never produced", so it must not overwrite a known value.
+        if stats.get("lastProducedBlock") is not None:
+            payload["last_produced_block"] = stats.get("lastProducedBlock")
+            payload["blocks_since_produced"] = stats.get("blocksSinceProduced")
+            # Built by the SDK's ExplorerLinks, not concatenated here: the
+            # explorer owns those paths and ours had already drifted.
+            explorer = stats.get("explorer") or {}
+            if explorer.get("lastProducedBlock"):
+                payload["explorer_block_url"] = explorer["lastProducedBlock"]
+
+        chunk = fetch_backfill_chunk(name)
+        if chunk:
+            payload["backfill_from_block"] = chunk.get("fromBlock")
+            payload["backfill_to_block"] = chunk.get("toBlock")
+            payload["backfill_produced"] = chunk.get("produced")
+            # A backfill chunk sees far more blocks than a forward scan, so it
+            # is often the only source of a sighting for a low-share producer.
+            # It walks backwards, so its sighting may be older than one already
+            # known -- the backend keeps whichever is more recent.
+            if (payload.get("last_produced_block") is None
+                    and chunk.get("lastProducedBlock") is not None):
+                payload["last_produced_block"] = chunk["lastProducedBlock"]
+
+    # A scan reports only blocks it saw, so a node that has stopped producing
+    # would never supply a link for the block still on display. Fall back to
+    # the one the backend says it is showing.
+    if not payload.get("explorer_block_url"):
+        link = explorer_block_url(_producer_cursor["last_produced"])
+        if link:
+            payload["explorer_block_url"] = link
+
+    heights = fetch_block_heights()
+    if heights:
+        payload["chain_heights"] = heights
+        # block_height stays this node's own network, for the node card.
+        own = heights.get(NODE_NETWORK)
+        if own is not None:
+            payload["block_height"] = own
+    return payload
+
+
+def send(payload):
+    req = urllib.request.Request(
+        BACKEND_URL + "/api/node/heartbeat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "X-Node-Token": NODE_TOKEN,
+                 "User-Agent": "xl1-heartbeat/" + AGENT_VERSION},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            if not (200 <= resp.status < 300):
+                return False
+            try:
+                body = json.loads(resp.read().decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                body = {}
+            # Any successful response tells us the backend's position, even
+            # when that position is "nothing counted yet" (null).
+            _producer_cursor["known"] = True
+            cursor = body.get("producer_cursor")
+            if isinstance(cursor, int):
+                _producer_cursor["block"] = cursor
+            backfill = body.get("backfill_cursor")
+            if isinstance(backfill, int):
+                _producer_cursor["backfill"] = backfill
+            _producer_cursor["backfill_done"] = bool(body.get("backfill_complete"))
+            shown = body.get("last_produced_block")
+            if isinstance(shown, int):
+                _producer_cursor["last_produced"] = shown
+            return True
+    except urllib.error.HTTPError as e:
+        print("heartbeat rejected: HTTP %s %s" % (e.code, e.reason), file=sys.stderr, flush=True)
+    except (urllib.error.URLError, OSError) as e:
+        print("heartbeat failed: %s" % e, file=sys.stderr, flush=True)
+    return False
+
+
+def main():
+    if not BACKEND_URL or not NODE_TOKEN:
+        print("BACKEND_URL and NODE_HEARTBEAT_TOKEN must be set", file=sys.stderr)
+        return 2
+
+    once = "--once" in sys.argv
+    while True:
+        payload = collect()
+        ok = send(payload)
+        status = payload.get("container_status")
+        if payload.get("exit_code") is not None:
+            status = "%s(%s)" % (status, payload["exit_code"])
+        scan = ("scan=%s-%s" % (payload["scan_from_block"], payload["scan_to_block"])
+                if payload.get("scan_to_block") is not None else "scan=-")
+        print("%s live=%s status=%s temp=%sC heights=%s %s" % (
+            "sent" if ok else "FAILED", payload["live"], status,
+            payload.get("temperature_c"), payload.get("chain_heights") or "-", scan),
+            flush=True)
+        if once:
+            return 0 if ok else 1
+        time.sleep(INTERVAL)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

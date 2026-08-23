@@ -1,0 +1,22 @@
+[Unit]
+Description=Rebuild the XL1 node image if a newer CLI has been published
+Documentation=https://github.com/XYOracleNetwork/xl1-docker-images
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/xl1-heartbeat/rebuild-xl1-image.sh
+
+# Builds only. It never promotes the image or restarts the producer, so a
+# failure here leaves the running node exactly as it was.
+#
+# Runs as root because it needs to write to the images repo and drive Docker.
+# Nice/IOSchedulingClass keep a multi-minute build on a Pi from starving the
+# block producer sharing the machine.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target

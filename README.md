@@ -1,9 +1,6 @@
 # xl1-node-monitor
 
-<!-- No CI badge while this repository is private. GitHub proxies README images
-     anonymously, so the badge endpoint returns 404 and renders as failing no
-     matter what the run did. Add it back if this ever goes public:
-     ![CI](https://github.com/OWNER/xl1-node-monitor/actions/workflows/ci.yml/badge.svg) -->
+[![CI](https://github.com/jebscc/xl1-node-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/jebscc/xl1-node-monitor/actions/workflows/ci.yml)
 
 Monitoring for a self-hosted [XYO Layer One](https://xyo.network/layer-one/)
 node. A small agent runs beside your node and reports in; a receiver collects
@@ -76,7 +73,7 @@ Anywhere the node machine can reach:
 ### 1. Get the code and install dependencies
 
 ```bash
-git clone https://github.com/OWNER/xl1-node-monitor.git
+git clone https://github.com/jebscc/xl1-node-monitor.git
 cd xl1-node-monitor/receiver
 pip install -r requirements.txt
 ```

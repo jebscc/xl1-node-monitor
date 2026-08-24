@@ -507,8 +507,14 @@ def read_cli_version(name):
 
     Read from the container rather than the image tag: the tag can be moved
     without recreating anything, so it is not evidence of what is running.
+
+    This is the only `docker exec` left once health is read over HTTP, and
+    exec is the call that makes socket access dangerous. Setting
+    XL1_CLI_REGISTRY empty turns version checking off entirely -- both halves,
+    since a local version with nothing to compare it against is not useful --
+    which lets the agent run against a read-only Docker API.
     """
-    if not name:
+    if not name or not CLI_REGISTRY:
         return None
     now = time.monotonic()
     if _cli_cache["installed"] and now - _cli_cache["installed_at"] < 3600:

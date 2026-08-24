@@ -405,3 +405,22 @@ def test_over_long_registry_version_is_dropped_not_forwarded(monkeypatch, capsys
     agent._warned.clear()
     assert agent.fetch_cli_latest() is None
     assert "implausible version" in capsys.readouterr().err
+
+
+def test_version_check_off_means_no_docker_exec(monkeypatch):
+    """`docker exec` is the call that makes socket access root-equivalent.
+    With health read over HTTP, this is the last one -- so switching version
+    checking off has to remove it, or read-only Docker access is impossible."""
+    calls = []
+    monkeypatch.setattr(agent, "run", lambda cmd, **kw: calls.append(cmd))
+    monkeypatch.setattr(agent, "CLI_REGISTRY", "")
+    agent._cli_cache["installed"] = None
+    assert agent.read_cli_version("node") is None
+    assert calls == [], f"expected no docker call, got {calls}"
+
+
+def test_version_check_on_still_reads_the_container(monkeypatch):
+    monkeypatch.setattr(agent, "CLI_REGISTRY", "https://registry.example/latest")
+    monkeypatch.setattr(agent, "run", lambda cmd, **kw: '{"version": "5.2.2"}')
+    agent._cli_cache["installed"] = None
+    assert agent.read_cli_version("node") == "5.2.2"

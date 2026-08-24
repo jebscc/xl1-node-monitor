@@ -178,9 +178,34 @@ The agent uses that access for four read-only commands — `docker ps`,
 `inspect`, `stats`, and `exec` for the health probe. It never starts, stops, or
 modifies a container.
 
-If root-equivalence is unacceptable in your environment, run Docker rootless,
-or replace the socket access with a narrower source of container state. Both
-are beyond this guide.
+#### Reducing what that access can do
+
+The agent makes eleven Docker calls. Eight — `ps`, `inspect`, `stats` — only
+read. Three use `docker exec`, and exec is what turns socket access into root:
+it runs a command of your choosing inside a container.
+
+Both uses of exec can be removed:
+
+| Uses exec for | Remove it by | Cost |
+|---|---|---|
+| The health probe | Publishing the health port and setting `XL1_HEALTH_URL` | none — health is read over HTTP instead |
+| Reading the installed CLI version | Setting `XL1_CLI_REGISTRY=` (empty) | no "update available" reporting |
+
+With both applied the agent only ever reads, which means you can put a
+filtered Docker socket proxy in front of it and allow just those three verbs —
+or run Docker rootless, which removes the root-equivalence at its source.
+
+```bash
+# in /etc/xl1-heartbeat.env
+XL1_HEALTH_URL=http://127.0.0.1:9099/livez
+XL1_CLI_REGISTRY=
+
+# and publish the port when starting the node
+#   docker run ... -p 127.0.0.1:9099:9099 ...
+```
+
+Doing none of this is a defensible choice on a machine whose only job is
+running the node — but it should be a choice, not a surprise.
 
 ### 5. Write the configuration
 

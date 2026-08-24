@@ -327,14 +327,103 @@ reporting through the gap rather than showing the node as missing.
 
 ## Optional: block production counts
 
-Counting blocks needs a service that can read the chain through
-`@xyo-network/xl1-sdk` and report which blocks your address signed. That service
-is **not included here**.
+Everything so far works without this. Skip it unless you want the panel to
+report **how many blocks your node has signed**.
 
-Without it the agent works normally and reports no production figures. With it,
-point `XL1_HEIGHT_URL` at its `/block-height` endpoint and the counts appear.
+Counting needs something that can read the chain. The agent deliberately does
+not: it never speaks JSON-RPC and holds no keys. It calls two HTTP endpoints
+and does the accounting from what they return, so **you supply a small service
+that answers them**. One is not bundled here.
 
----
+### What you have to provide
+
+A service reachable from the node machine — usually a container on the same
+host — exposing two `GET` endpoints. Build it with
+[`@xyo-network/xl1-sdk`](https://www.npmjs.com/package/@xyo-network/xl1-sdk),
+which is the supported way to read XL1. Do not hand-roll JSON-RPC.
+
+**1. Chain height**
+
+```
+GET /block-height?network=sequence
+→ { "height": 566690 }
+```
+
+Called once per network in `XL1_HEIGHT_NETWORKS`. Anything other than a number
+is ignored, so a failure here costs you the height display and nothing else.
+
+**2. Producer activity**
+
+```
+GET /producer?address=<40-hex>&window=200
+GET /producer?address=<40-hex>&window=200&since=566500     # incremental
+GET /producer?address=<40-hex>&window=200&from=0&to=49999  # backfill chunk
+```
+
+Returns the blocks that address signed in the range it scanned:
+
+| Field | Meaning |
+|---|---|
+| `fromBlock`, `toBlock` | The range actually scanned. The receiver counts only an exact continuation of its cursor, so these must be honest |
+| `produced` | How many blocks in that range the address signed |
+| `height` | The head the scan was bounded by |
+| `finalized` | `true` if `height` is the **finalized** head. See below — this one matters |
+| `floor` | Lowest block the service will read. `0` for a full-history indexer |
+| `lastProducedBlock`, `blocksSinceProduced` | Most recent sighting, if any |
+| `window`, `latestEpoch`, `pendingTransactions`, `pendingBlocks` | Optional context |
+| `explorer.lastProducedBlock` | Optional explorer URL for that block |
+
+**Bound the scan by the finalized head, not the latest block**, and report
+`finalized: false` if you cannot. A block counted before it finalizes can be
+removed by a reorg, and the cursor never goes back to correct it. When
+`finalized` is `false` the receiver *pauses* counting rather than recording a
+figure that could quietly drift.
+
+### Configuration, once the service is running
+
+Add to `/etc/xl1-heartbeat.env`:
+
+```bash
+XL1_HEIGHT_URL=http://127.0.0.1:8090/block-height
+XL1_PRODUCER_URL=http://127.0.0.1:8090/producer
+```
+
+Then restart and watch one cycle:
+
+```bash
+sudo systemctl restart xl1-heartbeat
+journalctl -u xl1-heartbeat -f
+```
+
+Within about fifteen minutes the heartbeat log gains a `scan=` field, and
+`produced_total` appears in `/api/node/status`.
+
+### Which address is counted
+
+The agent reads the reward address **out of the running container's
+environment** — you usually need to set nothing. Override only if that fails:
+
+```bash
+XL1_REWARD_ADDRESS=your40hexaddresswithout0xprefix
+```
+
+The address is used on the node machine to build the scan request. It is not
+sent to the receiver, and the mnemonic sharing that container environment is
+never read.
+
+### Tuning
+
+| Setting | Default | What it does |
+|---|---|---|
+| `XL1_HEIGHT_NETWORKS` | `sequence,mainnet` | Which networks to ask for heights |
+| `XL1_PRODUCER_INTERVAL` | `900` | Seconds between scans. Scanning is the expensive call, so it is far less frequent than the heartbeat |
+| `XL1_PRODUCER_WINDOW` | `200` | Blocks to scan on the very first run, before a cursor exists |
+| `XL1_BACKFILL_CHUNK` | `50000` | Blocks per history chunk, walking backwards toward genesis. `0` disables backfill and counts only from today |
+
+Backfill runs alongside normal counting: the agent walks history downward in
+chunks while the forward scan keeps up with the head, so the lifetime total
+grows until the whole chain has been read. `counting_since_block` reaching `0`
+means it got to genesis.
 
 ## Design notes
 

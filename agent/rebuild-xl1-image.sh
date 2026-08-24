@@ -113,11 +113,17 @@ docker build \
 log "built xl1:$LATEST"
 
 # --- smoke test ------------------------------------------------------------
-# Prove the image starts before suggesting anyone promote it. --rm and no
-# env-file: this exits immediately, it does not join a network.
-if docker run --rm --entrypoint node "xl1:$LATEST" \
-     -e "process.exit(0)" >/dev/null 2>&1; then
-  log "smoke test passed"
+# Prove the image is usable before suggesting anyone promote it.
+#
+# This used to run `node -e process.exit(0)`, which only proved a Node binary
+# existed in the image -- it would have passed on a build with a broken CLI or
+# a missing entrypoint. Upstream's own smoke test asks the entrypoint for a
+# version instead, which exercises the path a real start takes.
+#
+# --rm and no env-file: it exits immediately and does not join a network.
+SMOKE_OUT="$(docker run --rm --entrypoint xl1 "xl1:$LATEST" --version 2>/dev/null || docker run --rm -e XL1_NETWORK= -e XL1_ROLE= "xl1:$LATEST" --version 2>/dev/null || true)"
+if [ -n "$SMOKE_OUT" ]; then
+  log "smoke test passed: $(printf '%s' "$SMOKE_OUT" | head -1)"
 else
   log "WARNING: smoke test failed; do not promote xl1:$LATEST"
   exit 1

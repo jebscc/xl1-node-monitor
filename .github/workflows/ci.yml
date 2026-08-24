@@ -54,3 +54,21 @@ jobs:
         env:
           NODE_HEARTBEAT_TOKEN: test-token
         run: python -m pytest -q
+
+  shellcheck:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rebuild-xl1-image.sh runs as root, weekly, unattended, against a live
+      # block producer. A quoting mistake there fails at 4am on a Sunday with
+      # nobody watching, which is the case worth catching in advance.
+      #
+      # No --severity relaxation: the script is clean at the default level, so
+      # the gate is set where it actually is rather than where it is easy.
+      - name: Check scripts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck agent/rebuild-xl1-image.sh

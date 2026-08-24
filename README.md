@@ -99,6 +99,16 @@ export NODE_HEARTBEAT_TOKEN=paste-the-token-here
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
+`receiver/.env.example` lists every setting the receiver understands, with
+notes on each. To use a file instead of exporting by hand:
+
+```bash
+cp .env.example .env        # .env is gitignored
+nano .env                   # paste your token
+set -a; . ./.env; set +a
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
 Leave it running. In another terminal:
 
 ```bash
@@ -141,6 +151,10 @@ sudo install -m 755 -d /opt/xl1-heartbeat
 sudo cp /tmp/xl1-agent/xl1-heartbeat.env.example /etc/xl1-heartbeat.env
 sudo nano /etc/xl1-heartbeat.env
 ```
+
+`agent/xl1-heartbeat.env.example` is a complete, commented reference — every
+setting the agent reads, with its real default and what it does. The values in
+it are made up; replace them.
 
 Set these four at minimum:
 
@@ -228,7 +242,8 @@ this wrong is the most common way a first setup fails.
 
 ### On the node machine — `/etc/xl1-heartbeat.env`
 
-Read by the agent. `chmod 600`, owned by root.
+Read by the agent. `chmod 600`, owned by root. Full annotated reference:
+[`agent/xl1-heartbeat.env.example`](agent/xl1-heartbeat.env.example).
 
 | Setting | Required | Notes |
 |---|---|---|
@@ -245,6 +260,7 @@ Read by the agent. `chmod 600`, owned by root.
 ### On the receiver host — environment variables
 
 Set in your hosting provider's dashboard, **not** in a file in the repository.
+Full annotated reference: [`receiver/.env.example`](receiver/.env.example).
 
 | Setting | Required | Notes |
 |---|---|---|

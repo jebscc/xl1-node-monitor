@@ -156,6 +156,11 @@ sudo nano /etc/xl1-heartbeat.env
 setting the agent reads, with its real default and what it does. The values in
 it are made up; replace them.
 
+Most of it is commented out on purpose. **Setting a variable to nothing is not
+the same as leaving it out**: `XL1_HEIGHT_URL=` overrides the default with an
+empty string and switches that feature off, where deleting the line gets the
+default. A working file is often just the six lines below.
+
 Set these four at minimum:
 
 | Setting | What to put |

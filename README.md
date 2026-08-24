@@ -99,6 +99,10 @@ export NODE_HEARTBEAT_TOKEN=paste-the-token-here
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
+`0.0.0.0` binds every interface, which is what lets the node machine reach it.
+On an untrusted network use `--host 127.0.0.1` and reach it over an SSH tunnel
+instead.
+
 `receiver/.env.example` lists every setting the receiver understands, with
 notes on each. **It is a reference, not a file the receiver reads** — the app
 takes its settings from the environment, however they got there.
@@ -124,8 +128,21 @@ curl -s http://localhost:8000/healthz
 Expected: `{"ok":true,"configured":true}`. If `configured` is `false`, the
 token is not set in the shell that started `uvicorn`.
 
-> **For real use**, run it under a process manager rather than a terminal, and
-> put HTTPS in front of it. A token sent over plain HTTP is readable in transit.
+### What the receiver exposes
+
+Two things worth knowing before you put it anywhere reachable:
+
+- **`POST /api/node/heartbeat` is protected by the token, and nothing else.**
+  There is no rate limiting. Anyone holding the token can post readings for any
+  node id. Treat it as a password, and use HTTPS — over plain HTTP it travels
+  in a header on every request, readable by anything in between.
+- **`GET /api/node/status` is public and unauthenticated by design**, so a
+  browser or status page can read it without credentials. It returns an
+  allow-list of fields, but that includes whatever you put in `NODE_LABEL`, so
+  do not name it after something you would not publish.
+
+For anything you rely on, run the receiver under a process manager rather than
+a terminal, and put HTTPS in front of it.
 
 ---
 
@@ -140,15 +157,30 @@ scp -r agent USER@NODE-MACHINE:/tmp/xl1-agent
 
 ### 4. Create the service account
 
-The agent never needs root — it reads Docker state and `/proc`, nothing else.
-This account exists so it cannot do more than that:
+The agent runs as a dedicated account that cannot log in:
 
 ```bash
 sudo useradd -r -s /usr/sbin/nologin -G docker xl1agent
 ```
 
-`-G docker` grants access to the Docker socket, which is how it reads container
-state. That is the only privilege it gets.
+**Understand what `-G docker` means before you run it.** Membership of the
+`docker` group is equivalent to root on this machine. Anyone who can talk to
+the Docker socket can start a container that mounts the host filesystem and
+walk out with everything on it. This is a property of Docker, not of this
+agent, and it applies to your own user account too if you run `docker` without
+`sudo`.
+
+So the account limits *who* rather than *what*: a compromise of the agent
+process does not get a login shell or a password, but it is not a sandbox, and
+you should treat `xl1agent` as a privileged account.
+
+The agent uses that access for four read-only commands — `docker ps`,
+`inspect`, `stats`, and `exec` for the health probe. It never starts, stops, or
+modifies a container.
+
+If root-equivalence is unacceptable in your environment, run Docker rootless,
+or replace the socket access with a narrower source of container state. Both
+are beyond this guide.
 
 ### 5. Write the configuration
 
@@ -188,7 +220,9 @@ sudo chmod 600 /etc/xl1-heartbeat.env
 ### 6. Test one cycle before installing the service
 
 This catches a wrong token or an unfindable container while you are still
-watching:
+watching. Note it runs as **root**, whereas the service will run as
+`xl1agent` — so it proves the configuration is right, not that the group
+membership from Step 4 works. Step 8 is what confirms that.
 
 ```bash
 sudo install -m 755 /tmp/xl1-agent/xl1_heartbeat.py /opt/xl1-heartbeat/
@@ -212,6 +246,13 @@ sudo systemctl enable --now xl1-heartbeat
 ```
 
 `enable` makes it start again after a reboot; `--now` starts it immediately.
+
+Then remove the staging copy — `/tmp` is world-readable, and there is no reason
+to leave a copy of anything there:
+
+```bash
+rm -rf /tmp/xl1-agent
+```
 
 ### 8. Confirm it is running
 

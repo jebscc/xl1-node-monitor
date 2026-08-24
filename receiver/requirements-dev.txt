@@ -1,0 +1,10 @@
+# Test-only dependencies.
+#
+# starlette's TestClient needs an HTTP client of its own and does not declare
+# one, so a clean environment fails at import with a RuntimeError rather than a
+# missing-package error. It looks for httpx2 first and falls back to httpx.
+#
+# Kept separate from requirements.txt because the receiver itself needs none of
+# this at runtime.
+pytest>=8
+httpx2>=2.12

@@ -155,8 +155,19 @@ without it and simply reports no production figures.
 
 ## Tests
 
+The agent needs only pytest -- it imports nothing outside the standard library:
+
 ```bash
-cd agent && python -m pytest test_xl1_heartbeat.py -q
+cd agent && python -m pytest -q
+```
+
+The receiver needs its runtime dependencies plus the test-only ones. Starlette's
+TestClient requires an HTTP client it does not itself declare, so a clean
+environment fails at import without them:
+
+```bash
+cd receiver && pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -q
 ```
 
 ## Licence

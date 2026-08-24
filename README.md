@@ -1,6 +1,9 @@
 # xl1-node-monitor
 
-[![CI](https://github.com/jebscc/xl1-node-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/jebscc/xl1-node-monitor/actions/workflows/ci.yml)
+<!-- No CI badge while this repository is private. GitHub proxies README images
+     anonymously, so the badge endpoint returns 404 and renders as failing no
+     matter what the run did. Add it back if this ever goes public:
+     ![CI](https://github.com/OWNER/xl1-node-monitor/actions/workflows/ci.yml/badge.svg) -->
 
 Monitoring for a self-hosted [XYO Layer One](https://xyo.network/layer-one/)
 block producer: a heartbeat agent for the machine running the node, and a small

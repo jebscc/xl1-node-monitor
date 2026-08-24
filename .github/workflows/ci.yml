@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Run it by hand from the Actions tab. Useful for re-checking after a
+  # dependency changes upstream, without inventing a commit to trigger it.
+  workflow_dispatch:
 
 jobs:
   agent:

@@ -1,0 +1,19 @@
+# Normalise line endings in the repository.
+#
+# Without this, files committed from Windows are stored with CRLF and every
+# clone gets CRLF — including on Linux. That breaks two things badly:
+#
+#   * a shell script whose shebang reads `#!/usr/bin/env bash\r` fails with
+#     "bad interpreter: No such file or directory", which is a confusing way
+#     to learn about line endings
+#   * shellcheck reports SC1017 on every line and the CI job fails
+#
+# `text=auto eol=lf` stores everything with LF and checks it out with LF, on
+# every platform. The files here are all destined for a Linux machine.
+* text=auto eol=lf
+
+# Belt and braces for the ones that are executed rather than read.
+*.sh      text eol=lf
+*.py      text eol=lf
+*.service text eol=lf
+*.timer   text eol=lf

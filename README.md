@@ -690,6 +690,26 @@ cd receiver && pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest -q
 ```
 
+### About the pins
+
+Dependencies are pinned to exact versions, so a deploy today and a rebuild
+months from now install the same thing. `requirements.lock` pins the transitive
+dependencies as well, if you want a byte-identical install:
+
+```bash
+pip install -r requirements.lock
+```
+
+The trade-off is that security fixes no longer arrive on their own. Raise the
+versions deliberately — CI runs the suite on every push, so a bad bump shows up
+before it reaches anything you depend on. Regenerate the lock afterwards:
+
+```bash
+python -m venv .fresh
+.fresh/bin/pip install -r requirements.txt
+.fresh/bin/pip freeze > requirements.lock
+```
+
 ---
 
 ## Licence

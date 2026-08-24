@@ -100,14 +100,20 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
 `receiver/.env.example` lists every setting the receiver understands, with
-notes on each. To use a file instead of exporting by hand:
+notes on each. **It is a reference, not a file the receiver reads** — the app
+takes its settings from the environment, however they got there.
+
+Running locally, a file is the convenient way to set them:
 
 ```bash
 cp .env.example .env        # .env is gitignored
 nano .env                   # paste your token
-set -a; . ./.env; set +a
+set -a; . ./.env; set +a    # loads it into this shell
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
+
+Deploying to a host instead? Skip the file and type the same settings into the
+service's environment page — see [Hosting the receiver](#hosting-the-receiver).
 
 Leave it running. In another terminal:
 
@@ -242,8 +248,16 @@ A monitor you have never seen react is not yet a monitor.
 
 ## Where every setting lives
 
-Two machines, two sets of settings, and they are never the same file. Getting
-this wrong is the most common way a first setup fails.
+Two machines, two different ways of being configured. Getting them confused is
+the most common way a first setup fails.
+
+| | Configured by | Lives where |
+|---|---|---|
+| **Agent** (node machine) | a file | `/etc/xl1-heartbeat.env`, root-owned, `chmod 600` |
+| **Receiver** (wherever you host it) | environment variables | your host's settings page — **no file** |
+
+The `.env.example` files in this repository are references for both. Only the
+agent's is copied into place; the receiver's is a list of what to type.
 
 ### On the node machine — `/etc/xl1-heartbeat.env`
 
@@ -262,10 +276,17 @@ Read by the agent. `chmod 600`, owned by root. Full annotated reference:
 | `XL1_HEIGHT_URL`, `XL1_PRODUCER_URL` | no | Only for [block counting](#optional-block-production-counts) |
 | `XL1_REWARD_ADDRESS` | no | Only if discovery from the container fails |
 
-### On the receiver host — environment variables
+### On the receiver host — environment variables, not a file
 
-Set in your hosting provider's dashboard, **not** in a file in the repository.
-Full annotated reference: [`receiver/.env.example`](receiver/.env.example).
+**There is no configuration file for the receiver.** Unlike the agent, which
+reads `/etc/xl1-heartbeat.env`, the receiver takes everything from environment
+variables. On a hosting provider you type them into that service's settings
+page; nothing is written to disk and nothing is committed.
+
+`receiver/.env.example` is a **checklist of what to type there**, with notes on
+each setting. It is not a file you deploy. (Running the receiver on your own
+machine is the one case where turning it into a real `.env` is convenient —
+see [Step 3](#3-start-the-receiver).)
 
 | Setting | Required | Notes |
 |---|---|---|

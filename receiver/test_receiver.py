@@ -15,7 +15,7 @@ import pytest
 os.environ.setdefault("NODE_HEARTBEAT_TOKEN", "test-token")
 
 AUTH = {"X-Node-Token": "test-token"}
-BEAT = {"node_id": "pi-01", "label": "Pi 5", "network": "sequence",
+BEAT = {"node_id": "pi-01", "label": "Pi 4", "network": "sequence",
         "live": True, "container_status": "running", "temperature_c": 41.2}
 
 

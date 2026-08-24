@@ -248,11 +248,15 @@ A monitor you have never seen react is not yet a monitor.
 
 ---
 
-## Optional: keep the node image current
+## Optional: build new node images automatically
 
-`agent/rebuild-xl1-image.sh` and its timer rebuild the node image weekly when a
-newer CLI is published, or when the current build is over 30 days old — base
-images collect security patches even when the CLI does not.
+**This does not update your node.** It builds an image and stops there; your
+node keeps running whatever it was running until you promote the new one
+yourself. That is deliberate — see below.
+
+`agent/rebuild-xl1-image.sh` and its timer rebuild weekly when a newer CLI is
+published, or when the current build is over 30 days old, since base images
+collect security patches even when the CLI does not.
 
 ```bash
 sudo install -m 755 /tmp/xl1-agent/rebuild-xl1-image.sh /opt/xl1-heartbeat/
@@ -262,17 +266,62 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now xl1-image-rebuild.timer
 ```
 
-**It builds only.** It never retags the running image, stops a container, or
-restarts the node. Swapping the image under a live node is a decision for a
-human at a time of their choosing, not something to discover happened
-overnight. A failed build leaves the running node untouched.
-
 Run it once by hand rather than waiting for Sunday:
 
 ```bash
 sudo systemctl start xl1-image-rebuild.service
 journalctl -u xl1-image-rebuild -n 30 --no-pager
 ```
+
+Forcing a rebuild when nothing has changed, to check the whole path works:
+
+```bash
+sudo XL1_MAX_IMAGE_AGE_DAYS=0 /opt/xl1-heartbeat/rebuild-xl1-image.sh
+```
+
+Note that has to run the script directly. Going through
+`systemctl start` uses the unit file's environment, so the override is ignored
+and it skips as usual.
+
+### Why it stops short of updating
+
+Swapping the image under a running node is a decision for a human at a time of
+their choosing, not something to discover happened overnight. A failed build
+leaves the node untouched, and a smoke test runs before anything is suggested
+for promotion.
+
+New images are tagged by version — `xl1:5.2.2` — and the tag your node actually
+runs, usually `xl1:local`, is never moved by the script.
+
+### Promoting a built image
+
+When you are ready, point your running tag at the new build and recreate the
+container **with the same command you originally started it with**:
+
+```bash
+docker tag xl1:5.2.2 xl1:local          # use the version the build reported
+docker rm -f xl1-producer
+docker run -d --name xl1-producer --restart unless-stopped   --env-file /path/to/your.env xl1:local
+```
+
+The script prints these three lines, filled in for your setup, whenever it
+builds something newer than what is running — check the journal rather than
+retyping them from here.
+
+### Rolling back
+
+Old versions keep their own tags, so a rollback needs no rebuild:
+
+```bash
+docker images xl1
+docker tag xl1:5.2.1 xl1:local          # the version you were on before
+docker rm -f xl1-producer
+# then the same docker run as above
+```
+
+Retagging briefly leaves the running container on an untagged image. The
+agent's container discovery falls back to the entrypoint path, so it keeps
+reporting through the gap rather than showing the node as missing.
 
 ---
 

@@ -146,7 +146,7 @@ Set these four at minimum:
 
 | Setting | What to put |
 |---|---|
-| `BACKEND_URL` | Where your receiver is, e.g. `http://192.168.1.50:8000` |
+| `BACKEND_URL` | Your receiver's URL, e.g. `https://your-receiver.example.com` |
 | `NODE_HEARTBEAT_TOKEN` | The token from Step 2 — must match exactly |
 | `XL1_IMAGE` | Your node's image tag from `docker ps`, e.g. `xl1:local` |
 | `NODE_LABEL` | Any name you like; it appears on the status page |
@@ -218,6 +218,116 @@ docker start YOUR-CONTAINER
 ```
 
 A monitor you have never seen react is not yet a monitor.
+
+---
+
+## Where every setting lives
+
+Two machines, two sets of settings, and they are never the same file. Getting
+this wrong is the most common way a first setup fails.
+
+### On the node machine — `/etc/xl1-heartbeat.env`
+
+Read by the agent. `chmod 600`, owned by root.
+
+| Setting | Required | Notes |
+|---|---|---|
+| `BACKEND_URL` | yes | Your receiver's public URL, no trailing slash |
+| `NODE_HEARTBEAT_TOKEN` | yes | Must match the receiver's exactly |
+| `XL1_IMAGE` | yes | Image tag from `docker ps` |
+| `NODE_ID`, `NODE_LABEL`, `NODE_ROLE`, `NODE_NETWORK` | no | Identity on the status page. Quote values containing spaces |
+| `XL1_CONTAINER` | no | Pin the container by name instead of discovering by image |
+| `XL1_HEALTH_PORT`, `XL1_HEALTH_URL` | no | Only if you published the health port |
+| `HEARTBEAT_INTERVAL` | no | Default `30` seconds |
+| `XL1_HEIGHT_URL`, `XL1_PRODUCER_URL` | no | Only for [block counting](#optional-block-production-counts) |
+| `XL1_REWARD_ADDRESS` | no | Only if discovery from the container fails |
+
+### On the receiver host — environment variables
+
+Set in your hosting provider's dashboard, **not** in a file in the repository.
+
+| Setting | Required | Notes |
+|---|---|---|
+| `NODE_HEARTBEAT_TOKEN` | yes | The same value as on the node machine |
+| `DB_PATH` | no | Where SQLite writes. Default `nodes.db` beside the app — see below |
+| `HEARTBEAT_TTL_SECONDS` | no | Default `90`. Seconds of silence before a node reads `OFFLINE` |
+
+**The token is a secret.** It is the only thing stopping a stranger posting
+fake heartbeats. Never commit it, and give the agent and receiver the same
+value by pasting it into both, not by storing it anywhere shared.
+
+---
+
+## Hosting the receiver
+
+Running `uvicorn` in a terminal is fine for a first try. For something you rely
+on, it needs to survive restarts and be reachable over HTTPS.
+
+### On a platform host (Render, Fly, Railway…)
+
+Point the service at the `receiver/` directory and set:
+
+| | |
+|---|---|
+| **Build command** | `pip install -r requirements.txt` |
+| **Start command** | `uvicorn app:app --host 0.0.0.0 --port $PORT` |
+| **Environment** | `NODE_HEARTBEAT_TOKEN` = your token |
+
+`$PORT` matters: these platforms assign a port and expect your process to bind
+to it. Hard-coding `8000` gets the deploy marked unhealthy even though the app
+started fine.
+
+You get HTTPS automatically, so `BACKEND_URL` on the node machine becomes
+`https://your-service.example.com` with no trailing slash.
+
+### The storage trap
+
+**The bundled receiver writes to SQLite on local disk, and most platform hosts
+give you a filesystem that is wiped on every deploy and restart.** The service
+keeps working — it recreates the database and carries on — but you silently
+lose the block-production cursor and the lifetime total, and counting restarts
+from wherever the next scan begins.
+
+Three ways to deal with it, in increasing order of effort:
+
+**1. Accept it.** Live status is unaffected: heartbeats, `ONLINE`/`OFFLINE`,
+temperature and CPU are all derived from the most recent report. Only the
+counting history is lost. Fine if you are just watching whether the node is up.
+
+**2. Attach a persistent disk.** Most platforms offer one. Mount it and set
+`DB_PATH` to a file on it, e.g. `/data/nodes.db`. Smallest change that keeps
+your totals.
+
+**3. Use a hosted database.** If you want managed backups, or several receivers
+sharing one store, replace the SQLite calls in `receiver/app.py` with a client
+for the database of your choice — MongoDB Atlas, hosted Postgres, whatever you
+already run. The receiver is one file and touches storage in four small
+functions (`db`, `load`, `save`, and the query in `status`), so this is a
+contained change rather than a rewrite.
+
+Whichever you pick, **the database belongs with the receiver, not on the node
+machine.** A store that dies with the node cannot tell you the node died.
+
+### A note on where the receiver runs
+
+Do not run it on the machine running the node. It will work, and it will tell
+you nothing at the moment you most need it — when that machine loses power, the
+thing that would have noticed went down with it.
+
+### Building a status page
+
+This repository ships no user interface — it ends at a JSON API. If you want a
+page, host a frontend anywhere static (Vercel, Netlify, Cloudflare Pages) and
+have it fetch `GET /api/node/status` from your receiver.
+
+Two things to expect when you do:
+
+- **CORS.** A browser on a different origin will be refused unless the receiver
+  sends the matching headers. FastAPI's `CORSMiddleware` handles it; allow only
+  your own site's origin, not `*`.
+- **The status endpoint is public and deliberately narrow.** It returns an
+  allow-list of fields, so a browser can call it directly without exposing
+  anything you would not put on a public page.
 
 ---
 

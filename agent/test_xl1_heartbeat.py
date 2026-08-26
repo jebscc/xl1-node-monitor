@@ -4,6 +4,7 @@ No Docker required -- `run()` is stubbed with real `docker ps` output.
 Run with:  pytest pi-agent/test_xl1_heartbeat.py
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -424,3 +425,132 @@ def test_version_check_on_still_reads_the_container(monkeypatch):
     monkeypatch.setattr(agent, "run", lambda cmd, **kw: '{"version": "5.2.2"}')
     agent._cli_cache["installed"] = None
     assert agent.read_cli_version("node") == "5.2.2"
+
+
+# --- is the agent working, or merely running? --------------------------------
+#
+# Every collector returns None on failure so that a failure can never break a
+# heartbeat. The cost is that a blank field could mean "not collected yet" or
+# "collection is failing", and a half-blind agent looks exactly like a healthy
+# one. collect() reports which readers came back empty.
+
+
+def _blind_agent(monkeypatch):
+    """A container exists, and every reader fails.
+
+    The caches are reset because they are what makes this agent cheap: the CLI
+    version is read once an hour, not every 30 seconds. A value left behind by
+    an earlier test would be served from cache here and the reader would look
+    healthy -- which is a genuine property of the feature, not just a test
+    artefact. A cached reading means the last successful one, not the current
+    one, so a reader that has only just started failing stays quiet until its
+    cache expires.
+    """
+    monkeypatch.setitem(agent._cli_cache, "installed", None)
+    monkeypatch.setitem(agent._cli_cache, "latest", None)
+    monkeypatch.setattr(agent, "run", lambda *a, **k: None)
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: None)
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
+    monkeypatch.setattr(agent, "fetch_cli_latest", lambda: None)
+
+
+def test_a_blind_agent_says_so(monkeypatch):
+    _blind_agent(monkeypatch)
+    failing = agent.collect()["agent_degraded"]
+    for expected in ("cli_version", "cli_latest", "log_tail",
+                     "producer_stats", "chain_heights", "node_image_count"):
+        assert expected in failing, f"{expected} failed silently: {failing}"
+
+
+def test_silence_that_is_an_answer_is_not_a_failure(monkeypatch):
+    """The guard that decides whether this is a signal or a nuisance.
+
+    Most collectors are legitimately quiet: no rebuild timer installed, no
+    systemd unit managing the container, no reason the node is blocked. Those
+    are answers. An operator who learns this line cries wolf stops reading it.
+    """
+    _blind_agent(monkeypatch)
+    failing = agent.collect()["agent_degraded"]
+    for never in ("rebuild_timer_active", "producer_unit", "producer_blocked",
+                  "node_containers", "backfill_chunk"):
+        assert never not in failing, f"{never} is normally absent, not broken"
+
+
+def test_optional_services_are_not_blamed_when_not_configured(monkeypatch):
+    """Running without the companion service is supported, so its absence is a
+    choice rather than a fault."""
+    _blind_agent(monkeypatch)
+    monkeypatch.setattr(agent, "HEIGHT_URL", "")
+    monkeypatch.setattr(agent, "PRODUCER_URL", "")
+    monkeypatch.setattr(agent, "CLI_REGISTRY", "")
+    failing = agent.collect()["agent_degraded"]
+    for never in ("chain_heights", "producer_stats", "cli_latest"):
+        assert never not in failing, failing
+
+
+def test_no_container_means_no_container_readers_are_blamed(monkeypatch):
+    """With the container gone the panel already says so. Six more failures
+    underneath it are noise about a cause already known."""
+    _blind_agent(monkeypatch)
+    monkeypatch.setattr(agent, "find_container", lambda: None)
+    failing = agent.collect()["agent_degraded"]
+    for needs_container in ("cli_version", "log_tail", "producer_stats"):
+        assert needs_container not in failing, failing
+
+
+def test_a_healthy_agent_reports_an_empty_list(monkeypatch):
+    """Sent even when empty: absent would be indistinguishable from an older
+    agent that cannot report this at all."""
+    _blind_agent(monkeypatch)
+    monkeypatch.setattr(agent, "find_container", lambda: None)
+    monkeypatch.setattr(agent, "HEIGHT_URL", "")
+    monkeypatch.setattr(agent, "PRODUCER_URL", "")
+    monkeypatch.setattr(agent, "CLI_REGISTRY", "")
+    monkeypatch.setattr(agent, "read_image_inventory", lambda: 2)
+    assert agent.collect()["agent_degraded"] == []
+
+
+def _stub_docker_logs(monkeypatch, all_lines):
+    """A `docker logs` stub that honours --tail, as the real one does. A tail
+    test whose stub ignores --tail passes with the bug present."""
+    def fake_run(args, timeout=10):
+        if "logs" not in args:
+            return None
+        n = int(args[args.index("--tail") + 1])
+        return "\n".join(all_lines[-n:])
+    monkeypatch.setattr(agent, "run", fake_run)
+
+
+def test_blank_lines_do_not_shrink_the_tail(monkeypatch):
+    """Blanks are dropped after the tail is taken, so asking for exactly N
+    returns fewer than N and the panel reads "last 20 lines" one minute and
+    "last 16" the next, for no reason a reader can see."""
+    monkeypatch.setattr(agent, "LOG_TAIL_LINES", 20)
+    _stub_docker_logs(monkeypatch, ["" if i % 3 else "line%d" % i for i in range(90)])
+    tail = agent.read_log_tail("xl1-producer")
+    assert len(tail) == 20, f"expected a full 20 despite blanks, got {len(tail)}"
+    assert all(line.strip() for line in tail)
+
+
+def test_the_tail_is_the_most_recent_lines(monkeypatch):
+    """Filling the count must not mean reaching further back than asked."""
+    monkeypatch.setattr(agent, "LOG_TAIL_LINES", 5)
+    _stub_docker_logs(monkeypatch, ["line%d" % i for i in range(50)])
+    assert agent.read_log_tail("xl1-producer") == [
+        "line45", "line46", "line47", "line48", "line49"]
+
+
+def test_every_setting_is_documented():
+    """A setting a reader cannot discover is not really a setting: this file is
+    the whole reason nobody should have to read the source to configure the
+    agent. It drifted in the sibling repo, which is why it is pinned here.
+    """
+    here = Path(__file__).parent
+    src = (here / "xl1_heartbeat.py").read_text(encoding="utf-8")
+    example = (here / "xl1-heartbeat.env.example").read_text(encoding="utf-8")
+    read = set(re.findall(r'os\.environ\.get\(\s*"([A-Z0-9_]+)"', src))
+    documented = set(re.findall(r'^#?\s*([A-Z0-9_]+)=', example, re.M))
+    missing = read - documented
+    assert not missing, (
+        f"read by the agent but absent from the example file: {sorted(missing)}")

@@ -26,15 +26,16 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import os
 import sqlite3
 import time
 from contextlib import closing
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import List, Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 DB_PATH = os.environ.get("DB_PATH", "nodes.db")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -78,6 +79,16 @@ class Heartbeat(BaseModel):
     model_config = {"extra": "allow"}
 
     node_id: str = Field(max_length=64)
+
+    @field_validator("agent_degraded")
+    @classmethod
+    def _bound_degraded(cls, v):
+        """Field names, not free text. The agent picks from a fixed set, but
+        the token is all it takes to post here."""
+        if v is None:
+            return v
+        return [n for n in v if isinstance(n, str) and re.fullmatch(r"[a-z_]{1,40}", n)]
+
     label: Optional[str] = Field(default=None, max_length=64)
     role: Optional[str] = Field(default=None, max_length=32)
     network: Optional[str] = Field(default=None, max_length=32)
@@ -86,6 +97,16 @@ class Heartbeat(BaseModel):
     cpu_percent: Optional[float] = None
     temperature_c: Optional[float] = None
     chain_heights: Optional[Dict[str, int]] = None
+    # The node's own most recent output, and the reason it says it cannot
+    # produce, so an operator can see both without reaching the machine.
+    log_tail: Optional[List[str]] = Field(default=None, max_length=100)
+    producer_blocked: Optional[str] = Field(default=None, max_length=200)
+    node_image_count: Optional[int] = Field(default=None, ge=0, le=10000)
+    # Which of the agent's own readers came back empty when they should not
+    # have. Every collector in the agent returns None on failure so a failure
+    # can never break a heartbeat, which makes a blank field ambiguous between
+    # "not collected yet" and "collection is broken". This resolves it.
+    agent_degraded: Optional[List[str]] = Field(default=None, max_length=40)
     last_produced_block: Optional[int] = None
     # One scanned range. The receiver accumulates these; the agent stays
     # stateless and is told where to resume.
@@ -171,6 +192,16 @@ PUBLIC_FIELDS = (
 def heartbeat(hb: Heartbeat, _: None = Depends(require_token)):
     prev = load(hb.node_id)
     doc = {**prev, **hb.model_dump(exclude_none=True), "received_at": now_iso()}
+    # exclude_none carries a field forward when the agent stops sending it,
+    # which is what keeps running totals alive across beats -- and is wrong for
+    # anything describing the present moment. A node that was blocked and has
+    # recovered reports no reason at all, so without this the old reason
+    # survives every later heartbeat and the node reads as permanently broken
+    # after a problem it already resolved. Same for a log tail, which would sit
+    # there looking current long after it was.
+    for transient in ("producer_blocked", "log_tail"):
+        if getattr(hb, transient, None) is None:
+            doc.pop(transient, None)
     doc.update(accumulate(prev, hb))
     save(hb.node_id, doc)
     # Tell the agent where to resume, so it holds no durable state of its own
@@ -191,6 +222,27 @@ def status():
     return {"nodes": sorted(public, key=lambda n: n.get("node_id") or ""),
             "online": sum(1 for n in nodes if n["status"] == "ONLINE"),
             "heartbeat_ttl_seconds": HEARTBEAT_TTL_SECONDS,
+            "generated_at": now_iso()}
+
+
+@app.get("/api/node/detail")
+def detail(_: None = Depends(require_token)):
+    """Everything the node reports, for whoever runs it.
+
+    The public view above is a strict allow-list, which is right: a log tail
+    can carry peer addresses, and which of an operator's readers are failing is
+    nobody else's business. But an allow-list with nothing behind it means the
+    detailed fields are written and never read, so this serves them.
+
+    Gated by the ingest token because this reference has exactly one secret. A
+    real deployment should put a separate operator credential here -- a token
+    that can WRITE heartbeats should not be the same one that can READ
+    everything the node knows.
+    """
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT doc FROM nodes").fetchall()
+    nodes = [decorate(json.loads(r["doc"])) for r in rows]
+    return {"nodes": sorted(nodes, key=lambda n: n.get("node_id") or ""),
             "generated_at": now_iso()}
 
 

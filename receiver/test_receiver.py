@@ -40,6 +40,15 @@ def total(client):
     return client.get("/api/node/status").json()["nodes"][0].get("produced_total")
 
 
+def _beat(client, **extra):
+    return client.post("/api/node/heartbeat", headers=AUTH, json={**BEAT, **extra})
+
+
+def _doc(client):
+    """The operator view -- the public one is an allow-list by design."""
+    return client.get("/api/node/detail", headers=AUTH).json()["nodes"][0]
+
+
 def test_ingest_rejects_an_unauthenticated_post(client):
     assert client.post("/api/node/heartbeat", json=BEAT).status_code == 401
 
@@ -107,3 +116,52 @@ def test_unknown_fields_are_ignored_not_rejected(client):
     r = client.post("/api/node/heartbeat", headers=AUTH,
                     json={**BEAT, "some_future_field": 42})
     assert r.status_code == 200
+
+
+# --- present-tense fields must not outlive the beat that reported them -------
+
+def test_a_resolved_block_stops_being_reported(client):
+    """The receiver carries fields forward when the agent stops sending them,
+    which is what keeps running totals alive. For anything describing the
+    present moment it is wrong: a node that recovered sends no reason at all,
+    so the old one would survive every later beat and the node would read as
+    permanently broken after a problem it had already fixed.
+    """
+    _beat(client, producer_blocked="insufficient stake")
+    assert _doc(client)["producer_blocked"] == "insufficient stake"
+    _beat(client)                                   # recovered: sends no reason
+    assert "producer_blocked" not in _doc(client)
+
+
+def test_a_stale_log_tail_is_not_shown_as_current(client):
+    _beat(client, log_tail=["starting up", "block 1"])
+    assert _doc(client)["log_tail"] == ["starting up", "block 1"]
+    _beat(client)
+    assert "log_tail" not in _doc(client)
+
+
+def test_degraded_readers_round_trip(client):
+    _beat(client, agent_degraded=["chain_heights", "log_tail"])
+    assert _doc(client)["agent_degraded"] == ["chain_heights", "log_tail"]
+
+
+def test_reader_names_are_not_free_text(client):
+    _beat(client, agent_degraded=["chain_heights", "<img src=x onerror=alert(1)>"])
+    assert _doc(client)["agent_degraded"] == ["chain_heights"]
+
+
+def test_operator_detail_is_not_public(client):
+    """A log tail can carry peer addresses and other detail that has no place
+    on a public page. The allow list means this needs no thought -- but it
+    needs a test, because the allow list is the only thing standing there."""
+    _beat(client, log_tail=["peer 10.0.0.5 connected"], agent_degraded=["log_tail"],
+          producer_blocked="insufficient stake", node_image_count=4)
+    public = client.get("/api/node/status").json()["nodes"][0]
+    for private in ("log_tail", "agent_degraded", "producer_blocked", "node_image_count"):
+        assert private not in public, f"{private} leaked to the public view"
+
+
+def test_the_operator_view_is_closed_to_strangers(client):
+    """It returns everything, including the log tail."""
+    _beat(client)
+    assert client.get("/api/node/detail").status_code == 401

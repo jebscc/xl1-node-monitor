@@ -26,7 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.0.0"
+AGENT_VERSION = "1.1.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -42,6 +42,33 @@ CONTAINER_IMAGE = os.environ.get("XL1_IMAGE", "xl1:local")
 COMMAND_HINT = os.environ.get("XL1_COMMAND_HINT", "/opt/xl1/")
 HEALTH_PORT = os.environ.get("XL1_HEALTH_PORT", "9099")
 HEALTH_URL = os.environ.get("XL1_HEALTH_URL", "")      # set only if port is published
+
+# What the node says when it cannot produce, mapped to a short reason.
+#
+# Taken from the node's log rather than recomputed. The stake figure is not
+# readable from the public gateway -- activeByStaked is not exposed there, and
+# the call that is exposed returns an empty list for a node that is demonstrably
+# producing, so reporting it would be a false alarm. The node has already made
+# this determination on the code path that decides whether it can produce; its
+# verdict is worth more than a number reconstructed from outside.
+BLOCKED_PATTERNS = (
+    ("insufficient stake", "insufficient stake"),
+    ("has no balance", "no balance"),
+)
+
+# How far back to grep the container log for the node's own reason it cannot
+# produce. Long enough to survive a quiet period, short enough that a resolved
+# problem stops being reported.
+ELIGIBILITY_WINDOW = os.environ.get("XL1_ELIGIBILITY_WINDOW", "20m")
+# How many log lines to show. The agent over-fetches and trims, so blank lines
+# in the output do not shrink the count below this.
+LOG_TAIL_LINES = int(os.environ.get("XL1_LOG_TAIL_LINES", "20"))
+LOG_TAIL_MAX_CHARS = 300
+# Optional systemd lookups. Both default to empty: not every host runs the
+# container under systemd, and guessing a unit name that does not exist would
+# report a failure where there is none.
+REBUILD_TIMER = os.environ.get("XL1_REBUILD_TIMER", "")
+PRODUCER_UNIT = os.environ.get("XL1_PRODUCER_UNIT", "")
 
 # Local xl1-service (read-only gateway) for chain height. Empty disables it.
 HEIGHT_URL = os.environ.get("XL1_HEIGHT_URL", "http://127.0.0.1:8090/block-height")
@@ -559,8 +586,152 @@ def fetch_cli_latest():
     return version
 
 
+def read_blocked_reason(name):
+    """Why the node says it cannot produce, or None if it has not said so.
+
+    Scans a window of its own log rather than the whole history: a complaint
+    from days ago that has since been resolved is not a current fault, and
+    reporting it as one would be worse than reporting nothing.
+    """
+    if not name or not BLOCKED_PATTERNS:
+        return None
+    out = run(["docker", "logs", "--since", ELIGIBILITY_WINDOW, name], timeout=30)
+    if not out:
+        return None
+    lowered = out.lower()
+    for needle, reason in BLOCKED_PATTERNS:
+        if needle in lowered:
+            return reason
+    return None
+
+
+def read_log_tail(name):
+    """The last few lines the node printed, or None.
+
+    Pushed rather than pulled: nothing on this machine accepts inbound
+    connections, so the panel cannot ask for a log. It gets whatever the last
+    heartbeat carried.
+    """
+    if not name or LOG_TAIL_LINES <= 0:
+        return None
+    # Ask docker for more lines than we intend to keep.
+    #
+    # Blank lines are dropped after the fact, so a tail of exactly N arrives as
+    # fewer than N and the panel's count wobbles -- 20 lines one minute, 16 the
+    # next, for no reason the reader can see. Over-fetching keeps it at N
+    # whenever the log actually holds N non-blank lines, which is the whole
+    # point of asking for a fixed number.
+    fetch = min(LOG_TAIL_LINES * 5, LOG_TAIL_LINES + 200)
+    out = run(["docker", "logs", "--tail", str(fetch), name], timeout=20)
+    if not out:
+        return None
+    lines = [ln[:LOG_TAIL_MAX_CHARS] for ln in out.splitlines() if ln.strip()]
+    return lines[-LOG_TAIL_LINES:] or None
+
+
+def read_image_inventory():
+    """How many versioned node images are on disk, or None.
+
+    One accumulates per CLI release at roughly half a gigabyte each, and
+    nothing used to say so -- the first sign would have been a full disk. The
+    rebuild script prunes them, so a count that keeps climbing means the prune
+    is not running, which is worth seeing before the disk is.
+    """
+    repo = CONTAINER_IMAGE.split(":")[0]
+    out = run(["docker", "images", repo, "--format", "{{.Tag}}"])
+    if out is None:
+        return None
+    tags = [t.strip() for t in out.splitlines() if t.strip()]
+    return sum(1 for t in tags if re.fullmatch(r"[0-9]+(\.[0-9]+){2}", t))
+
+
+def read_producer_unit():
+    """The systemd unit managing the producer, or None if nothing does.
+
+    `systemctl is-active` exits non-zero for anything but an active unit, and
+    run() turns a non-zero exit into None, so an absent unit reports nothing
+    rather than guessing.
+    """
+    if not PRODUCER_UNIT:
+        return None
+    return PRODUCER_UNIT if run(["systemctl", "is-active", PRODUCER_UNIT]) == "active" else None
+
+
+# Every collector above returns None on failure rather than raising, so that a
+# failed `docker exec` or an unreachable registry can never take down a
+# heartbeat. That is deliberate, and it has a cost: a blank field on the panel
+# could mean "not collected yet" or "collection is failing", and there was no
+# way to tell them apart. An agent could go half-blind while still reporting
+# ONLINE with every sign of health.
+#
+# So the ones that failed say so. What this does NOT do is report every empty
+# collector: most of them are legitimately silent. No rebuild timer installed,
+# no systemd unit managing the container, no reason the node is blocked --
+# those are answers, not failures, and listing them would replace a missing
+# signal with a false one. Each entry below is guarded by the condition that
+# makes silence genuinely wrong: something was there to read, and reading it
+# did not work.
+
+
+def read_rebuild_timer():
+    """(active, next_run) for the image rebuild timer, or (None, None).
+
+    `systemctl show` needs no privilege for this, and reports the timer's own
+    view rather than ours. A host with no such timer reports nothing and the
+    email falls back to manual instructions, which is the honest answer.
+    """
+    if not REBUILD_TIMER:
+        return None, None
+    out = run(["systemctl", "show", REBUILD_TIMER,
+               "-p", "ActiveState", "-p", "NextElapseUSecRealtime"])
+    if not out:
+        return None, None
+    fields = {}
+    for line in out.splitlines():
+        key, _, value = line.partition("=")
+        fields[key.strip()] = value.strip()
+    state = fields.get("ActiveState")
+    if not state or state == "":
+        return None, None
+    active = state == "active"
+    raw = fields.get("NextElapseUSecRealtime", "")
+    nxt = None
+    if raw and raw not in ("0", "n/a", "infinity"):
+        if raw.isdigit():
+            # Older systemd reports microseconds since the epoch; newer ones
+            # already give a human timestamp. Accept either.
+            try:
+                nxt = time.strftime("%a %d %b %H:%M UTC",
+                                    time.gmtime(int(raw) / 1_000_000))
+            except (ValueError, OSError, OverflowError):
+                nxt = None
+        else:
+            nxt = raw[:64]
+    return active, nxt
+
+
+_standing_cache = {"at": 0.0, "value": None}
+
+
+# Every collector above returns None on failure rather than raising, so that a
+# failed `docker exec` or an unreachable service can never take down a
+# heartbeat. That is deliberate, and it has a cost: a blank field could mean
+# "not collected yet" or "collection is failing", and an agent can go
+# half-blind while still reporting with every sign of health.
+#
+# So the ones that failed say so. What this does NOT do is report every empty
+# collector: most are legitimately silent. No rebuild timer installed, no
+# systemd unit managing the container, no reason the node is blocked -- those
+# are answers, not failures, and listing them would replace a missing signal
+# with a false one.
+def _degraded_note(degraded, field, failed):
+    if failed:
+        degraded.append(field)
+
+
 def collect():
     name = find_container()
+    degraded = []
     live, ready = check_health(name)
     payload = {
         "node_id": NODE_ID, "label": NODE_LABEL, "role": NODE_ROLE,
@@ -578,9 +749,41 @@ def collect():
     installed = read_cli_version(name)
     if installed:
         payload["cli_version"] = installed
+    # Only a failure if there was a container to ask in the first place.
+    _degraded_note(degraded, "cli_version", bool(name) and not installed)
     latest = fetch_cli_latest()
     if latest:
         payload["cli_latest"] = latest
+    # CLI_REGISTRY empty means the lookup was switched off deliberately.
+    _degraded_note(degraded, "cli_latest", bool(CLI_REGISTRY) and not latest)
+
+    tail = read_log_tail(name)
+    if tail:
+        payload["log_tail"] = tail
+    _degraded_note(degraded, "log_tail", bool(name) and not tail)
+
+    # One image accumulates per CLI release at roughly half a gigabyte. A count
+    # that keeps climbing is worth seeing before the disk is full.
+    images = read_image_inventory()
+    if images is not None:
+        payload["node_image_count"] = images
+    # Docker is not optional for this agent, so this one is never "n/a".
+    _degraded_note(degraded, "node_image_count", images is None)
+
+    # Absence here is good news, so it is never a degraded reader.
+    blocked = read_blocked_reason(name)
+    if blocked:
+        payload["producer_blocked"] = blocked
+
+    unit = read_producer_unit()
+    if unit:
+        payload["producer_unit"] = unit
+
+    timer_active, timer_next = read_rebuild_timer()
+    if timer_active is not None:
+        payload["rebuild_timer_active"] = timer_active
+    if timer_next:
+        payload["rebuild_timer_next"] = timer_next
 
     # Surface duplicates rather than quietly monitoring one of them.
     node_containers = list_node_containers()
@@ -588,6 +791,11 @@ def collect():
         payload["node_containers"] = node_containers
 
     stats = fetch_producer_stats(name)
+    # The most consequential of these: production counting stops without it,
+    # and the panel would show a frozen total with no explanation. Guarded on
+    # PRODUCER_URL because running without the companion service is supported.
+    _degraded_note(degraded, "producer_stats",
+                   bool(name) and bool(PRODUCER_URL) and not stats)
     if stats:
         # Counts only. The reward address stays on this machine.
         payload["produced_recent"] = stats.get("produced")
@@ -639,12 +847,18 @@ def collect():
             payload["explorer_block_url"] = link
 
     heights = fetch_block_heights()
+    _degraded_note(degraded, "chain_heights", bool(HEIGHT_URL) and not heights)
     if heights:
         payload["chain_heights"] = heights
         # block_height stays this node's own network, for the node card.
         own = heights.get(NODE_NETWORK)
         if own is not None:
             payload["block_height"] = own
+
+    # Sent even when empty: "nothing failed" is the useful reading, and an
+    # absent field would be indistinguishable from an older agent that does
+    # not report this at all.
+    payload["agent_degraded"] = degraded
     return payload
 
 

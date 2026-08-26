@@ -447,6 +447,37 @@ Two things to expect when you do:
 | `blocks_skipped` | Blocks the counter could not account for. Should stay `0` |
 | `temperature_c`, `cpu_percent` | Host vitals, measured on the machine itself |
 
+These are on the operator view (`GET /api/node/detail`, same token as ingest),
+not the public one — a log tail can carry peer addresses, and which of your
+readers are failing is nobody else's business:
+
+| Field | Meaning |
+|---|---|
+| `agent_degraded` | Readers that came back empty when they should not have. `[]` means all fine |
+| `log_tail` | The node's most recent output, so you can glance at it without reaching the machine |
+| `producer_blocked` | The node's own stated reason it cannot produce, taken from its log |
+| `node_image_count` | Versioned node images on disk. One accumulates per release at roughly half a gigabyte |
+
+### Running and working are different things
+
+Every collector in the agent returns `None` on failure rather than raising, so
+that a failed `docker exec` or an unreachable service can never take down a
+heartbeat. That is deliberate, and it costs something: an agent whose readers
+are failing one by one keeps reporting, keeps looking `ONLINE`, and keeps
+looking healthy. A blank field is ambiguous between "not collected yet" and
+"collection is broken".
+
+`agent_degraded` resolves it. It deliberately does **not** list every empty
+collector — no rebuild timer installed, no companion service configured, no
+reason the node is blocked, no container at all: those are answers, not
+failures. Each entry is guarded by the condition that makes silence genuinely
+wrong, because an operator who learns the list cries wolf stops reading it.
+
+Two things to know. It reflects the **most recent beat**, so a single network
+blip appears and clears. And readers are **cached** — the CLI version is read
+once an hour, not every 30 seconds — so a reader that has just started failing
+stays quiet until its cache expires.
+
 ### Reading it without fooling yourself
 
 Three properties of this data will mislead you if you do not know them, and
@@ -719,6 +750,13 @@ with the cursors the agent should resume from:
 
 Unknown fields in a heartbeat are ignored rather than rejected, so an older
 receiver keeps working against a newer agent.
+
+Most fields are **carried forward** when the agent stops sending them, which is
+what keeps running totals alive across beats. Fields describing the present
+moment must not be: a node that was blocked and has recovered sends no reason
+at all, so carrying the old one forward would leave it reading as permanently
+broken after a problem it had already fixed. `producer_blocked` and `log_tail`
+are cleared when absent for exactly that reason.
 
 The bundled receiver is deliberately small: SQLite, one file, no alerting, no
 dashboard. Those are application decisions. What it does implement is the part

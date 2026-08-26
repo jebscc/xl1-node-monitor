@@ -447,6 +447,35 @@ Two things to expect when you do:
 | `blocks_skipped` | Blocks the counter could not account for. Should stay `0` |
 | `temperature_c`, `cpu_percent` | Host vitals, measured on the machine itself |
 
+### Reading it without fooling yourself
+
+Three properties of this data will mislead you if you do not know them, and
+between them they can turn a healthy node into a two-day investigation.
+
+**`produced_total` updates on the scan cycle, not on the heartbeat.** The
+heartbeat arrives every 30 seconds; block production is scanned every
+`XL1_PRODUCER_INTERVAL` seconds, 900 by default. **A perfectly healthy producer
+shows an unchanged count for fifteen minutes at a time.** Refreshing the page
+faster does not make the number more current.
+
+**A producer signs occasionally, not constantly.** Depending on the size of the
+federation your node may sign once every few minutes or once every few hours.
+Before you can call silence a fault, you need to know what your node's normal
+gap looks like — and you only learn that by watching it over a day.
+
+**Therefore: compare over hours, never minutes.** `produced_total` now against
+`produced_total` this time yesterday is a real measurement. `produced_total`
+now against thirty seconds ago is noise, and reading it as a signal is the
+single most reliable way to misdiagnose this system.
+
+The receiver here keeps no history — `GET /api/node/status` is a snapshot. If
+you want the day-over-day view that makes this legible, record `produced_total`
+somewhere on a timer. A cron entry appending it to a file is enough:
+
+```bash
+*/30 * * * * curl -s http://127.0.0.1:8000/api/node/status | tee -a /var/log/xl1-produced.log >/dev/null
+```
+
 ---
 
 ## Troubleshooting
@@ -460,6 +489,10 @@ Two things to expect when you do:
 | `permission denied … docker.sock` | `xl1agent` is not in the `docker` group. Re-run the `useradd` line, then `sudo systemctl restart xl1-heartbeat` |
 | Memory shows as unavailable | Expected on Raspberry Pi OS — it ships with the kernel memory cgroup disabled, so `docker stats` reports `0B`. Host memory is substituted |
 | Nothing in `/api/node/status` | The agent never reached the receiver. Run `curl -s BACKEND_URL/healthz` **from the node machine** |
+| `produced_total` has not moved in ten minutes | Almost certainly nothing. The scan runs every 15 minutes by default, and a producer signs occasionally. See [Reading it without fooling yourself](#reading-it-without-fooling-yourself) |
+| Edits to the node's env file had no effect | `docker start` replays the configuration captured when the container was **created**. `--env-file` is read once, at `docker run`. To pick up an edit you must remove the container and run it again |
+| A container disappeared and took its logs with it | `--rm` deletes the container on exit, including its logs and exit code. Convenient for a one-shot; useless when something is failing. Drop `--rm` while diagnosing so the corpse survives |
+| `journalctl` shows nothing from before a reboot | journald keeps logs in RAM unless `/var/log/journal` exists **when it starts**, and vacuums aggressively by default. `sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald` makes them persistent. Absent logs are not evidence that nothing happened |
 
 ---
 

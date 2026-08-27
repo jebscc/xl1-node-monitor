@@ -554,6 +554,11 @@ def test_a_healthy_agent_reports_an_empty_list(monkeypatch):
     monkeypatch.setattr(agent, "PRODUCER_URL", "")
     monkeypatch.setattr(agent, "CLI_REGISTRY", "")
     monkeypatch.setattr(agent, "read_image_inventory", lambda: 2)
+    # A blind agent is not a healthy one until every reader works, and apt was
+    # the one still left blind. Without this the test agrees with whichever
+    # machine runs it: /usr/bin/apt is absent on Windows and present on the
+    # Ubuntu runner, so it passed locally and failed in CI.
+    monkeypatch.setattr(agent, "read_os_updates", lambda: (0, 0, 1.0, False))
     assert agent.collect()["agent_degraded"] == []
 
 
@@ -639,6 +644,10 @@ def test_a_healthy_steady_state_agent_reports_nothing_failing(monkeypatch):
     monkeypatch.setitem(agent._producer_cursor, "known", True)
     monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 540)
     monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
+    # apt too, or this passes on a machine without it and fails on the Ubuntu
+    # runner that actually executes it -- which is testing the operating system
+    # rather than the agent.
+    monkeypatch.setattr(agent, "read_os_updates", lambda: (0, 0, 1.0, False))
 
     failing = agent.collect()["agent_degraded"]
     assert failing == [], f"a healthy node must report nothing failing, got {failing}"

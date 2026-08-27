@@ -20,13 +20,14 @@ import os
 import re
 import socket
 import subprocess
+import threading
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.1.0"
+AGENT_VERSION = "1.2.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -729,6 +730,94 @@ def _degraded_note(degraded, field, failed):
         degraded.append(field)
 
 
+def producer_scan_due():
+    """Whether a production scan should have run on this beat.
+
+    fetch_producer_stats returns None for two very different reasons: the scan
+    is not due (the overwhelmingly common case -- it runs once per
+    PRODUCER_INTERVAL, roughly one heartbeat in thirty), or it was due and
+    failed. Only the second is a fault.
+
+    Conflating them reported a perfectly healthy node as half-blind on 29 beats
+    out of 30, naming the most consequential reader it has. The rate limiter is
+    stamped only on success, so after a real failure this stays true and the
+    fault is still reported.
+    """
+    if not PRODUCER_URL or not _producer_cursor["known"]:
+        return False
+    if not _producer_cache["at"]:
+        return True
+    return (time.monotonic() - _producer_cache["at"]) >= PRODUCER_INTERVAL
+
+
+# --- keeping slow work off the heartbeat path --------------------------------
+#
+# Every collector used to run inline, so the beat waited on the slowest of
+# them. The production scan alone allows 180 seconds against the receiver's
+# 90-second staleness threshold, so one slow scan could delay the next
+# heartbeat past the point where a node that is producing perfectly well is
+# reported OFFLINE. The agent could make its own node look dead by doing its
+# job.
+
+_slow = {"lock": threading.Lock(), "data": {}, "on": False}
+SLOW_CYCLE = int(os.environ.get("XL1_SLOW_CYCLE", "60"))
+
+
+def _slow_put(key, value):
+    with _slow["lock"]:
+        _slow["data"][key] = value
+
+
+def _slow_get(key, fn, take=False):
+    """The worker's last value, or a direct call when it is not running.
+
+    The fallback keeps this testable: with no worker thread every collector
+    behaves exactly as before, so the tests exercise the real code path rather
+    than a stub of it.
+
+    `take` consumes the value. The production scan and the backfill chunk
+    report a RANGE the receiver accumulates, so re-reading one on every beat
+    would re-send an already-counted range thirty times a cycle.
+    """
+    if not _slow["on"]:
+        return fn()
+    with _slow["lock"]:
+        return _slow["data"].pop(key, None) if take else _slow["data"].get(key)
+
+
+def _slow_worker():
+    """Runs the expensive collectors. Must never die -- a dead worker is a
+    silent one, and every field it feeds would simply stop updating."""
+    while True:
+        try:
+            name = find_container()
+            _slow_put("cli_version", read_cli_version(name))
+            _slow_put("cli_latest", fetch_cli_latest())
+            _slow_put("log_tail", read_log_tail(name))
+            _slow_put("image_inventory", read_image_inventory())
+            _slow_put("blocked_reason", read_blocked_reason(name))
+            _slow_put("producer_unit", read_producer_unit())
+            _slow_put("rebuild_timer", read_rebuild_timer())
+            stats = fetch_producer_stats(name)
+            if stats:
+                _slow_put("producer_stats", stats)
+                chunk = fetch_backfill_chunk(name)
+                if chunk:
+                    _slow_put("backfill_chunk", chunk)
+        except Exception as e:
+            print("slow collector cycle failed: %s" % e, file=sys.stderr, flush=True)
+        time.sleep(SLOW_CYCLE)
+
+
+def start_slow_worker():
+    """Called from main(), never from a test. Until it runs, every collector is
+    called inline exactly as before."""
+    _slow["on"] = True
+    t = threading.Thread(target=_slow_worker, name="xl1-slow", daemon=True)
+    t.start()
+    return t
+
+
 def collect():
     name = find_container()
     degraded = []
@@ -746,40 +835,40 @@ def collect():
         payload["container_status"] = "missing"
     payload.update(host_metrics())
 
-    installed = read_cli_version(name)
+    installed = _slow_get("cli_version", lambda: read_cli_version(name))
     if installed:
         payload["cli_version"] = installed
     # Only a failure if there was a container to ask in the first place.
     _degraded_note(degraded, "cli_version", bool(name) and not installed)
-    latest = fetch_cli_latest()
+    latest = _slow_get("cli_latest", fetch_cli_latest)
     if latest:
         payload["cli_latest"] = latest
     # CLI_REGISTRY empty means the lookup was switched off deliberately.
     _degraded_note(degraded, "cli_latest", bool(CLI_REGISTRY) and not latest)
 
-    tail = read_log_tail(name)
+    tail = _slow_get("log_tail", lambda: read_log_tail(name))
     if tail:
         payload["log_tail"] = tail
     _degraded_note(degraded, "log_tail", bool(name) and not tail)
 
     # One image accumulates per CLI release at roughly half a gigabyte. A count
     # that keeps climbing is worth seeing before the disk is full.
-    images = read_image_inventory()
+    images = _slow_get("image_inventory", read_image_inventory)
     if images is not None:
         payload["node_image_count"] = images
     # Docker is not optional for this agent, so this one is never "n/a".
     _degraded_note(degraded, "node_image_count", images is None)
 
     # Absence here is good news, so it is never a degraded reader.
-    blocked = read_blocked_reason(name)
+    blocked = _slow_get("blocked_reason", lambda: read_blocked_reason(name))
     if blocked:
         payload["producer_blocked"] = blocked
 
-    unit = read_producer_unit()
+    unit = _slow_get("producer_unit", read_producer_unit)
     if unit:
         payload["producer_unit"] = unit
 
-    timer_active, timer_next = read_rebuild_timer()
+    timer_active, timer_next = _slow_get("rebuild_timer", read_rebuild_timer) or (None, None)
     if timer_active is not None:
         payload["rebuild_timer_active"] = timer_active
     if timer_next:
@@ -790,12 +879,14 @@ def collect():
     if node_containers:
         payload["node_containers"] = node_containers
 
-    stats = fetch_producer_stats(name)
-    # The most consequential of these: production counting stops without it,
-    # and the panel would show a frozen total with no explanation. Guarded on
-    # PRODUCER_URL because running without the companion service is supported.
+    stats = _slow_get("producer_stats", lambda: fetch_producer_stats(name), take=True)
+    # Checked AFTER the call and only when a scan was actually due. A scan that
+    # just succeeded stamps the rate limiter and is no longer due; one that
+    # failed leaves it due and is still reported. Without this the not-due case
+    # -- 29 beats out of 30 -- read as a failure, naming the most consequential
+    # reader this agent has, permanently, on a healthy node.
     _degraded_note(degraded, "producer_stats",
-                   bool(name) and bool(PRODUCER_URL) and not stats)
+                   bool(name) and not stats and producer_scan_due())
     if stats:
         # Counts only. The reward address stays on this machine.
         payload["produced_recent"] = stats.get("produced")
@@ -825,7 +916,7 @@ def collect():
             if explorer.get("lastProducedBlock"):
                 payload["explorer_block_url"] = explorer["lastProducedBlock"]
 
-        chunk = fetch_backfill_chunk(name)
+        chunk = _slow_get("backfill_chunk", lambda: fetch_backfill_chunk(name), take=True)
         if chunk:
             payload["backfill_from_block"] = chunk.get("fromBlock")
             payload["backfill_to_block"] = chunk.get("toBlock")
@@ -906,6 +997,10 @@ def main():
         return 2
 
     once = "--once" in sys.argv
+    # --once stays synchronous: a single run should do the work and report
+    # it, not start a thread and report whatever it managed in time.
+    if not once:
+        start_slow_worker()
     while True:
         payload = collect()
         ok = send(payload)

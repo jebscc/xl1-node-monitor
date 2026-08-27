@@ -6,6 +6,7 @@ Run with:  pytest pi-agent/test_xl1_heartbeat.py
 
 import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,39 @@ PS_FULL = (
     "charming_einstein\t3a27a9e5f10d\tnode /opt/xl1/lib/entrypoint.mjs\n"
 )
 
+
+REPORTED_FIELDS = {
+    'agent_degraded',
+    'backfill_from_block',
+    'backfill_produced',
+    'backfill_to_block',
+    'block_height',
+    'blocks_since_produced',
+    'chain_heights',
+    'cli_latest',
+    'cli_version',
+    'container_status',
+    'explorer_block_url',
+    'finalized_head',
+    'indexer_floor',
+    'last_block_epoch',
+    'last_produced_block',
+    'log_tail',
+    'node_containers',
+    'node_image_count',
+    'pending_blocks',
+    'pending_transactions',
+    'produced_recent',
+    'produced_window',
+    'producer_blocked',
+    'producer_unit',
+    'rebuild_timer_active',
+    'rebuild_timer_next',
+    'scan_finalized',
+    'scan_from_block',
+    'scan_produced',
+    'scan_to_block',
+}
 
 def _stub_run(monkeypatch, responses):
     """responses: list of (match_substring, return_value), first match wins."""
@@ -436,7 +470,12 @@ def test_version_check_on_still_reads_the_container(monkeypatch):
 
 
 def _blind_agent(monkeypatch):
-    """A container exists, and every reader fails.
+    """An ESTABLISHED agent where a container exists and every reader fails.
+
+    Established matters. A freshly started agent has not been told its cursor
+    and deliberately does not scan -- scanning blind would re-count a range the
+    receiver already has -- so producer_stats returning nothing is correct
+    there, and must not read as a fault.
 
     The caches are reset because they are what makes this agent cheap: the CLI
     version is read once an hour, not every 30 seconds. A value left behind by
@@ -448,6 +487,9 @@ def _blind_agent(monkeypatch):
     """
     monkeypatch.setitem(agent._cli_cache, "installed", None)
     monkeypatch.setitem(agent._cli_cache, "latest", None)
+    monkeypatch.setitem(agent._producer_cursor, "known", True)
+    monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 4000)
+    monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
     monkeypatch.setattr(agent, "run", lambda *a, **k: None)
     monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
     monkeypatch.setattr(agent, "fetch_block_heights", lambda: None)
@@ -554,3 +596,101 @@ def test_every_setting_is_documented():
     missing = read - documented
     assert not missing, (
         f"read by the agent but absent from the example file: {sorted(missing)}")
+
+
+# --- the two faults this version fixes ---------------------------------------
+
+
+@pytest.fixture
+def worker_on(monkeypatch):
+    """Pretend the worker thread is running, without starting one."""
+    monkeypatch.setitem(agent._slow, "on", True)
+    monkeypatch.setitem(agent._slow, "data", {})
+    return agent._slow
+
+
+def test_a_healthy_steady_state_agent_reports_nothing_failing(monkeypatch):
+    """The test that catches a collector whose quiet path is normal.
+
+    Checking a hand-picked list of normally-quiet collectors only ever covers
+    cases already thought of, and it passed while this agent reported
+    producer_stats as failing on a perfectly healthy node -- 29 beats out of
+    30, naming the most consequential reader it has. This instead builds an
+    agent where everything works and asserts that NOTHING is reported.
+    """
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "read_cli_version", lambda name: "5.3.0")
+    monkeypatch.setattr(agent, "fetch_cli_latest", lambda: "5.3.0")
+    monkeypatch.setattr(agent, "read_log_tail", lambda name: ["a block"])
+    monkeypatch.setattr(agent, "read_image_inventory", lambda: 3)
+    monkeypatch.setattr(agent, "read_blocked_reason", lambda name: None)
+    monkeypatch.setattr(agent, "read_producer_unit", lambda: None)
+    monkeypatch.setattr(agent, "read_rebuild_timer", lambda: (None, None))
+    monkeypatch.setattr(agent, "list_node_containers", lambda: ["xl1-producer"])
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 571178})
+
+    # A scan ran nine minutes ago and is not due again for fifteen: the
+    # overwhelmingly common state on any given heartbeat.
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
+    monkeypatch.setitem(agent._producer_cursor, "known", True)
+    monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 540)
+    monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
+
+    failing = agent.collect()["agent_degraded"]
+    assert failing == [], f"a healthy node must report nothing failing, got {failing}"
+
+
+def test_a_scan_that_was_due_and_failed_is_still_reported(monkeypatch):
+    """Suppressing the not-due case must not suppress the real one."""
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
+    monkeypatch.setitem(agent._producer_cursor, "known", True)
+    monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 4000)
+    monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
+    assert "producer_stats" in agent.collect()["agent_degraded"]
+
+
+def test_the_beat_does_not_wait_for_a_slow_collector(worker_on, monkeypatch):
+    """The production scan allows 180 seconds against the receiver's 90-second
+    staleness threshold, so run inline it could report a healthy node OFFLINE."""
+    def glacial(*a, **k):
+        time.sleep(5)
+        raise AssertionError("the beat called a slow collector directly")
+
+    for slow in ("fetch_producer_stats", "read_log_tail", "fetch_cli_latest"):
+        monkeypatch.setattr(agent, slow, glacial)
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 1})
+
+    started = time.monotonic()
+    agent.collect()
+    assert time.monotonic() - started < 1.0, "the beat waited on background work"
+
+
+def test_a_scan_is_reported_once_not_on_every_beat(worker_on, monkeypatch):
+    """The scan reports a RANGE the receiver accumulates, so re-reading the
+    worker's last result each beat would re-send an already-counted range."""
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 1})
+    agent._slow_put("producer_stats", {"fromBlock": 100, "toBlock": 199, "produced": 3})
+    assert agent.collect().get("scan_from_block") == 100
+    assert agent.collect().get("scan_from_block") is None, "and not reported again"
+
+
+def test_reported_fields_are_pinned_to_the_version():
+    """Every field this agent sends, pinned to the version that sends it.
+
+    The sibling repo has had this for a while and it caught three version
+    bumps that would otherwise have shipped silently. This one did not, and
+    drifted eight releases behind as a result.
+
+    If this fails: add the field below and raise the MINOR. If a field was
+    removed instead, that is a MAJOR -- the receiver stops seeing something it
+    was shown.
+    """
+    src = (Path(__file__).parent / "xl1_heartbeat.py").read_text(encoding="utf-8")
+    found = set(re.findall(r'payload\["([a-z_0-9]+)"\]\s*=', src))
+    added = found - REPORTED_FIELDS
+    gone = REPORTED_FIELDS - found
+    assert not added, f"heartbeat gained field(s) {sorted(added)} — add them and bump the MINOR"
+    assert not gone, f"heartbeat lost field(s) {sorted(gone)} — that is a MAJOR"

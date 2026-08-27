@@ -43,6 +43,10 @@ REPORTED_FIELDS = {
     'log_tail',
     'node_containers',
     'node_image_count',
+    'os_updates',
+    'os_security_updates',
+    'os_apt_age_hours',
+    'os_reboot_required',
     'pending_blocks',
     'pending_transactions',
     'produced_recent',
@@ -694,3 +698,118 @@ def test_reported_fields_are_pinned_to_the_version():
     gone = REPORTED_FIELDS - found
     assert not added, f"heartbeat gained field(s) {sorted(added)} — add them and bump the MINOR"
     assert not gone, f"heartbeat lost field(s) {sorted(gone)} — that is a MAJOR"
+
+
+# --- host packages -----------------------------------------------------------
+#
+# The layer under the node. A machine can sit unpatched for months while every
+# node signal reads perfectly normal, because nothing else here looks at it.
+
+UPGRADABLE = """Listing...
+libssl3/bookworm-security 3.0.14-1~deb12u2 arm64 [upgradable from: 3.0.11-1~deb12u2]
+curl/bookworm-security 7.88.1-10+deb12u7 arm64 [upgradable from: 7.88.1-10+deb12u5]
+vim/bookworm 2:9.0.1378-2 arm64 [upgradable from: 2:9.0.1000-4]
+"""
+
+
+def _stub_apt(monkeypatch, out, exists=True):
+    monkeypatch.setitem(agent._os_cache, "value", None)
+    monkeypatch.setattr(agent, "run", lambda a, timeout=10: out if "apt" in a else None)
+    monkeypatch.setattr(agent.os.path, "exists", lambda p: exists)
+    monkeypatch.setattr(agent.os.path, "getmtime", lambda p: agent.time.time() - 3600)
+
+
+def test_security_updates_are_counted_apart_from_the_rest(monkeypatch):
+    """A Pi always has some routine package a version behind. Mailing about
+    that would train the reader to ignore the alert within a month, taking the
+    security mail with it -- so the two are counted separately."""
+    _stub_apt(monkeypatch, UPGRADABLE)
+    total, security, age, reboot = agent.read_os_updates()
+    assert total == 3, "three upgradable packages"
+    assert security == 2, "two of them from a -security suite"
+
+
+def test_a_quiet_host_reports_zero_not_nothing(monkeypatch):
+    _stub_apt(monkeypatch, "Listing...\n")
+    total, security, age, reboot = agent.read_os_updates()
+    assert (total, security) == (0, 0)
+
+
+def test_stale_package_lists_are_reported(monkeypatch):
+    """The whole reason this field exists. apt answers against its last
+    refresh, so a host whose lists have not been updated in months says
+    "0 updates" -- confidently, and wrongly. That is worse than not checking,
+    because it reads as good news."""
+    _stub_apt(monkeypatch, "Listing...\n")
+    monkeypatch.setattr(agent.os.path, "getmtime",
+                        lambda p: agent.time.time() - 90 * 24 * 3600)
+    _, _, age_hours, _ = agent.read_os_updates()
+    assert age_hours > 24 * 30, f"should show the lists are ancient, got {age_hours}"
+
+
+def test_apt_failing_is_not_reported_as_no_updates(monkeypatch):
+    """Same trap from the other direction: a failed read must never look like
+    a clean bill of health."""
+    _stub_apt(monkeypatch, None)
+    assert agent.read_os_updates() is None
+
+
+def test_the_check_can_be_switched_off(monkeypatch):
+    _stub_apt(monkeypatch, UPGRADABLE)
+    monkeypatch.setattr(agent, "OS_UPDATE_INTERVAL", 0)
+    assert agent.read_os_updates() is None
+
+
+def test_a_clean_host_is_not_re_read_often(monkeypatch):
+    """Nothing pending is the usual case and costs a subprocess to confirm.
+    Six hours is right for it."""
+    calls = []
+    monkeypatch.setattr(agent, "run", lambda a, timeout=10: calls.append(1) or "Listing...")
+    # Precise, not a blanket True: a stub that answers yes to everything also
+    # answers yes to /var/run/reboot-required, which makes the "clean" host
+    # pending and sends it down the fast path -- so the first version of this
+    # test failed against correct code, for a reason of its own making.
+    monkeypatch.setattr(agent.os.path, "exists", lambda p: "reboot-required" not in p)
+    monkeypatch.setattr(agent.os.path, "getmtime", lambda p: agent.time.time() - 3600)
+    monkeypatch.setitem(agent._os_cache, "value", None)
+    monkeypatch.setitem(agent._os_cache, "at", 0.0)
+
+    agent.read_os_updates()
+    # Well past the pending interval, nowhere near the slow one.
+    monkeypatch.setitem(agent._os_cache, "at", agent.time.monotonic() - 1800)
+    agent.read_os_updates()
+    assert len(calls) == 1, "a clean host should not be re-read every 15 minutes"
+
+
+def test_a_pending_host_is_re_read_soon(monkeypatch):
+    """The step this removes: at the slow cadence a host that had just been
+    patched went on reporting the old count, and the all-clear email did not
+    arrive, for up to six hours -- unless someone knew to restart the agent."""
+    calls = []
+    monkeypatch.setattr(agent, "run", lambda a, timeout=10: calls.append(1) or UPGRADABLE)
+    monkeypatch.setattr(agent.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(agent.os.path, "getmtime", lambda p: agent.time.time() - 3600)
+    monkeypatch.setitem(agent._os_cache, "value", None)
+    monkeypatch.setitem(agent._os_cache, "at", 0.0)
+
+    total, security, _age, _reboot = agent.read_os_updates()
+    assert total and security, "fixture should leave something pending"
+    monkeypatch.setitem(agent._os_cache, "at", agent.time.monotonic() - 1800)
+    agent.read_os_updates()
+    assert len(calls) == 2, "a host with updates waiting should be looked at again"
+
+
+def test_a_pending_reboot_alone_keeps_the_fast_cadence(monkeypatch):
+    """The count returns to zero the moment the packages install, but the
+    machine is still running the old version until it restarts. Reading that
+    as "clean" would drop back to six hours at precisely the point the
+    operator is mid-task."""
+    calls = []
+    monkeypatch.setattr(agent, "run", lambda a, timeout=10: calls.append(1) or "Listing...")
+    monkeypatch.setattr(agent.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(agent.os.path, "getmtime", lambda p: agent.time.time() - 3600)
+    monkeypatch.setitem(agent._os_cache, "value", (0, 0, 1.0, True))   # reboot outstanding
+    monkeypatch.setitem(agent._os_cache, "at", agent.time.monotonic() - 1800)
+
+    agent.read_os_updates()
+    assert len(calls) == 1, "a reboot still outstanding is still pending"

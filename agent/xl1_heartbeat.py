@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.2.0"
+AGENT_VERSION = "1.3.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -65,6 +65,18 @@ ELIGIBILITY_WINDOW = os.environ.get("XL1_ELIGIBILITY_WINDOW", "20m")
 # in the output do not shrink the count below this.
 LOG_TAIL_LINES = int(os.environ.get("XL1_LOG_TAIL_LINES", "20"))
 LOG_TAIL_MAX_CHARS = 300
+# Host package updates. Read on a slow cycle: this shells out to apt, the
+# answer changes daily at most, and a heartbeat must never wait on it. Set
+# XL1_OS_UPDATE_INTERVAL to 0 to switch the check off entirely.
+OS_UPDATE_INTERVAL = int(os.environ.get("XL1_OS_UPDATE_INTERVAL", "21600"))
+# How often to look again while something IS pending. The expensive case is
+# "nothing to report", which is nearly always, and six hours is right for it.
+# But the moment an operator is actually patching is the moment the panel
+# should keep up: at the slow cadence a patched host went on showing the old
+# count, and the all-clear email did not arrive, for up to six hours -- unless
+# you knew to restart the agent, which is a step this created and then asked
+# someone to remember.
+OS_PENDING_INTERVAL = int(os.environ.get("XL1_OS_PENDING_INTERVAL", "900"))
 # Optional systemd lookups. Both default to empty: not every host runs the
 # container under systemd, and guessing a unit name that does not exist would
 # report a failure where there is none.
@@ -630,6 +642,74 @@ def read_log_tail(name):
     return lines[-LOG_TAIL_LINES:] or None
 
 
+_os_cache = {"at": 0.0, "value": None}
+
+
+def read_os_updates():
+    """Pending host package updates, or None if apt could not be asked.
+
+    Returns (total, security, apt_age_hours, reboot_required).
+
+    The staleness figure is not decoration. `apt list --upgradable` reports
+    against the last `apt update`, so a host whose package lists have not been
+    refreshed in months answers "0 updates" -- confidently, and wrongly. That
+    is a worse failure than not checking at all, because it looks like good
+    news. Reporting how old the lists are makes the zero interpretable.
+    """
+    if not OS_UPDATE_INTERVAL:
+        return None
+    now = time.monotonic()
+    cached = _os_cache["value"]
+    if cached is not None:
+        total, security, _age, reboot = cached
+        # Pending means someone may be about to act on it, so look again soon.
+        pending = bool(total or security or reboot)
+        if now - _os_cache["at"] < (OS_PENDING_INTERVAL if pending else OS_UPDATE_INTERVAL):
+            return cached
+
+    out = run(["apt", "list", "--upgradable"], timeout=60)
+    if out is None:
+        return None
+
+    total = security = 0
+    for line in out.splitlines():
+        # pkg/suite version arch [upgradable from: older]
+        if "[upgradable from:" not in line:
+            continue
+        total += 1
+        # pkg/suite -- and the suite may be a comma list, e.g. "stable,stable".
+        suite = line.split("/", 1)[1].split(None, 1)[0] if "/" in line else ""
+        # Stock Debian puts security fixes in their own suite. Raspberry Pi OS
+        # does NOT: its packages arrive through plain `stable`, security fixes
+        # included, so on that platform this finds nothing however many
+        # security updates are pending. It is kept because it is right where it
+        # applies and costs nothing where it does not -- but the alert must not
+        # depend on it, or it goes permanently silent on a Pi.
+        if any(part.endswith("-security") for part in suite.lower().split(",")):
+            security += 1
+
+    # How old the package lists are. apt-daily refreshes these on most Debian
+    # hosts, but "most" is not "this one", so it is measured rather than assumed.
+    age_hours = None
+    for path in ("/var/lib/apt/periodic/update-success-stamp",
+                 "/var/lib/apt/lists"):
+        try:
+            age_hours = round((time.time() - os.path.getmtime(path)) / 3600.0, 1)
+            break
+        except OSError:
+            continue
+
+    # Created by a kernel or libc upgrade. Absent on a host without
+    # update-notifier-common, which is why absence is reported as False rather
+    # than as a failure.
+    reboot = os.path.exists("/var/run/reboot-required")
+
+    value = (total, security, age_hours, reboot)
+    _os_cache["value"] = value
+    _os_cache["at"] = now
+    return value
+
+
 def read_image_inventory():
     """How many versioned node images are on disk, or None.
 
@@ -798,6 +878,7 @@ def _slow_worker():
             _slow_put("blocked_reason", read_blocked_reason(name))
             _slow_put("producer_unit", read_producer_unit())
             _slow_put("rebuild_timer", read_rebuild_timer())
+            _slow_put("os_updates", read_os_updates())
             stats = fetch_producer_stats(name)
             if stats:
                 _slow_put("producer_stats", stats)
@@ -858,6 +939,18 @@ def collect():
         payload["node_image_count"] = images
     # Docker is not optional for this agent, so this one is never "n/a".
     _degraded_note(degraded, "node_image_count", images is None)
+
+    updates = _slow_get("os_updates", read_os_updates)
+    if updates is not None:
+        total, security, apt_age, reboot = updates
+        payload["os_updates"] = total
+        payload["os_security_updates"] = security
+        payload["os_apt_age_hours"] = apt_age
+        payload["os_reboot_required"] = reboot
+    # A host with no apt is not broken; a host with apt that would not answer is.
+    _degraded_note(degraded, "os_updates",
+                   bool(OS_UPDATE_INTERVAL) and updates is None
+                   and os.path.exists("/usr/bin/apt"))
 
     # Absence here is good news, so it is never a degraded reader.
     blocked = _slow_get("blocked_reason", lambda: read_blocked_reason(name))

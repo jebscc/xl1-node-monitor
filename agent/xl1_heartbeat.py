@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.3.0"
+AGENT_VERSION = "1.3.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -52,9 +52,22 @@ HEALTH_URL = os.environ.get("XL1_HEALTH_URL", "")      # set only if port is pub
 # producing, so reporting it would be a false alarm. The node has already made
 # this determination on the code path that decides whether it can produce; its
 # verdict is worth more than a number reconstructed from outside.
+# What the node says when it cannot produce. Matched against its own log,
+# because the node knows why it was passed over and nothing else does.
+#
+# The last four are the protocol's own words for it. producerIneligibility in
+# @xyo-network/xl1-protocol returns exactly these when it refuses an address:
+# a missing intent declaration, stake that is too new, stake that is too new OR
+# too small, and too little bonded by the producer on itself. Watching for them
+# now costs four tuples and means the panel says something useful on the first
+# day staking is enforced rather than after somebody notices the silence.
 BLOCKED_PATTERNS = (
     ("insufficient stake", "insufficient stake"),
     ("has no balance", "no balance"),
+    ("no-intent", "no stake intent declared"),
+    ("unseasoned-or-understaked", "stake too new or too small"),
+    ("unseasoned", "stake not yet seasoned"),
+    ("insufficient-self-bond", "self-bond below the minimum"),
 )
 
 # How far back to grep the container log for the node's own reason it cannot

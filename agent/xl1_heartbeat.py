@@ -398,6 +398,11 @@ _producer_cache = {"at": 0.0, "value": None}
 # scan would have to guess a range, and after a restart that guess overlaps
 # already-counted blocks and is rightly rejected -- burning a whole cycle.
 _producer_cursor = {"block": None, "backfill": None, "backfill_done": False,
+                    # Read but never walked here: the mint history needs the
+                    # companion service this build does not ship. Kept so send()
+                    # stays byte-identical to the private copy, which is the one
+                    # function drift in has actually caused bugs.
+                    "minted": None, "minted_done": False,
                     "known": False, "last_produced": None}
 
 # Explorer link for the block the panel displays, keyed by block number so it
@@ -1069,6 +1074,10 @@ def send(payload):
             cursor = body.get("producer_cursor")
             if isinstance(cursor, int):
                 _producer_cursor["block"] = cursor
+            minted_cursor = body.get("minted_cursor")
+            if isinstance(minted_cursor, int):
+                _producer_cursor["minted"] = minted_cursor
+            _producer_cursor["minted_done"] = bool(body.get("minted_complete"))
             backfill = body.get("backfill_cursor")
             if isinstance(backfill, int):
                 _producer_cursor["backfill"] = backfill

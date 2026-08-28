@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.3.1"
+AGENT_VERSION = "1.4.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -139,10 +139,25 @@ INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "30"))
 TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "60"))
 
 
-def run(args, timeout=10):
-    """Run a command, returning stripped stdout or None on any failure."""
+def run(args, timeout=10, merge_stderr=False):
+    """Run a command, returning stripped stdout or None on any failure.
+
+    merge_stderr folds the command's stderr into the result. It is off by
+    default and must stay that way: `apt list` writes its "unstable CLI"
+    warning to stderr, and docker writes progress there, so folding those into
+    text that then gets parsed would corrupt it.
+
+    It is switched on only for `docker logs`, where the discarded half was the
+    interesting one. A container's stderr comes back on the COMMAND's stderr,
+    so reading stdout alone silently drops every warning the node emits --
+    which is how a producer could sit and print "insufficient stake" every few
+    seconds while the panel showed nothing but "Building block", and the
+    eligibility check found no reason to report.
+    """
     try:
-        out = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        out = subprocess.run(
+            args, timeout=timeout, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE)
     except (OSError, subprocess.SubprocessError):
         return None
     if out.returncode != 0:
@@ -631,7 +646,9 @@ def read_blocked_reason(name):
     """
     if not name or not BLOCKED_PATTERNS:
         return None
-    out = run(["docker", "logs", "--since", ELIGIBILITY_WINDOW, name], timeout=30)
+    # merge_stderr: the node announces ineligibility on stderr.
+    out = run(["docker", "logs", "--since", ELIGIBILITY_WINDOW, name],
+              timeout=30, merge_stderr=True)
     if not out:
         return None
     lowered = out.lower()
@@ -658,7 +675,11 @@ def read_log_tail(name):
     # whenever the log actually holds N non-blank lines, which is the whole
     # point of asking for a fixed number.
     fetch = min(LOG_TAIL_LINES * 5, LOG_TAIL_LINES + 200)
-    out = run(["docker", "logs", "--tail", str(fetch), name], timeout=20)
+    # merge_stderr: a log tail that shows only stdout is not a log tail. The
+    # lines an operator most needs -- warnings, errors, refusals -- are exactly
+    # the ones the node writes to the other stream.
+    out = run(["docker", "logs", "--tail", str(fetch), name],
+              timeout=20, merge_stderr=True)
     if not out:
         return None
     lines = [ln[:LOG_TAIL_MAX_CHARS] for ln in out.splitlines() if ln.strip()]

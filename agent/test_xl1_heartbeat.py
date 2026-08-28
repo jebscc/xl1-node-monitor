@@ -63,7 +63,7 @@ REPORTED_FIELDS = {
 
 def _stub_run(monkeypatch, responses):
     """responses: list of (match_substring, return_value), first match wins."""
-    def fake_run(args, timeout=10):
+    def fake_run(args, timeout=10, **_kw):
         joined = " ".join(args)
         for needle, value in responses:
             if needle in joined:
@@ -270,7 +270,7 @@ def test_stopped_lookup_ignores_unrelated_containers(monkeypatch):
 
     Matching it would report a two-day-old exit code as if it were current.
     """
-    def fake_run(args, timeout=10):
+    def fake_run(args, timeout=10, **_kw):
         joined = " ".join(args)
         if "-a" in args and "ancestor=xl1:local" in joined:
             return ""            # no stopped container of OUR image
@@ -565,7 +565,7 @@ def test_a_healthy_agent_reports_an_empty_list(monkeypatch):
 def _stub_docker_logs(monkeypatch, all_lines):
     """A `docker logs` stub that honours --tail, as the real one does. A tail
     test whose stub ignores --tail passes with the bug present."""
-    def fake_run(args, timeout=10):
+    def fake_run(args, timeout=10, **_kw):
         if "logs" not in args:
             return None
         n = int(args[args.index("--tail") + 1])
@@ -822,3 +822,58 @@ def test_a_pending_reboot_alone_keeps_the_fast_cadence(monkeypatch):
 
     agent.read_os_updates()
     assert len(calls) == 1, "a reboot still outstanding is still pending"
+
+
+# --- stderr is half the log ---------------------------------------------------
+#
+# A container's stderr arrives on the COMMAND's stderr, so reading stdout alone
+# drops every warning the node emits. That is not hypothetical: a producer sat
+# printing "insufficient stake" every few seconds while the panel showed only
+# "Building block" and the eligibility check reported nothing wrong.
+#
+# The first test here runs a real subprocess on purpose. A stubbed `run` cannot
+# fail this way, which is precisely why stubs did not catch it.
+
+def test_run_captures_stderr_when_asked():
+    """The mechanism itself, with no mocking in the way."""
+    script = "import sys; sys.stderr.write('on-stderr'); sys.stdout.write('on-stdout')"
+    out = agent.run([sys.executable, "-c", script], merge_stderr=True)
+    assert "on-stderr" in out
+    assert "on-stdout" in out
+
+
+def test_run_discards_stderr_by_default():
+    """Off by default and deliberately so: apt writes its "unstable CLI"
+    warning to stderr, and folding that into parsed output corrupts it."""
+    script = "import sys; sys.stderr.write('noise'); sys.stdout.write('signal')"
+    out = agent.run([sys.executable, "-c", script])
+    assert out == "signal"
+
+
+def test_the_eligibility_check_reads_both_streams(monkeypatch):
+    """The node announces ineligibility on stderr, so asking for stdout alone
+    finds a healthy-looking log and reports no fault."""
+    seen = {}
+
+    def fake_run(args, timeout=10, merge_stderr=False):
+        seen["merge"] = merge_stderr
+        return "Producer abc has insufficient stake." if merge_stderr else "Building block 1"
+
+    monkeypatch.setattr(agent, "run", fake_run)
+    assert agent.read_blocked_reason("xl1-producer") == "insufficient stake"
+    assert seen["merge"] is True
+
+
+def test_the_log_tail_reads_both_streams(monkeypatch):
+    """A tail that shows only stdout is not a tail. The lines an operator most
+    needs are the ones written to the other stream."""
+    seen = {}
+
+    def fake_run(args, timeout=10, merge_stderr=False):
+        seen["merge"] = merge_stderr
+        return "Building block 1\nhas insufficient stake." if merge_stderr else "Building block 1"
+
+    monkeypatch.setattr(agent, "run", fake_run)
+    tail = agent.read_log_tail("xl1-producer")
+    assert seen["merge"] is True
+    assert any("insufficient stake" in ln for ln in tail), tail

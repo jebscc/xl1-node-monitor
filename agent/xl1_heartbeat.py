@@ -443,11 +443,16 @@ def read_reward_address(name):
     return None
 
 
-def _producer_request(address, params):
-    """One call to the local producer endpoint. Returns parsed JSON or None."""
+def _producer_request(address, params, timeout=180):
+    """One call to the local producer endpoint. Returns parsed JSON or None.
+
+    The timeout is an argument because the callers are not alike: the forward
+    scan reads a dozen blocks and the history walks thousands, and one number
+    cannot be generous to the second without hiding a hang in the first.
+    """
     query = urllib.parse.urlencode({"address": address, **params})
     try:
-        with urllib.request.urlopen(PRODUCER_URL + "?" + query, timeout=180) as resp:
+        with urllib.request.urlopen(PRODUCER_URL + "?" + query, timeout=timeout) as resp:
             if not (200 <= resp.status < 300):
                 return None
             return json.loads(resp.read().decode("utf-8"))

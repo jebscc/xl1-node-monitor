@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.4.0"
+AGENT_VERSION = "1.5.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -121,6 +121,33 @@ BACKFILL_CHUNK = int(os.environ.get("XL1_BACKFILL_CHUNK", "50000"))
 CLI_REGISTRY = os.environ.get(
     "XL1_CLI_REGISTRY", "https://registry.npmjs.org/@xyo-network/xl1-cli/latest")
 CLI_CHECK_INTERVAL = int(os.environ.get("XL1_CLI_CHECK_INTERVAL", "21600"))
+CLI_PACKAGE_PATH = "/usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json"
+# A version string reaches us from a public registry and from inside a
+# container. The backend caps these fields at 32 characters, so an unexpected
+# value would fail validation and take the WHOLE heartbeat with it -- the node
+# would read OFFLINE and raise an alert because of someone else's bad metadata.
+_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,3}(-[0-9A-Za-z.]+)?$")
+
+
+def _valid_version(value):
+    return (isinstance(value, str) and 0 < len(value) <= 32
+            and _VERSION_RE.match(value) is not None)
+
+# Attestation. The node anchors a hash of its own readings so a stranger can
+# tell they have not been edited since -- the hardware half of the panel is
+# otherwise just the machine describing itself.
+#
+# Off unless ATTEST_URL is set, and the service refuses to sign without its own
+# key and token, so this cannot start spending gas by being deployed.
+ATTEST_URL = os.environ.get("XL1_ATTEST_URL", "")
+ATTEST_INTERVAL = int(os.environ.get("XL1_ATTEST_INTERVAL", "3600"))
+# Written to disk the moment an anchor succeeds, BEFORE the backend is told.
+# The chain stores only a hash and the gateway will not serve the payload back,
+# so between anchoring and storing, this file is the only copy in existence. An
+# earlier payload survived solely because 120,699 candidate timestamps could be
+# searched for one that hashed correctly; that worked once and is no way to run
+# a system.
+ATTEST_SPOOL = os.environ.get("XL1_ATTEST_SPOOL", "/opt/xl1-heartbeat/attestations")
 CLI_PACKAGE_PATH = "/usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json"
 # A version string reaches us from a public registry and from inside a
 # container. The backend caps these fields at 32 characters, so an unexpected
@@ -1090,6 +1117,156 @@ def collect():
     return payload
 
 
+# Beside the other interval caches rather than next to the function that
+# uses it. The reported-fields guard reads `"key":` literals inside
+# collect() as heartbeat fields, and a cache declared in that span is read
+# as one -- a false positive that costs more to explain than to avoid.
+_attest_cache = {"at": 0.0}
+
+
+def _spool_path(content_hash):
+    return os.path.join(ATTEST_SPOOL, content_hash + ".json")
+
+
+def spool_attestation(record):
+    """Persist an anchored attestation locally before anything else.
+
+    Returns True when it is safely on disk. A failure here is the one case
+    where the anchor should not have happened -- but it already has, so the
+    next best thing is to say so loudly rather than continue as if fine.
+    """
+    try:
+        os.makedirs(ATTEST_SPOOL, exist_ok=True)
+        path = _spool_path(record["content_hash"])
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(record, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        # Atomic: a reader never sees a half-written payload, and a crash
+        # mid-write leaves the .tmp rather than a corrupt record.
+        os.replace(tmp, path)
+        return True
+    except OSError as e:
+        _warn_once("attest-spool", "could not save an anchored attestation: %s" % e)
+        return False
+
+
+def post_attestation(record):
+    """Send one spooled attestation to the backend. True when it is stored."""
+    if not BACKEND_URL or not NODE_TOKEN:
+        return False
+    req = urllib.request.Request(
+        BACKEND_URL + "/api/node/attestation",
+        data=json.dumps(record).encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "X-Node-Token": NODE_TOKEN,
+                 "User-Agent": "xl1-heartbeat/" + AGENT_VERSION},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def flush_attestations():
+    """Send anything still spooled, oldest first, and delete what lands.
+
+    Runs every slow cycle rather than only after anchoring, so a backend that
+    was down when an attestation was made still receives it later. The store
+    keys on the content hash, so re-sending one that already arrived is
+    harmless -- which is what makes deleting only on success the safe order.
+    """
+    try:
+        names = sorted(n for n in os.listdir(ATTEST_SPOOL) if n.endswith(".json"))
+    except OSError:
+        return
+    for name in names[:20]:
+        path = os.path.join(ATTEST_SPOOL, name)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                record = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if post_attestation(record):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def attest(name, payload):
+    """Ask the service to anchor the current readings. Returns None normally.
+
+    Rate limited by ATTEST_INTERVAL because each anchoring is a transaction
+    that costs gas -- unlike every other collector here, calling this too often
+    spends money rather than merely wasting effort.
+    """
+    if not ATTEST_URL:
+        return
+    now = time.monotonic()
+    if now - _attest_cache["at"] < ATTEST_INTERVAL:
+        return
+    body = {
+        "producer": read_reward_address(name) or "",
+        "height": payload.get("block_height"),
+        "lastProducedBlock": payload.get("last_produced_block"),
+        "producedTotal": payload.get("produced_total"),
+        "cpuPercent": payload.get("cpu_percent"),
+        "memUsedMb": payload.get("host_mem_used_mb"),
+        "temperatureC": payload.get("temperature_c"),
+        "uptimeSeconds": payload.get("host_uptime_seconds"),
+        "network": NODE_NETWORK,
+    }
+    req = urllib.request.Request(
+        ATTEST_URL, data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            if not (200 <= resp.status < 300):
+                return
+            result = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return
+    # The clock advances on any answer, including one that did not anchor.
+    # Retrying a service with no key configured every thirty seconds would be
+    # pointless noise.
+    _attest_cache["at"] = now
+    if not result.get("anchored"):
+        return
+    record = {
+        "node_id": NODE_ID,
+        "network": result.get("network") or NODE_NETWORK,
+        "kind": "reading",
+        "payload": json.dumps(result.get("payload"), separators=(",", ":")),
+        "content_hash": result.get("contentHash") or "",
+        "tx_hash": result.get("txHash") or "",
+        "attested_by": result.get("attestedBy"),
+        "explorer_url": result.get("explorerUrl"),
+        "observed_at": (result.get("record") or {}).get("observedAt"),
+    }
+    if not record["content_hash"] or not record["tx_hash"]:
+        return
+    # Disk first, always. Between the anchor and the backend knowing, this file
+    # is the only copy of what that transaction committed to.
+    if not spool_attestation(record):
+        # Anchored but not saved. Nothing can recover the payload from the
+        # chain, so say so rather than let it look routine.
+        _warn_once("attest-unsaved",
+                   "anchored %s but could not save the payload locally"
+                   % record["content_hash"][:12])
+        return
+    if post_attestation(record):
+        try:
+            os.remove(_spool_path(record["content_hash"]))
+        except OSError:
+            # Left behind, which flush_attestations will retry. The store keys
+            # on the content hash, so a second delivery changes nothing.
+            pass
+
+
 def send(payload):
     req = urllib.request.Request(
         BACKEND_URL + "/api/node/heartbeat",
@@ -1145,6 +1322,16 @@ def main():
     while True:
         payload = collect()
         ok = send(payload)
+        # After the heartbeat, never before it. Anchoring can take a minute --
+        # it waits for the transaction to confirm -- and a beat delayed behind
+        # it would read as a node that had gone quiet. Rate limited internally,
+        # so calling it every cycle costs nothing until one is due.
+        try:
+            attest(find_container(), payload)
+        except Exception as e:                       # noqa: BLE001
+            # Attestation is an extra, not the job. It must never be able to
+            # stop the thing that reports whether this node is alive.
+            _warn_once("attest-failed", "attestation attempt failed: %s" % e)
         status = payload.get("container_status")
         if payload.get("exit_code") is not None:
             status = "%s(%s)" % (status, payload["exit_code"])

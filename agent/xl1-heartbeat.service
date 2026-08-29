@@ -19,6 +19,12 @@ Group=docker
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+# ProtectSystem=strict makes everything read-only except what is granted back.
+# Without this the agent can anchor an attestation and then fail to save the
+# payload -- gas spent, and the only copy of what that transaction committed to
+# unwritable. StateDirectory creates it owned by User= and writable, without
+# opening any path the agent has no business writing to.
+StateDirectory=xl1-heartbeat
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectControlGroups=true

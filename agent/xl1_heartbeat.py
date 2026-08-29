@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.5.1"
+AGENT_VERSION = "1.5.2"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -147,7 +147,8 @@ ATTEST_INTERVAL = int(os.environ.get("XL1_ATTEST_INTERVAL", "3600"))
 # earlier payload survived solely because 120,699 candidate timestamps could be
 # searched for one that hashed correctly; that worked once and is no way to run
 # a system.
-ATTEST_SPOOL = os.environ.get("XL1_ATTEST_SPOOL", "/opt/xl1-heartbeat/attestations")
+ATTEST_SPOOL = os.environ.get(
+    "XL1_ATTEST_SPOOL", "/var/lib/xl1-heartbeat/attestations")
 # The service refuses to sign for an unauthenticated caller, and it is right to:
 # a signing key behind an open endpoint is worse than no signing. So the agent
 # has to present the same token. Same name as the service reads, so one value

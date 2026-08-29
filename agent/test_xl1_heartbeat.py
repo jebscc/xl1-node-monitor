@@ -877,3 +877,96 @@ def test_the_log_tail_reads_both_streams(monkeypatch):
     tail = agent.read_log_tail("xl1-producer")
     assert seen["merge"] is True
     assert any("insufficient stake" in ln for ln in tail), tail
+
+
+# --- the slow collector worker ----------------------------------------------
+#
+# The worker runs the expensive readers on their own cadence. It must never
+# die, so it catches everything -- which is exactly what made the bug below
+# invisible until CI on the private build tripped over it.
+
+
+class _StopLoop(Exception):
+    """Sentinel for breaking the worker's infinite loop after one pass."""
+
+
+def _break_loop_after_one_cycle(monkeypatch):
+    def stop(_seconds):
+        raise _StopLoop
+    monkeypatch.setattr(agent.time, "sleep", stop)
+
+
+# Every collector the worker calls, stubbed. Leaving one out does not make the
+# test more realistic, it makes it reach the real docker binary and the real
+# network from a unit test -- and note this patches time.sleep process-wide,
+# so a live subprocess (which polls with time.sleep on POSIX, though not on
+# Windows) would raise the sentinel from inside a collector.
+_COLLECTORS = {
+    "read_cli_version": lambda n: "5.3.0", "fetch_cli_latest": lambda: "5.3.0",
+    "read_log_tail": lambda n: ["line"], "read_image_inventory": lambda: 2,
+    "read_blocked_reason": lambda n: None, "read_producer_unit": lambda: None,
+    "read_rebuild_timer": lambda: (None, None),
+    "read_os_updates": lambda: (0, 0, 1.0, False),
+    "fetch_producer_stats": lambda n: None,
+    "fetch_backfill_chunk": lambda n: None,
+}
+
+
+def _run_one_cycle(monkeypatch, **overrides):
+    """One full pass of the slow worker. Returns what it published."""
+    published = {}
+    monkeypatch.setattr(agent, "_slow_put", lambda k, v: published.__setitem__(k, v))
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    for name, value in {**_COLLECTORS, **overrides}.items():
+        monkeypatch.setattr(agent, name, value)
+    _break_loop_after_one_cycle(monkeypatch)
+    with pytest.raises(_StopLoop):
+        agent._slow_worker()
+    return published
+
+
+def test_a_worker_cycle_runs_to_completion(monkeypatch):
+    """Every collector reached, not just the first."""
+    published = _run_one_cycle(monkeypatch)
+    for expected in ("cli_version", "cli_latest", "log_tail", "image_inventory",
+                     "blocked_reason", "os_updates"):
+        assert expected in published, f"{expected} was never published"
+
+
+def test_one_broken_collector_does_not_starve_the_others(monkeypatch):
+    """A collector that raises must cost its own reading and nothing else.
+
+    The worker wrapped the whole cycle in one try, so the first collector to
+    throw skipped every collector after it -- and kept skipping them on every
+    cycle for as long as the cause lasted. The node would report ONLINE with a
+    current heartbeat while its OS updates and block scans sat frozen at
+    whatever they last held, which is precisely the silent staleness the rest
+    of this agent is built to avoid.
+    """
+    def boom(_name):
+        raise RuntimeError("this reader fell over")
+
+    published = _run_one_cycle(monkeypatch, read_blocked_reason=boom)
+
+    assert "blocked_reason" not in published, "a failed collector publishes nothing"
+    assert "os_updates" in published, (
+        "os_updates was skipped because an earlier collector failed")
+
+
+def test_a_collector_failure_says_which_one_and_why(monkeypatch, capsys):
+    """An empty stderr line is not a bug report.
+
+    The cycle used to log str(e) alone, so an exception whose str() is empty
+    produced "slow collector cycle failed: " and stopped -- naming neither the
+    collector nor the type.
+    """
+    class Silent(Exception):
+        pass
+
+    def boom():
+        raise Silent()
+
+    _run_one_cycle(monkeypatch, read_os_updates=boom)
+    err = capsys.readouterr().err
+    assert "os_updates" in err, "the log must name the collector that failed"
+    assert "Silent" in err, "the log must name the exception type"

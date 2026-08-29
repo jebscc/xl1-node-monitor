@@ -22,12 +22,13 @@ import socket
 import subprocess
 import threading
 import sys
+import traceback
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.6.2"
+AGENT_VERSION = "1.6.3"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -953,28 +954,62 @@ def _slow_get(key, fn, take=False):
         return _slow["data"].pop(key, None) if take else _slow["data"].get(key)
 
 
+def _step(label, thunk, default=None):
+    """Run one collector. A failure costs that reading and nothing else.
+
+    The worker used to wrap the entire cycle in a single try, so the first
+    collector to raise skipped every collector after it -- for that cycle, and
+    for every cycle after it if the cause persisted. The result would be a node
+    showing ONLINE with a fresh heartbeat while the readings behind it had
+    quietly stopped moving, and one line on stderr nobody was reading to say
+    why.
+
+    That is the exact failure this file exists to prevent, so it should not be
+    the shape of the file's own worker. CI found it: a collector reached a real
+    subprocess, which on POSIX polls with time.sleep, and a test that had
+    replaced time.sleep saw its sentinel swallowed here -- every field after
+    that point silently missing.
+    """
+    try:
+        return thunk()
+    except Exception as e:
+        # Name the type. Several exceptions worth seeing have an empty str(),
+        # and "failed: " with nothing after the colon is not a bug report.
+        print("collector %s failed: %s: %s" % (label, type(e).__name__, e),
+              file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
+        return default
+
+
 def _slow_worker():
     """Runs the expensive collectors. Must never die -- a dead worker is a
     silent one, and every field it feeds would simply stop updating."""
     while True:
         try:
-            name = find_container()
-            _slow_put("cli_version", read_cli_version(name))
-            _slow_put("cli_latest", fetch_cli_latest())
-            _slow_put("log_tail", read_log_tail(name))
-            _slow_put("image_inventory", read_image_inventory())
-            _slow_put("blocked_reason", read_blocked_reason(name))
-            _slow_put("producer_unit", read_producer_unit())
-            _slow_put("rebuild_timer", read_rebuild_timer())
-            _slow_put("os_updates", read_os_updates())
-            stats = fetch_producer_stats(name)
+            name = _step("find_container", find_container)
+            _step("cli_version", lambda: _slow_put("cli_version", read_cli_version(name)))
+            _step("cli_latest", lambda: _slow_put("cli_latest", fetch_cli_latest()))
+            _step("log_tail", lambda: _slow_put("log_tail", read_log_tail(name)))
+            _step("image_inventory", lambda: _slow_put("image_inventory", read_image_inventory()))
+            _step("blocked_reason", lambda: _slow_put("blocked_reason", read_blocked_reason(name)))
+            _step("producer_unit", lambda: _slow_put("producer_unit", read_producer_unit()))
+            _step("rebuild_timer", lambda: _slow_put("rebuild_timer", read_rebuild_timer()))
+            _step("os_updates", lambda: _slow_put("os_updates", read_os_updates()))
+            stats = _step("producer_stats", lambda: fetch_producer_stats(name))
             if stats:
                 _slow_put("producer_stats", stats)
-                chunk = fetch_backfill_chunk(name)
+                chunk = _step("backfill_chunk", lambda: fetch_backfill_chunk(name))
                 if chunk:
                     _slow_put("backfill_chunk", chunk)
         except Exception as e:
-            print("slow collector cycle failed: %s" % e, file=sys.stderr, flush=True)
+            # Every collector is isolated above, so reaching here means the
+            # loop's own scaffolding broke. Still caught: the worker must never
+            # die, because a dead worker is a silent one.
+            print("slow collector cycle failed: %s: %s" % (type(e).__name__, e),
+                  file=sys.stderr, flush=True)
+            traceback.print_exc(file=sys.stderr)
+            sys.stderr.flush()
         time.sleep(SLOW_CYCLE)
 
 

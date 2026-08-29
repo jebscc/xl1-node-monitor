@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.5.2"
+AGENT_VERSION = "1.6.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1223,14 +1223,26 @@ def attest(name, payload):
     """
     if not ATTEST_URL:
         return
+    # Remember the freshest chain values seen on ANY beat, before the rate
+    # limit returns. A producer scan runs about once in thirty beats, so the
+    # beat that happens to trigger an anchor usually carries none -- which is
+    # why the first anchored reading reported no last produced block despite
+    # the node having produced one minutes earlier.
+    for key in ("last_produced_block", "block_height"):
+        value = payload.get(key)
+        if value is not None:
+            _attest_cache[key] = value
     now = time.monotonic()
     if now - _attest_cache["at"] < ATTEST_INTERVAL:
         return
     body = {
         "producer": read_reward_address(name) or "",
-        "height": payload.get("block_height"),
-        "lastProducedBlock": payload.get("last_produced_block"),
-        "producedTotal": payload.get("produced_total"),
+        "height": _attest_cache.get("block_height"),
+        "lastProducedBlock": _attest_cache.get("last_produced_block"),
+        # No producedTotal. The node does not have one: that figure is the
+        # backend accumulating scan results over time, and a node attesting it
+        # would be vouching for arithmetic done somewhere else. An attestation
+        # should carry what this machine observed and nothing more.
         "cpuPercent": payload.get("cpu_percent"),
         "memUsedMb": payload.get("host_mem_used_mb"),
         "temperatureC": payload.get("temperature_c"),

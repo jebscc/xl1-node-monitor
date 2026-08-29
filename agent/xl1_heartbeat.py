@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.6.0"
+AGENT_VERSION = "1.6.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1138,7 +1138,13 @@ def collect():
 # uses it. The reported-fields guard reads `"key":` literals inside
 # collect() as heartbeat fields, and a cache declared in that span is read
 # as one -- a false positive that costs more to explain than to avoid.
-_attest_cache = {"at": 0.0}
+# None, not 0.0, because time.monotonic() counts from boot. Zero means "an
+# hour has passed" only on a machine that has been up an hour -- so a freshly
+# rebooted node would silently wait up to ATTEST_INTERVAL before its first
+# anchor, and the same arithmetic made six tests pass locally and fail on a CI
+# runner that had been alive for twenty seconds. None says "never run" without
+# depending on how long the host has been awake.
+_attest_cache = {"at": None}
 
 
 def _spool_path(content_hash):
@@ -1233,7 +1239,8 @@ def attest(name, payload):
         if value is not None:
             _attest_cache[key] = value
     now = time.monotonic()
-    if now - _attest_cache["at"] < ATTEST_INTERVAL:
+    last = _attest_cache["at"]
+    if last is not None and now - last < ATTEST_INTERVAL:
         return
     body = {
         "producer": read_reward_address(name) or "",

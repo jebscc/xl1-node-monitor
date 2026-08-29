@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.6.1"
+AGENT_VERSION = "1.6.2"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1144,7 +1144,7 @@ def collect():
 # anchor, and the same arithmetic made six tests pass locally and fail on a CI
 # runner that had been alive for twenty seconds. None says "never run" without
 # depending on how long the host has been awake.
-_attest_cache = {"at": None}
+_attest_cache = {"at": None, "signer": None}
 
 
 def _spool_path(content_hash):
@@ -1286,6 +1286,12 @@ def attest(name, payload):
     # Retrying a service with no key configured every thirty seconds would be
     # pointless noise.
     _attest_cache["at"] = now
+    # Remember who signed, so the wallet paying for all this can be watched
+    # without configuring its address a second time. The service reports it
+    # and only the service knows it -- the agent never holds that key.
+    signer = result.get("attestedBy")
+    if isinstance(signer, str) and re.fullmatch(r"(0x)?[0-9a-fA-F]{40}", signer):
+        _attest_cache["signer"] = signer.lower().replace("0x", "")
     if not result.get("anchored"):
         return
     record = {

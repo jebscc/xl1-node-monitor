@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.5.0"
+AGENT_VERSION = "1.5.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -148,6 +148,22 @@ ATTEST_INTERVAL = int(os.environ.get("XL1_ATTEST_INTERVAL", "3600"))
 # searched for one that hashed correctly; that worked once and is no way to run
 # a system.
 ATTEST_SPOOL = os.environ.get("XL1_ATTEST_SPOOL", "/opt/xl1-heartbeat/attestations")
+# The service refuses to sign for an unauthenticated caller, and it is right to:
+# a signing key behind an open endpoint is worse than no signing. So the agent
+# has to present the same token. Same name as the service reads, so one value
+# configured in one place covers both.
+ATTEST_TOKEN = os.environ.get("XL1_ANCHOR_TOKEN", "")
+CLI_PACKAGE_PATH = "/usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json"
+# A version string reaches us from a public registry and from inside a
+# container. The backend caps these fields at 32 characters, so an unexpected
+# value would fail validation and take the WHOLE heartbeat with it -- the node
+# would read OFFLINE and raise an alert because of someone else's bad metadata.
+_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,3}(-[0-9A-Za-z.]+)?$")
+
+
+def _valid_version(value):
+    return (isinstance(value, str) and 0 < len(value) <= 32
+            and _VERSION_RE.match(value) is not None)
 CLI_PACKAGE_PATH = "/usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json"
 # A version string reaches us from a public registry and from inside a
 # container. The backend caps these fields at 32 characters, so an unexpected
@@ -1220,15 +1236,31 @@ def attest(name, payload):
         "uptimeSeconds": payload.get("host_uptime_seconds"),
         "network": NODE_NETWORK,
     }
+    headers = {"Content-Type": "application/json"}
+    if ATTEST_TOKEN:
+        headers["X-Anchor-Token"] = ATTEST_TOKEN
     req = urllib.request.Request(
         ATTEST_URL, data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"}, method="POST")
+        headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             if not (200 <= resp.status < 300):
+                _warn_once("attest-status", "attest refused: HTTP %s" % resp.status)
                 return
             result = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, ValueError):
+    except urllib.error.HTTPError as e:
+        # Named separately because this is the one an operator can act on. A
+        # 401 means the token is missing or wrong, and swallowing it silently
+        # is indistinguishable from attestation being switched off -- which is
+        # exactly how a misconfigured agent looked correct for an hour.
+        _warn_once("attest-http",
+                   "attest refused: HTTP %s%s" % (
+                       e.code,
+                       " (set XL1_ANCHOR_TOKEN to the value the service uses)"
+                       if e.code in (401, 403) else ""))
+        return
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        _warn_once("attest-unreachable", "attest could not be reached: %s" % e)
         return
     # The clock advances on any answer, including one that did not anchor.
     # Retrying a service with no key configured every thirty seconds would be

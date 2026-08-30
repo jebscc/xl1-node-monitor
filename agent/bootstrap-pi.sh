@@ -445,14 +445,60 @@ while :; do
     printf '  %sThat is %s characters; the limit is 64.%s\n' "$Y" "${#NODE_ID}" "$X"
     NODE_ID=""; [ "$TTY_OK" = 1 ] || die "--node-id too long"; continue
   fi
-  # Asked of the grid rather than assumed: finding out later means a 401 after
-  # the service is already running.
-  if have curl && curl -fsSL --max-time 25 "$BACKEND_URL/api/node/status" 2>/dev/null \
-       | grep -q "\"node_id\"[[:space:]]*:[[:space:]]*\"$NODE_ID\""; then
-    printf '  %s"%s" is already reporting on the grid -- pick another.%s\n' "$Y" "$NODE_ID" "$X"
+  # Asked of the grid rather than assumed. This used to read the list of
+  # REPORTING devices, which is a different question: an id that holds a
+  # credential and has never reported is absent from it, so a name that was
+  # already taken came back "free" and the truth arrived much later.
+  AVAIL=""; REASON=""
+  if have curl && [ -n "$PY" ]; then
+    AV_JSON="$(curl -fsSL --max-time 25 \
+      "$BACKEND_URL/api/node/devices/available?node_id=$NODE_ID" 2>/dev/null)"
+    if [ -n "$AV_JSON" ]; then
+      eval "$(printf '%s' "$AV_JSON" | "$PY" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print("AVAIL=%s" % ("1" if d.get("available") else "0"))
+    print("REASON=%s" % json.dumps(d.get("reason") or ""))
+except Exception:
+    pass
+' 2>/dev/null)"
+    fi
+  fi
+
+  if [ "$AVAIL" = 0 ] && [ "$REASON" = reporting ]; then
+    printf '  %s"%s" is a device that is reporting right now.%s\n' "$Y" "$NODE_ID" "$X"
+    note "That name belongs to a machine already on the grid. Pick another."
     NODE_ID=""; [ "$TTY_OK" = 1 ] || die "node id already taken"; continue
   fi
-  ok "\"$NODE_ID\" is free"
+
+  if [ "$AVAIL" = 0 ] && [ "$REASON" = registered ]; then
+    printf '  %s"%s" already has a credential.%s\n' "$Y" "$NODE_ID" "$X"
+    note "Someone has registered that name -- quite possibly you, in a run"
+    note "that stopped before this one. That is not automatically a problem:"
+    note ""
+    note "  If it is yours AND you still have its token, carry on and paste"
+    note "  that token when asked. Nothing needs registering again."
+    note ""
+    note "  If you do not have the token, it cannot be recovered. Remove the"
+    note "  device from Admin -> Node -> Devices and use the name again, or"
+    note "  simply choose a different one now."
+    printf '\n'
+    if ask_yn "  Carry on with \"$NODE_ID\" anyway?" "n"; then
+      ok "using \"$NODE_ID\" -- you will need its existing token"
+      break
+    fi
+    NODE_ID=""; [ "$TTY_OK" = 1 ] || die "node id already registered"; continue
+  fi
+
+  if [ "$AVAIL" = 1 ]; then
+    ok "\"$NODE_ID\" is free"
+  else
+    # No answer: an older backend, or the network. Say what was and was not
+    # established rather than claiming a check that did not happen.
+    warn "could not confirm whether \"$NODE_ID\" is taken" \
+         "carrying on -- registration will refuse it if it is"
+  fi
   break
 done
 

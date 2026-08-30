@@ -235,13 +235,32 @@ else
        else
          ok "node id '$NODE_ID' is a shape the backend accepts"
          if have curl || have wget; then
-           if fetch "$BACKEND_URL/api/node/status" 2>/dev/null \
-              | grep -q "\"node_id\"[[:space:]]*:[[:space:]]*\"$NODE_ID\""; then
-             bad "'$NODE_ID' is already reporting on the grid" \
-                 "pick another name, or you will be trying to report as somebody else's device"
-           else
-             ok "'$NODE_ID' is not currently on the public grid"
-           fi
+           # "Is it reporting" and "is the name taken" are different
+           # questions. A device that registered and never started answers no
+           # to the first and yes to the second, and this used to ask only the
+           # first -- so an id that was already claimed came back clear.
+           AV="$(fetch "$BACKEND_URL/api/node/devices/available?node_id=$NODE_ID" 2>/dev/null)"
+           case "$AV" in
+             *'"available":true'*|*'"available": true'*)
+               ok "'$NODE_ID' is free" ;;
+             *reporting*)
+               bad "'$NODE_ID' is reporting right now" \
+                   "that name belongs to a machine already on the grid" ;;
+             *'"available":false'*|*'"available": false'*)
+               warn "'$NODE_ID' already holds a credential" \
+                    "fine if it is yours and you have its token; otherwise pick another name" ;;
+             *)
+               # An older backend without the check. Fall back to what can be
+               # seen, and say which question actually got answered.
+               if fetch "$BACKEND_URL/api/node/status" 2>/dev/null \
+                    | grep -q "\"node_id\"[[:space:]]*:[[:space:]]*\"$NODE_ID\""; then
+                 bad "'$NODE_ID' is already reporting on the grid" \
+                     "pick another name, or you will be trying to report as somebody else's device"
+               else
+                 warn "'$NODE_ID' is not reporting, but this backend cannot say whether it is registered" \
+                      "registration will refuse a duplicate if it is"
+               fi ;;
+           esac
          fi
        fi ;;
   esac

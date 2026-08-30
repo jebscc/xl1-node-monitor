@@ -32,7 +32,10 @@ BACKEND_URL="${BACKEND_URL:-https://xyo-backend.onrender.com}"
 GRID_URL="${GRID_URL:-https://jimtheexplorer.com/grid}"
 NODE_ID="${NODE_ID:-}"
 NODE_LABEL="${NODE_LABEL:-}"
-NODE_ROLE="${NODE_ROLE:-producer}"
+# Set after the arguments are read, because it depends on --skip-docker: a
+# device with no node is not a producer, and saying so is how the grid knows
+# not to judge it by whether a node is answering.
+NODE_ROLE="${NODE_ROLE:-}"
 NODE_NETWORK="${NODE_NETWORK:-sequence}"
 DO_INSTALL=0
 SKIP_DOCKER=0
@@ -76,6 +79,11 @@ while [ $# -gt 0 ]; do
 done
 
 BACKEND_URL="${BACKEND_URL%/}"
+
+# Declared, not guessed: --skip-docker means there is no node here to run.
+if [ -z "$NODE_ROLE" ]; then
+  if [ "$SKIP_DOCKER" = 1 ]; then NODE_ROLE="monitor"; else NODE_ROLE="producer"; fi
+fi
 
 # --- platform ----------------------------------------------------------------
 UNAME_S="$(uname -s 2>/dev/null || echo unknown)"

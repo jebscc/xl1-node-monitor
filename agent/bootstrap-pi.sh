@@ -400,6 +400,7 @@ if [ -f "$STATE" ] && [ "$FRESH" != 1 ]; then
     [ -n "$_LA" ] && STATED_LAT="$_LA"
     [ -n "$_LN" ] && STATED_LON="$_LN"
     [ -n "$_DK" ] && WITH_DOCKER="$_DK"
+    RESUMED_ID="$NODE_ID"
     ok "restored${NODE_ID:+ -- device \"$NODE_ID\"}"
     [ "${DONE_PREREQS:-0}" = 1 ]   && ok "packages were already installed"
     [ "${DONE_TAILSCALE:-0}" = 1 ] && ok "already joined to the tailnet"
@@ -507,6 +508,12 @@ done
 
 # The prompt that prompted all this. "A label to show beside it" assumed the
 # reader already knew there were two names and what the other one was for.
+# A label carried over from a name that was abandoned belongs to nothing. The
+# first device to hit this ended up called jim-home-04 wearing the label
+# "jim-home-03" -- on a public map, claiming to be something else.
+if [ -n "${RESUMED_ID:-}" ] && [ "$NODE_ID" != "$RESUMED_ID" ]    && [ "$NODE_LABEL" = "$RESUMED_ID" ]; then
+  NODE_LABEL=""
+fi
 if [ -z "$NODE_LABEL" ]; then
   printf '\n'
   note "The second name is the LABEL -- what people actually read. It appears"

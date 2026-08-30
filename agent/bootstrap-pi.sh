@@ -122,6 +122,21 @@ ask_secret() { # ask_secret <prompt> -> answer on stdout, never echoed
 
 printf '%sExplorer Grid -- Raspberry Pi setup%s\n' "$B" "$X"
 
+# Someone running this may never have heard of any of it. Four sentences up
+# front costs nothing and is the difference between answering questions and
+# guessing at them.
+printf '\n'
+note "This adds this Raspberry Pi to the Explorer Grid: a public map of real"
+note "devices, run by real people, each reporting on itself."
+note ""
+note "It installs a small agent that reports how the machine is doing every"
+note "30 seconds -- uptime, temperature, whether it is online. Optionally it"
+note "also commits those readings to XYO Layer One, so anyone can check they"
+note "were not edited afterwards."
+note ""
+note "It does NOT install an XL1 node, and it never asks for a wallet, a"
+note "seed phrase or a private key. Nothing here can spend anything."
+
 # =============================================================================
 head_ "1. What this machine is"
 # =============================================================================
@@ -171,6 +186,53 @@ fi
 [ -n "${DISK_MB:-}" ] && { [ "$DISK_MB" -ge 500 ] && ok "disk space is fine" \
   || { bad "less than 500 MB free on /"; BLOCKED=1; }; }
 
+# --- how the board itself is doing -------------------------------------------
+# These four are lifted from the preflight in LewSales/xl1-block-producer-pi,
+# which checks things this did not and which matter more on a Pi than on a
+# server. Undervoltage in particular: a marginal supply is the usual cause of
+# corrupted SD cards and of nodes that "randomly" stop, and it is invisible
+# unless something asks the firmware.
+if have vcgencmd; then
+  T="$(vcgencmd get_throttled 2>/dev/null | sed 's/.*=//')"
+  if [ -n "$T" ]; then
+    TV=$(( T ))
+    if   [ $(( TV & 0x1 )) -ne 0 ]; then
+      bad "the power supply is undervolting RIGHT NOW" \
+          "this corrupts SD cards and stops nodes at random. A Pi 3 wants a real 5V/2.5A supply -- a phone charger usually is not one."
+      BLOCKED=1
+    elif [ $(( TV & 0x10000 )) -ne 0 ]; then
+      warn "the supply has undervolted since boot" \
+           "marginal rather than broken. Worth replacing before this runs unattended."
+    else
+      ok "power supply is steady"
+    fi
+    [ $(( TV & 0x4 )) -ne 0 ] && warn "the CPU is being throttled right now" \
+      "usually heat, sometimes the supply"
+  fi
+fi
+
+TEMP=""
+[ -r /sys/class/thermal/thermal_zone0/temp ] && \
+  TEMP=$(( $(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null) / 1000 ))
+if [ -n "$TEMP" ]; then
+  if [ "$TEMP" -ge 75 ]; then
+    warn "${TEMP}C already, before doing any work" \
+         "a Pi 3 throttles around 80C. A heatsink or a case with a fan pays for itself here."
+  else
+    ok "${TEMP}C"
+  fi
+fi
+
+# Wi-Fi works. It is just the first thing to blame when a device starts
+# looking offline for a few minutes at a time.
+IFACE="$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')"
+case "$IFACE" in
+  wl*) warn "connected over Wi-Fi ($IFACE)" \
+            "fine, but less steady under load than Ethernet -- a device that drops off for a minute reads as OFFLINE on the map" ;;
+  "")  ;;
+  *)   ok "wired network ($IFACE)" ;;
+esac
+
 if [ "$(id -u)" = 0 ]; then
   bad "run this as your normal user, not root" \
       "it adds THAT user to the docker group; as root it would add the wrong one. It will ask for sudo when it needs it."
@@ -197,8 +259,14 @@ fi
 # =============================================================================
 head_ "2. Naming the device"
 # =============================================================================
-note "This is how the device is identified on the grid, and it cannot be"
-note "changed later. Letters, numbers, dots, dashes and underscores."
+note "Two names are asked for, and they do different jobs."
+note ""
+note "This first one is the device's ID -- the permanent handle the grid"
+note "uses in its API, its records and its credential. Think of it as a"
+note "username: short, no spaces, and it CANNOT be changed later."
+note ""
+note "Letters, numbers, dots, dashes and underscores. For example:"
+note "  attic-pi-3     lew-garage-01     pi3-spare"
 printf '\n'
 # Bounded. A prompt loop with no ceiling is one broken read away from spinning
 # until someone notices, and "someone notices" is not an error path.
@@ -231,7 +299,21 @@ while :; do
   break
 done
 
-[ -n "$NODE_LABEL" ] || NODE_LABEL="$(ask "  A label to show beside it" "$NODE_ID")"
+# The prompt that prompted all this. "A label to show beside it" assumed the
+# reader already knew there were two names and what the other one was for.
+if [ -z "$NODE_LABEL" ]; then
+  printf '\n'
+  note "The second name is the LABEL -- what people actually read. It appears"
+  note "beside this device on the public map and in the device list, and it"
+  note "can be anything you like: spaces, capitals and punctuation are fine."
+  note ""
+  note "  ID     $NODE_ID"
+  note "  label  \"Attic Pi 3\"   <- this is the human-readable one"
+  note ""
+  note "Press Enter to reuse the ID if you would rather not have two."
+  printf '\n'
+  NODE_LABEL="$(ask "  A label for people to read" "$NODE_ID")"
+fi
 
 # =============================================================================
 head_ "3. Saying where it is"
@@ -282,9 +364,15 @@ if [ -n "$WITH_DOCKER" ]; then
 elif have docker; then
   WITH_DOCKER=1; ok "Docker is already installed"
 else
-  note "Only needed if this Pi will run an XL1 node. The agent reads container"
-  note "state when there is any; without it the device reports the host, which"
-  note "is enough to be a member of the grid."
+  note "Docker is only needed if this Pi will ALSO run an XL1 node -- the"
+  note "software that takes part in the chain itself. That is a much bigger"
+  note "job than this agent, and a separate decision."
+  note ""
+  note "  no   this Pi reports on itself and joins the map. Most people."
+  note "  yes  you already intend to run a node here, or you run one now."
+  note ""
+  note "Answering no changes nothing about being a member of the grid, and"
+  note "you can install Docker later without redoing any of this."
   printf '\n'
   if ask_yn "  Install Docker?" "n"; then WITH_DOCKER=1; else WITH_DOCKER=0; fi
 fi

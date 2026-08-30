@@ -247,8 +247,11 @@ else
                bad "'$NODE_ID' is reporting right now" \
                    "that name belongs to a machine already on the grid" ;;
              *'"available":false'*|*'"available": false'*)
-               warn "'$NODE_ID' already holds a credential" \
-                    "fine if it is yours and you have its token; otherwise pick another name" ;;
+               # Not a warning. Nothing here can establish that the operator
+               # is the one who registered it, and asking them to say so is
+               # not a check.
+               bad "'$NODE_ID' is already taken" \
+                   "a credential exists for that name. Pick another, or remove that device from the operator panel first -- this cannot tell whether it is yours." ;;
              *)
                # An older backend without the check. Fall back to what can be
                # seen, and say which question actually got answered.

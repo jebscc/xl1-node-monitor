@@ -473,21 +473,24 @@ except Exception:
   fi
 
   if [ "$AVAIL" = 0 ] && [ "$REASON" = registered ]; then
-    printf '  %s"%s" already has a credential.%s\n' "$Y" "$NODE_ID" "$X"
-    note "Someone has registered that name -- quite possibly you, in a run"
-    note "that stopped before this one. That is not automatically a problem:"
+    # Refused outright, and the reason is worth stating: nothing here can tell
+    # whether the person at this keyboard is the one who registered that name.
+    # Offering to carry on asked them to assert it, and an assertion is not a
+    # check -- it is the same shape as "trust me, I am node X", which is the
+    # thing per-device credentials exist to stop accepting.
+    #
+    # The real answer is an account that owns its devices, so reclaiming a name
+    # is something a person proves rather than declares. Until that exists,
+    # taken means taken.
+    printf '  %s"%s" is already taken.%s\n' "$Y" "$NODE_ID" "$X"
+    note "A credential exists for that name, so it cannot be used here."
     note ""
-    note "  If it is yours AND you still have its token, carry on and paste"
-    note "  that token when asked. Nothing needs registering again."
+    note "That holds even if you registered it yourself: this script has no"
+    note "way to tell you apart from anyone else typing the same name, and"
+    note "taking your word for it would defeat the point of the credential."
     note ""
-    note "  If you do not have the token, it cannot be recovered. Remove the"
-    note "  device from Admin -> Node -> Devices and use the name again, or"
-    note "  simply choose a different one now."
-    printf '\n'
-    if ask_yn "  Carry on with \"$NODE_ID\" anyway?" "n"; then
-      ok "using \"$NODE_ID\" -- you will need its existing token"
-      break
-    fi
+    note "  Pick a different name now, or"
+    note "  remove that device from Admin -> Node -> Devices and reuse it."
     NODE_ID=""; [ "$TTY_OK" = 1 ] || die "node id already registered"; continue
   fi
 

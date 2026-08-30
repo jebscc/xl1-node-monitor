@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.6.3"
+AGENT_VERSION = "1.7.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -682,6 +682,48 @@ def fetch_cli_latest():
     return version
 
 
+WITNESS_URL = os.environ.get("XL1_WITNESS_URL", "")
+
+
+def fetch_witness_target():
+    """Another device's latest anchor, for this one to commit to. Or None.
+
+    Devices here accept no inbound connections -- that is what makes them safe
+    to run at home -- so one cannot reach out and touch another. What it can do
+    is put a peer's anchor hash inside its own anchor. It cannot forge that:
+    the hash belongs to the peer and is already on chain, so anybody can check
+    the reference points at something real, and that this anchor came after it.
+
+    It proves nothing about the peer being a different person. One operator can
+    run both ends. This is a record of mutual reference, not a reputation.
+
+    Absent is a perfectly good answer -- on a grid of one there is nothing to
+    witness, and anchoring proceeds unchanged.
+    """
+    if not WITNESS_URL or not NODE_TOKEN:
+        return None
+    try:
+        url = WITNESS_URL + "?" + urllib.parse.urlencode({"node_id": NODE_ID})
+        req = urllib.request.Request(url, headers={"X-Node-Token": NODE_TOKEN})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            target = (json.loads(resp.read().decode("utf-8")) or {}).get("target")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    if not isinstance(target, dict):
+        return None
+    node = target.get("node_id")
+    digest = target.get("content_hash")
+    # Checked here as well as at the far end: a malformed reference would be
+    # hashed into the anchor and then be wrong on chain for good.
+    if not isinstance(node, str) or not node:
+        return None
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return None
+    return {"node": node[:64], "hash": digest}
+
+
 def read_blocked_reason(name):
     """Why the node says it cannot produce, or None if it has not said so.
 
@@ -1291,6 +1333,13 @@ def attest(name, payload):
         "uptimeSeconds": payload.get("host_uptime_seconds"),
         "network": NODE_NETWORK,
     }
+    # Inside the record that gets hashed, never beside it. A reference carried
+    # alongside the anchor would be something this node could revise later,
+    # which is the exact thing anchoring exists to stop.
+    witness = fetch_witness_target()
+    if witness:
+        body["witnessed"] = witness
+
     headers = {"Content-Type": "application/json"}
     if ATTEST_TOKEN:
         headers["X-Anchor-Token"] = ATTEST_TOKEN
@@ -1339,6 +1388,11 @@ def attest(name, payload):
         "attested_by": result.get("attestedBy"),
         "explorer_url": result.get("explorerUrl"),
         "observed_at": (result.get("record") or {}).get("observedAt"),
+        # Indexed alongside the payload rather than instead of it. The payload
+        # is what was hashed and is the authority; these two only let the
+        # backend answer "who referenced whom" without re-parsing every record.
+        "witnessed_node_id": (witness or {}).get("node"),
+        "witnessed_hash": (witness or {}).get("hash"),
     }
     if not record["content_hash"] or not record["tx_hash"]:
         return

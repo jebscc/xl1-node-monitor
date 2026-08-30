@@ -1450,7 +1450,18 @@ def send(payload):
                 _producer_cursor["last_produced"] = shown
             return True
     except urllib.error.HTTPError as e:
-        print("heartbeat rejected: HTTP %s %s" % (e.code, e.reason), file=sys.stderr, flush=True)
+        # Print what the backend SAID, not just that it said no. A 401 now
+        # carries the reason and the page to fix it on -- "register it at
+        # ..." -- and printing only the status code threw that away, leaving
+        # the operator to guess at exactly the moment they were being told.
+        detail = ""
+        try:
+            detail = (json.loads(e.read().decode("utf-8")) or {}).get("detail") or ""
+        except (ValueError, UnicodeDecodeError, OSError, AttributeError):
+            pass
+        print("heartbeat rejected: HTTP %s %s%s"
+              % (e.code, e.reason, " -- " + str(detail)[:300] if detail else ""),
+              file=sys.stderr, flush=True)
     except (urllib.error.URLError, OSError) as e:
         print("heartbeat failed: %s" % e, file=sys.stderr, flush=True)
     return False

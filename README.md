@@ -460,9 +460,20 @@ readers are failing is nobody else's business:
 
 ### Running and working are different things
 
-Every collector in the agent returns `None` on failure rather than raising, so
-that a failed `docker exec` or an unreachable service can never take down a
-heartbeat. That is deliberate, and it costs something: an agent whose readers
+Every collector in the agent is *written* to return `None` on failure rather
+than raise, so that a failed `docker exec` or an unreachable service can never
+take down a heartbeat.
+
+Intent is not a guarantee, though, so the slow worker no longer relies on it.
+Each collector runs inside `_step`, which catches that collector's failure,
+names it and the exception type on stderr, and carries on. Before that the
+whole cycle shared one `try`, and the first collector to raise skipped every
+collector after it -- for that cycle, and for every cycle after if the cause
+persisted. The node kept reporting `ONLINE` with a current heartbeat while the
+readings behind it sat frozen, which is the exact failure this agent exists to
+detect.
+
+The design is deliberate, and it costs something: an agent whose readers
 are failing one by one keeps reporting, keeps looking `ONLINE`, and keeps
 looking healthy. A blank field is ambiguous between "not collected yet" and
 "collection is broken".

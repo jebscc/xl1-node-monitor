@@ -1,0 +1,25 @@
+# Keep the build context small. node_modules is ~121MB against ~425KB for
+# everything else, and the image installs its own dependencies anyway -- host
+# copies are the wrong architecture when building on a Pi from a dev machine.
+node_modules
+.xy
+dist
+build
+
+# Never let secrets reach the build context
+.env
+.env.*
+*.env
+!*.env.example
+
+.git
+.github
+.vscode
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Not needed to run the service
+LICENSE
+README.md
+eslint.config.mjs

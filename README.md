@@ -4,13 +4,15 @@
 
 Monitoring for a self-hosted [XYO Layer One](https://xyo.network/layer-one/)
 node. A small agent runs beside your node and reports in; a receiver collects
-those reports and serves a status page.
+those reports and serves a status page. An optional third piece, `service/`,
+reads the chain and can anchor your readings to it.
 
-It answers three questions a node operator actually has:
+It answers four questions a node operator actually has:
 
 - **Is my node up, and would I find out if it stopped?**
 - **How many blocks has it produced, over its whole life, without double-counting?**
 - **Is the software it runs still current?**
+- **Can anyone check those figures, or do they have to take my word for it?**
 
 Built for a Raspberry Pi producing on the Sequence network, but nothing in it
 is Pi-specific — any Linux machine running the node in Docker will do.
@@ -622,15 +624,27 @@ report **how many blocks your node has signed**.
 
 Counting needs something that can read the chain. The agent deliberately does
 not: it never speaks JSON-RPC and holds no keys. It calls two HTTP endpoints
-and does the accounting from what they return, so **you supply a small service
-that answers them**. One is not bundled here.
+and does the accounting from what they return.
 
-### What you have to provide
-
-A service reachable from the node machine — usually a container on the same
-host — exposing two `GET` endpoints. Build it with
+**One is bundled: [`service/`](service/).** It reads the chain through
 [`@xyo-network/xl1-sdk`](https://www.npmjs.com/package/@xyo-network/xl1-sdk),
-which is the supported way to read XL1. Do not hand-roll JSON-RPC.
+answers both endpoints below and nine more, and ships **read-only** — with no
+wallet configured every read works and `/health` reports `signing: false`. See
+[`service/README.md`](service/README.md) for the full route table, and note the
+separate licence on that directory.
+
+Two things there are worth knowing before you wire it up. **Stake is not on
+XL1** — it lives on the backing EVM, so `/standing` reports stake as `null`
+rather than zero unless you configure that RPC. And if you give it a signing
+key, it refuses to serve the write routes without `XL1_ANCHOR_TOKEN` as well,
+on the grounds that a key behind an open endpoint is worse than no signing.
+
+### If you would rather write your own
+
+The contract is small, and nothing below depends on the bundled service. A
+service reachable from the node machine — usually a container on the same host
+— exposing two `GET` endpoints. Build it with the SDK linked above, which is
+the supported way to read XL1. Do not hand-roll JSON-RPC.
 
 **1. Chain height**
 
@@ -818,5 +832,17 @@ python -m venv .fresh
 
 ## Licence
 
-MIT. Not affiliated with XY Labs or XYO — an independent tool built by a node
+**Two licences, by directory.**
+
+| Directory | Licence |
+|---|---|
+| `agent/`, `receiver/` | MIT — see `LICENSE` |
+| `service/` | **LGPL-3.0** — see `service/LICENSE` |
+
+`service/` is scaffolded from an XYO Foundation template and keeps that
+template's licence. It is kept in its own directory, with its own `LICENSE`
+file, precisely so the difference is visible rather than buried: the agent and
+receiver are MIT and always have been, and nothing in `service/` changes that.
+
+Not affiliated with XY Labs or XYO — an independent tool built by a node
 operator.

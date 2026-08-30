@@ -1,0 +1,21 @@
+{
+  // Self-contained on purpose. tsconfig.json extends @xylabs/tsconfig, which
+  // is not a declared dependency and is not installed, so `tsc -p tsconfig`
+  // falls back to defaults and reports hundreds of resolution errors that say
+  // nothing about this code.
+  "compilerOptions": {
+    "module": "esnext",
+    "target": "es2022",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "types": ["node"]
+  },
+  // The operator tools sit beside src rather than in it, and were therefore
+  // never typechecked -- a broken string literal in one reached a commit
+  // while `tsc` reported success, because it was not looking at the file.
+  // The Dockerfile runs this to catch exactly that before a deploy.
+  "include": ["src", "new-attestor.ts", "delegate-attestor.ts"]
+}

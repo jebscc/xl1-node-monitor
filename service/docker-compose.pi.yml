@@ -1,0 +1,77 @@
+# Runs xl1-service beside the XL1 node on the Pi, purely to answer
+# /block-height for the heartbeat agent.
+#
+#   docker compose -f docker-compose.pi.yml up -d --build
+#
+# Bound to 127.0.0.1 deliberately: the only consumer is the heartbeat agent on
+# this same host, so nothing is exposed to the LAN or the internet.
+#
+# Signing is OFF unless XYO_WALLET_MNEMONIC is supplied, and the service
+# refuses to serve /attest at all when a mnemonic is set without
+# XL1_ANCHOR_TOKEN -- a signing key behind an unprotected endpoint is worse
+# than no signing.
+#
+# When it is supplied it should be the ATTESTATION key, never the producer's.
+# That key anchors hashes and holds a little gas; it controls no producer, no
+# stake, nothing worth taking. The producer signs one delegation binding it,
+# by hand, once, and never goes near this container. Losing the attestation key
+# is a nuisance -- generate another and delegate again.
+#
+# Both come from .env beside this file, which is gitignored. Referenced here
+# with empty defaults so the container runs perfectly well without them, which
+# is the state it ships in.
+
+name: xl1-service
+
+services:
+  # Compose names the container <project>-<service>-<index>, so this key is
+  # the middle third: xl1-service-anchor-1. It used to be 'xl1-service',
+  # which produced xl1-service-xl1-service-1 and read like a mistake.
+  anchor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: xl1-service:local
+    restart: unless-stopped
+    volumes:
+      # Host-side, so a rebuild cannot discard anchored payloads.
+      - /var/lib/xl1-attestations:/attestations
+    environment:
+      XL1_SERVICE_PORT: "8090"
+      # 0.0.0.0 INSIDE the container, deliberately. The service binds loopback
+      # by default, which is right for a bare `pnpm start` and wrong here:
+      # Docker forwards a published port to the container's bridge address, not
+      # to its loopback, so an app listening on 127.0.0.1 inside the namespace
+      # is unreachable through the mapping and /standing simply stops
+      # answering.
+      #
+      # Nothing is exposed by this. The containment is the `ports` mapping
+      # below, which binds 127.0.0.1 on the HOST -- the only interface that
+      # matters, and the one the agent calls.
+      XL1_SERVICE_HOST: "0.0.0.0"
+      XL1_NETWORK: ${XL1_NETWORK:-sequence}
+      # Public gateway for the network. This reports the NETWORK's height --
+      # a federated producer serves no RPC of its own to read it from.
+      XL1_SEQUENCE_RPC_URL: ${XL1_SEQUENCE_RPC_URL:-https://beta.api.chain.xyo.network/rpc}
+      XL1_MAINNET_RPC_URL: ${XL1_MAINNET_RPC_URL:-https://api.chain.xyo.network/rpc}
+      # Staking is on the BACKING EVM, not on XL1 -- sequence is anchored to
+      # Sepolia and mainnet to Ethereum, and `chain.id` doubles as the staking
+      # contract's address there. Unset by default: without it /standing simply
+      # reports stake as null, which is what it did before this existed.
+      XL1_SEQUENCE_EVM_RPC_URL: ${XL1_SEQUENCE_EVM_RPC_URL:-}
+      XL1_MAINNET_EVM_RPC_URL: ${XL1_MAINNET_EVM_RPC_URL:-}
+      # Attestation signing. Empty by default; see the note at the top about
+      # which key belongs here and why the token is not optional alongside it.
+      XYO_WALLET_MNEMONIC: ${XYO_WALLET_MNEMONIC:-}
+      XL1_ANCHOR_TOKEN: ${XL1_ANCHOR_TOKEN:-}
+      # An anchored payload is written here before the caller is answered. The
+      # chain keeps only a hash, so a response lost in transit would otherwise
+      # take the only copy with it -- which has happened. Mounted below so it
+      # outlives the container.
+      XL1_ATTEST_ARCHIVE: /attestations
+      # Lowest block the producer scan will read. This indexer is unbounded --
+      # it counts a node's entire production history -- so 0 is correct, but it
+      # is stated rather than defaulted: the service refuses to scan without it.
+      XL1_INDEXER_FLOOR_BLOCK: ${XL1_INDEXER_FLOOR_BLOCK:-0}
+    ports:
+      - "127.0.0.1:8090:8090"

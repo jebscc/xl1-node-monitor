@@ -1,0 +1,40 @@
+{
+  "name": "xl1-anchor-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Internal Node.js signer service that anchors Living Frontier adventures to XYO Layer One (XL1).",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
+  },
+  "dependencies": {
+    "@ariestools/sdk": "8.2.0",
+    "@xylabs/assert": "5.0.102",
+    "@xylabs/delay": "5.0.102",
+    "@xylabs/typeof": "5.0.102",
+    "@xyo-network/account-model": "5.3.30",
+    "@xyo-network/payload-builder": "5.3.30",
+    "@xyo-network/payload-model": "5.3.30",
+    "@xyo-network/sdk": "7.4.0",
+    "@xyo-network/xl1-protocol": "5.4.1",
+    "@xyo-network/xl1-sdk": "5.4.1",
+    "ajv": "8.20.0",
+    "dotenv": "^17.2.3",
+    "express": "4.21.2",
+    "zod": "^4.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "tsx": "4.23.12",
+    "typescript": "5.6.3"
+  },
+  "packageManager": "pnpm@9.15.0+sha512.76e2379760a4328ec4415815bcd6628dee727af3779aaa4c914e3944156c4299921a89f976381ee107d41f12cfa4b66681ca9c718f0668fa0831ed4c6d8ba56c",
+  "pnpm": {
+    "overrides": {
+      "qs": ">=6.15.2 <7.0.0",
+      "path-to-regexp": ">=0.1.13 <0.2.0",
+      "body-parser": ">=1.20.6 <2.0.0"
+    }
+  }
+}

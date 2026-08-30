@@ -77,3 +77,31 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
           shellcheck agent/rebuild-xl1-image.sh
+
+  service:
+    name: Service typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The service is published for other operators to run, so it has to keep
+      # compiling here rather than only on the machine it came from. Typecheck
+      # only: it has no test suite of its own, and a green tsc against a frozen
+      # lockfile is what catches an SDK upgrade that changes a signature.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: service/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: service
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: service
+        run: pnpm run typecheck

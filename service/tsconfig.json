@@ -1,0 +1,5 @@
+{
+  "extends": "@xylabs/tsconfig",
+  "exclude": ["dist", "node_modules"],
+  "include": ["src"],
+}

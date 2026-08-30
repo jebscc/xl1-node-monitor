@@ -1,0 +1,43 @@
+node_modules
+dist
+docs
+bin
+.DS_Store
+*.log
+*.tgz
+.rollup.cache
+.tsconfig*
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+.idea
+
+.idea
+.eslintcache
+.env
+.env.local
+.env.remote
+
+.store
+*storybook.log
+storybook-static
+.temp-typedoc
+
+.chrome
+yarn.lock
+.yarnrc.yml
+package-lock.json
+
+# pnpm-lock.yaml is COMMITTED. This is a deployed service, not a published
+# library: the lockfile is what makes a rebuild months from now install the
+# same tree as today, and the Dockerfile installs with --frozen-lockfile.
+#
+# It was ignored (inherited from a library template), which meant CI could not
+# install at all -- ERR_PNPM_NO_LOCKFILE -- while the Pi built fine, because
+# the deploy tarball carries untracked files and git does not.
+!pnpm-lock.yaml

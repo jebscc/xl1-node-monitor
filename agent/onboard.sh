@@ -278,6 +278,12 @@ else
                else
                  ok "'$NODE_ID' is free"
                fi ;;
+             *'"reason":"revoked"'*|*'"reason": "revoked"'*)
+               # Distinguished on purpose. This is the case that installed
+               # cleanly and then logged "Device credential revoked" every 30
+               # seconds with nothing saying what to do -- the id stays claimed
+               # so it cannot be registered again, and the old token is dead.
+               bad "'$NODE_ID' has been revoked"                    "its credential will be refused however valid the token looks. Re-issue one from Your devices (or the operator panel) -- that mints a fresh token and keeps the id, its history and its anchors." ;;
              *reporting*)
                if [ "$HAVE_CRED" = 1 ]; then
                  warn "'$NODE_ID' is already reporting" \

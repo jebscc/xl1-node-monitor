@@ -180,6 +180,34 @@ for exactly one anchor, read it again. Deriving it instead from "we funded it
 with 50 and there have been N anchors" needs both of those to be exactly true,
 and neither is checkable later.
 
+### Witnessing another device
+
+Devices here accept no inbound connections -- that is what makes them safe to
+run on a home network -- so one cannot reach out and contact another. "A saw B"
+cannot mean a packet arrived.
+
+What it can mean is that A commits B's latest anchor hash inside A's own
+anchor. That is worth more than a ping: the hash belongs to B and is already on
+chain, so any reader can check the reference points at something real, and that
+A anchored after B did. **A cannot invent it.**
+
+Pass `witnessed` to `/attest` and it goes inside the hashed record:
+
+```json
+{ "witnessed": { "node": "explorer-002", "hash": "<b's content hash>" } }
+```
+
+Inside, never beside. A reference carried alongside the anchor would be
+something the sender could revise afterwards, which is the thing anchoring
+exists to prevent. It is omitted entirely when absent rather than written as
+null, because a null would change the hash of every anchor made before there
+was anybody to witness.
+
+**What this does not prove.** That the two devices belong to different people.
+One operator can run both ends, and no cheap mechanism fixes that. It is a
+record of mutual reference, and calling it a reputation would be the same
+mistake as drawing a stated location as a pin.
+
 ### If an anchor is lost in transit
 
 The anchor happens here, and the payload only reaches the caller in the HTTP

@@ -1026,6 +1026,15 @@ const archiveAttestation = (record: Record<string, unknown>, contentHash: string
 const buildAttestation = (body: Record<string, unknown>, net: string) => {
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
   const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : null)
+
+  // Validated here rather than trusted from the caller. Whatever this returns
+  // is about to be hashed and written to a chain, so a malformed reference is
+  // not a display bug -- it is wrong for good, in public.
+  const w = body.witnessed as Record<string, unknown> | undefined
+  const wNode = str(w?.node, 64)
+  const wHash = str(w?.hash, 64)
+  const witnessed =
+    w && wNode && wHash && /^[0-9a-f]{64}$/.test(wHash) ? { node: wNode, hash: wHash } : null
   // Fixed shape and fixed key order. Sorted-key canonicalisation makes literal
   // order irrelevant to the hash, but a stable shape keeps the published
   // payload readable by a human deciding whether to trust it.
@@ -1049,6 +1058,22 @@ const buildAttestation = (body: Record<string, unknown>, net: string) => {
       temperatureC: num(body.temperatureC),
       uptimeSeconds: num(body.uptimeSeconds),
     },
+    // Another device's latest anchor, committed inside this one.
+    //
+    // Devices on home networks accept no inbound connections, so one cannot
+    // reach out and contact another. Referencing a peer's anchor hash is what
+    // is available instead, and it is worth more than a ping would be: the
+    // hash belongs to the peer and is already on chain, so a reader can check
+    // it points at something real and that this anchor came afterwards. The
+    // witness cannot invent it.
+    //
+    // It does NOT establish that the two devices belong to different people.
+    // One operator can run both ends, and nothing cheap changes that.
+    //
+    // Omitted entirely when absent rather than written as null, because the
+    // record is hashed: a null would change the hash of every anchor made
+    // before there was anyone to witness.
+    ...(witnessed ? { witnessed } : {}),
   }
   const idPayload = { schema: asSchema('network.xyo.id', true), salt: JSON.stringify(record) }
   return { record, idPayload }

@@ -15,6 +15,8 @@
 #   --label TEXT       a human name for it
 #   --location TEXT    a town, region or country -- shown as stated, not checked
 #   --lat N --lon N    coordinates for the map
+#   --postcode CODE    look the coordinates up from a postal code instead
+#   --country CC       country for that lookup (default us)
 #   --radius KM        how wide the location claim is (default 25)
 #   --no-location      do not ask about location; report none
 #   --with-docker      install Docker (only if this Pi will run a node)
@@ -42,6 +44,7 @@ BACKEND_URL="${BACKEND_URL:-https://xyo-backend.onrender.com}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
 STATED_RADIUS="25"; WITH_DOCKER=""; NO_LOCATION=0
+POSTCODE=""; COUNTRY_CC="us"
 AGENT_FROM=""; ASSUME_YES=0; CHECK_ONLY=0
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -63,6 +66,8 @@ while [ $# -gt 0 ]; do
     --label)       NODE_LABEL="${2:-}"; shift ;;
     --location)    STATED_LOCATION="${2:-}"; shift ;;
     --lat)         STATED_LAT="${2:-}"; shift ;;
+    --postcode)    POSTCODE="${2:-}"; shift ;;
+    --country)     COUNTRY_CC="${2:-}"; shift ;;
     --lon)         STATED_LON="${2:-}"; shift ;;
     --radius)      STATED_RADIUS="${2:-}"; shift ;;
     --no-location) NO_LOCATION=1 ;;
@@ -79,6 +84,17 @@ while [ $# -gt 0 ]; do
 done
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Whichever python actually RUNS, not merely whichever name resolves. On
+# Windows "python3" is often a Store stub that resolves and then does nothing,
+# and on some minimal images only "python" exists. Everything below that needs
+# an interpreter uses this one.
+PY=""
+for _c in python3 python; do
+  if command -v "$_c" >/dev/null 2>&1 && "$_c" -c 'import json,sys' >/dev/null 2>&1; then
+    PY="$_c"; break
+  fi
+done
 
 # --- asking -------------------------------------------------------------------
 # Every prompt reads /dev/tty, never stdin, because stdin is this script when
@@ -118,6 +134,38 @@ ask_secret() { # ask_secret <prompt> -> answer on stdout, never echoed
   stty echo < /dev/tty 2>/dev/null
   printf '\n' > /dev/tty
   printf '%s' "$reply"
+}
+
+
+# Look a postal code up. Sets FOUND_NAME / FOUND_LAT / FOUND_LON, or leaves
+# FOUND_NAME empty. Coordinates are rounded to one decimal HERE, not merely on
+# arrival: a value that was never precise locally cannot leak from anywhere
+# else either, and a postcode centroid was never precise to begin with.
+FOUND_NAME=""; FOUND_LAT=""; FOUND_LON=""
+lookup_postcode() { # lookup_postcode <country> <code>
+  FOUND_NAME=""; FOUND_LAT=""; FOUND_LON=""
+  have curl || return 1
+  local cc pc enc resp
+  cc="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  # Spaces are legal in plenty of postcodes and illegal in a URL path.
+  enc="$(printf '%s' "$2" | sed 's/ /%20/g')"
+  resp="$(curl -fsSL --max-time 25 "https://api.zippopotam.us/$cc/$enc" 2>/dev/null)" || return 1
+  [ -n "$resp" ] || return 1
+  [ -n "$PY" ] || return 1
+  eval "$(printf '%s' "$resp" | "$PY" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    p = d["places"][0]
+    bits = [p["place name"], p.get("state abbreviation") or p.get("state") or "",
+            d.get("country abbreviation", "")]
+    print("FOUND_NAME=%s" % json.dumps(", ".join(x for x in bits if x)))
+    print("FOUND_LAT=%.1f" % float(p["latitude"]))
+    print("FOUND_LON=%.1f" % float(p["longitude"]))
+except Exception:
+    print("FOUND_NAME=")
+' 2>/dev/null)"
+  [ -n "$FOUND_NAME" ]
 }
 
 printf '%sExplorer Grid -- Raspberry Pi setup%s\n' "$B" "$X"
@@ -318,6 +366,18 @@ fi
 # =============================================================================
 head_ "3. Saying where it is"
 # =============================================================================
+# Given as a flag, it is resolved here and the questions below never come up.
+if [ -n "$POSTCODE" ] && [ -z "$STATED_LAT" ]; then
+  if lookup_postcode "$COUNTRY_CC" "$POSTCODE"; then
+    STATED_LOCATION="${STATED_LOCATION:-$FOUND_NAME}"
+    STATED_LAT="$FOUND_LAT"; STATED_LON="$FOUND_LON"
+    ok "$POSTCODE -> $FOUND_NAME ($FOUND_LAT, $FOUND_LON)"
+  else
+    warn "could not look up postal code \"$POSTCODE\" in \"$COUNTRY_CC\"" \
+         "carrying on without a map position"
+  fi
+fi
+
 if [ "$NO_LOCATION" = 1 ]; then
   note "Skipped. The device will report no location and appear on no map."
 elif [ -n "$STATED_LOCATION" ] || [ -n "$STATED_LAT" ]; then
@@ -332,25 +392,79 @@ else
   note "on arrival -- a precise position is never stored."
   printf '\n'
   if ask_yn "  Say where this device is?" "n"; then
-    STATED_LOCATION="$(ask "  Town, region or country" "")"
-    note "Coordinates place it on the map. One decimal is plenty; anything"
-    note "finer is discarded on arrival. Look your town up on any map."
-    while :; do
-      STATED_LAT="$(ask "  Latitude  (-90 to 90, blank to skip)" "")"
-      [ -z "$STATED_LAT" ] && break
-      if awk -v v="$STATED_LAT" 'BEGIN{exit !(v+0==v && v>=-90 && v<=90)}' 2>/dev/null; then break; fi
-      printf '  %sOut of range or not a number. Refused rather than rounded, so a\n' "$Y"
-      printf '  typo cannot put the device somewhere nobody chose.%s\n' "$X"
-    done
-    if [ -n "$STATED_LAT" ]; then
+    printf '\n'
+    note "Two ways to place it. A postal code is the easier one, and it is"
+    note "also the coarser: a postcode covers a whole area, so you never"
+    note "handle an exact position at any point."
+    note ""
+    note "  1  look it up from a postal code"
+    note "  2  type coordinates yourself"
+    note "  3  name the place, but keep it off the map"
+    printf '\n'
+    METHOD="$(ask "  Which" "1")"
+
+    if [ "$METHOD" = 1 ]; then
+      note "The lookup sends the postal code -- and nothing else about this"
+      note "device -- to api.zippopotam.us. Like any web request it also"
+      note "shows that service this Pi's IP address. If you would rather it"
+      note "did not, answer 2 and type the numbers in yourself."
+      printf '\n'
+      LOOK_TRIES=0
       while :; do
-        STATED_LON="$(ask "  Longitude (-180 to 180)" "")"
-        [ -z "$STATED_LON" ] && break
-        if awk -v v="$STATED_LON" 'BEGIN{exit !(v+0==v && v>=-180 && v<=180)}' 2>/dev/null; then break; fi
-        printf '  %sOut of range or not a number.%s\n' "$Y" "$X"
+        LOOK_TRIES=$((LOOK_TRIES+1))
+        if [ "$LOOK_TRIES" -gt 5 ]; then METHOD=2; break; fi
+        CC="$(ask "  Country code (us, gb, ca, de ...)" "us")"
+        PC="$(ask "  Postal code" "")"
+        [ -z "$PC" ] && { METHOD=2; break; }
+        # Spaces are legal in plenty of postcodes and illegal in a URL path.
+        if ! lookup_postcode "$CC" "$PC"; then
+          printf '  %sNo match for "%s" in %s.%s\n' "$Y" "$PC" "$CC" "$X"
+          note "A wrong country code is the usual reason. Blank to type"
+          note "coordinates instead."
+          continue
+        fi
+        printf '\n'
+        ok "$FOUND_NAME  ->  $FOUND_LAT, $FOUND_LON"
+        note "Rounded to one decimal here, before anything is sent."
+        printf '\n'
+        if ask_yn "  Use this?" "y"; then
+          STATED_LOCATION="${STATED_LOCATION:-$FOUND_NAME}"
+          STATED_LAT="$FOUND_LAT"; STATED_LON="$FOUND_LON"
+          break
+        fi
       done
-      note "How wide the claim is. 25 km suits a coordinate read off a map;"
-      note "the grid will not accept anything under 11 km."
+    fi
+
+    if [ "$METHOD" = 2 ]; then
+      STATED_LOCATION="$(ask "  Town, region or country" "$STATED_LOCATION")"
+      note "One decimal is plenty; anything finer is discarded on arrival."
+      while :; do
+        STATED_LAT="$(ask "  Latitude  (-90 to 90, blank to skip)" "")"
+        [ -z "$STATED_LAT" ] && break
+        if awk -v v="$STATED_LAT" 'BEGIN{exit !(v+0==v && v>=-90 && v<=90)}' 2>/dev/null; then break; fi
+        printf '  %sOut of range or not a number. Refused rather than rounded, so a\n' "$Y"
+        printf '  typo cannot put the device somewhere nobody chose.%s\n' "$X"
+      done
+      if [ -n "$STATED_LAT" ]; then
+        while :; do
+          STATED_LON="$(ask "  Longitude (-180 to 180)" "")"
+          [ -z "$STATED_LON" ] && break
+          if awk -v v="$STATED_LON" 'BEGIN{exit !(v+0==v && v>=-180 && v<=180)}' 2>/dev/null; then break; fi
+          printf '  %sOut of range or not a number.%s\n' "$Y" "$X"
+        done
+      fi
+    fi
+
+    if [ "$METHOD" = 3 ]; then
+      STATED_LOCATION="$(ask "  Town, region or country" "")"
+      note "No coordinates, so it will be named in the device list but will"
+      note "not appear on the map."
+    fi
+
+    if [ -n "$STATED_LAT" ] && [ -n "$STATED_LON" ]; then
+      printf '\n'
+      note "How wide the claim is. 25 km is a sensible default and suits a"
+      note "postcode centroid; the grid will not accept anything under 11 km."
       STATED_RADIUS="$(ask "  Radius in km" "25")"
     fi
   fi
@@ -446,9 +560,14 @@ fi
 
 # It is about to run as a service. Parsing it catches a truncated or
 # half-served download here rather than in systemd's logs.
-python3 -m py_compile "$WORK/xl1_heartbeat.py" 2>/dev/null \
-  && ok "the agent parses" \
-  || die "the downloaded agent does not parse -- a truncated download? Run this again."
+if [ -n "$PY" ]; then
+  "$PY" -m py_compile "$WORK/xl1_heartbeat.py" 2>/dev/null \
+    && ok "the agent parses" \
+    || die "the downloaded agent does not parse -- a truncated download? Run this again."
+else
+  warn "no working python found to check the download with" \
+       "the agent needs one to run at all; the checks in the next step will say so"
+fi
 
 id xl1agent >/dev/null 2>&1 || sudo useradd --system --no-create-home --shell /usr/sbin/nologin xl1agent
 getent group docker >/dev/null 2>&1 && sudo usermod -aG docker xl1agent

@@ -29,6 +29,7 @@
 #   --agent-from PATH  use a local xl1_heartbeat.py instead of downloading
 #   --yes              take the answers given and ask nothing
 #   --check            report what it found and stop, changing nothing
+#   --fresh            ignore a half-finished run and start from the top
 #
 # Piped into bash, stdin is this script -- so the questions are read from
 # /dev/tty instead. A plain `read` would swallow the rest of the file and the
@@ -48,7 +49,8 @@ BACKEND_URL="${BACKEND_URL:-https://xyo-backend.onrender.com}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
 STATED_RADIUS="25"; WITH_DOCKER=""; NO_LOCATION=0
-POSTCODE=""; COUNTRY_CC="us"; WANT_TS=""; TS_KEY=""
+POSTCODE=""; COUNTRY_CC="us"; WANT_TS=""; TS_KEY=""; FRESH=0
+DONE_PREREQS=0; DONE_TAILSCALE=0; DONE_AGENT=0
 AGENT_FROM=""; ASSUME_YES=0; CHECK_ONLY=0
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -81,6 +83,7 @@ while [ $# -gt 0 ]; do
     --tailscale-key) TS_KEY="${2:-}"; shift ;;
     --agent-from)  AGENT_FROM="${2:-}"; shift ;;
     --yes|-y)      ASSUME_YES=1 ;;
+    --fresh)       FRESH=1 ;;
     --check)       CHECK_ONLY=1 ;;
     -h|--help)     sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)             die "unknown option: $1 (try --help)" ;;
@@ -195,6 +198,50 @@ install_tailscale() {
   sudo apt-get update -qq || return 1
   sudo apt-get install -y -qq tailscale || return 1
 }
+
+
+# --- remembering where we got to ---------------------------------------------
+# Setup involves a web page, a browser sign-in and a token shown once, so
+# stopping halfway is an ordinary thing to do rather than a failure. Answers
+# are written as they are given and replayed on the next run.
+#
+# THE TOKEN IS NEVER WRITTEN HERE. It is a credential; it goes into the
+# root-owned 0600 env file and nowhere else. Everything in this file is an
+# answer the operator would happily give again.
+STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/xl1-grid"
+STATE="$STATE_DIR/bootstrap.state"
+
+save_state() {
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  chmod 700 "$STATE_DIR" 2>/dev/null
+  {
+    printf '# Explorer Grid setup, unfinished. Delete this to start over.\n'
+    printf 'NODE_ID=%q\n'         "${NODE_ID:-}"
+    printf 'NODE_LABEL=%q\n'      "${NODE_LABEL:-}"
+    printf 'STATED_LOCATION=%q\n' "${STATED_LOCATION:-}"
+    printf 'STATED_LAT=%q\n'      "${STATED_LAT:-}"
+    printf 'STATED_LON=%q\n'      "${STATED_LON:-}"
+    printf 'STATED_RADIUS=%q\n'   "${STATED_RADIUS:-25}"
+    printf 'WITH_DOCKER=%q\n'     "${WITH_DOCKER:-}"
+    printf 'DONE_PREREQS=%q\n'    "${DONE_PREREQS:-0}"
+    printf 'DONE_TAILSCALE=%q\n'  "${DONE_TAILSCALE:-0}"
+    printf 'DONE_AGENT=%q\n'      "${DONE_AGENT:-0}"
+  } > "$STATE.tmp" 2>/dev/null && mv "$STATE.tmp" "$STATE" 2>/dev/null
+  chmod 600 "$STATE" 2>/dev/null
+  return 0
+}
+
+clear_state() { rm -f "$STATE" "$STATE.tmp" 2>/dev/null; return 0; }
+
+# Ctrl+C is a normal way to leave this -- the token may simply not exist yet --
+# so it says what happens next instead of dumping the reader out at a bare ^C.
+on_interrupt() {
+  printf '\n\n%sStopped.%s Everything you answered is saved.\n' "$Y" "$X"
+  printf '  Run the same command again and it resumes from here.\n'
+  printf '  To start over instead:  rm %s\n' "$STATE"
+  exit 130
+}
+trap on_interrupt INT
 
 printf '%sExplorer Grid -- Raspberry Pi setup%s\n' "$B" "$X"
 
@@ -330,6 +377,40 @@ if [ "$TTY_OK" != 1 ] && [ "$ASSUME_YES" != 1 ] && [ "$CHECK_ONLY" != 1 ]; then
   printf '    bash bootstrap-pi.sh --node-id NAME --yes\n\n'
   printf '  --help lists every question as a flag.\n'
   exit 2
+fi
+
+# Anything already answered is replayed rather than asked again. A flag given
+# now still wins: resuming must not overrule someone who has just said
+# something different on the command line.
+if [ -f "$STATE" ] && [ "$FRESH" != 1 ]; then
+  SAVED_ID="$(sed -n "s/^NODE_ID=//p" "$STATE" | head -1 | tr -d "'" | tr -d '"')"
+  head_ "Picking up where you left off"
+  say "There is an unfinished setup here${SAVED_ID:+ for \"$SAVED_ID\"}."
+  note "The answers were kept. The credential never was -- it is not the sort"
+  note "of thing that belongs in a file like that."
+  printf '\n'
+  if [ "$ASSUME_YES" = 1 ] || ask_yn "  Carry on with it?" "y"; then
+    _ID="$NODE_ID"; _LB="$NODE_LABEL"; _LO="$STATED_LOCATION"
+    _LA="$STATED_LAT"; _LN="$STATED_LON"; _DK="$WITH_DOCKER"
+    # shellcheck disable=SC1090
+    . "$STATE" 2>/dev/null || true
+    [ -n "$_ID" ] && NODE_ID="$_ID"
+    [ -n "$_LB" ] && NODE_LABEL="$_LB"
+    [ -n "$_LO" ] && STATED_LOCATION="$_LO"
+    [ -n "$_LA" ] && STATED_LAT="$_LA"
+    [ -n "$_LN" ] && STATED_LON="$_LN"
+    [ -n "$_DK" ] && WITH_DOCKER="$_DK"
+    ok "restored${NODE_ID:+ -- device \"$NODE_ID\"}"
+    [ "${DONE_PREREQS:-0}" = 1 ]   && ok "packages were already installed"
+    [ "${DONE_TAILSCALE:-0}" = 1 ] && ok "already joined to the tailnet"
+    [ "${DONE_AGENT:-0}" = 1 ]     && ok "the agent is already installed"
+    true
+  else
+    clear_state
+    NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
+    DONE_PREREQS=0; DONE_TAILSCALE=0; DONE_AGENT=0
+    ok "starting over"
+  fi
 fi
 
 # =============================================================================
@@ -498,6 +579,8 @@ else
   fi
 fi
 
+save_state
+
 # =============================================================================
 head_ "4. Docker"
 # =============================================================================
@@ -518,6 +601,8 @@ else
   printf '\n'
   if ask_yn "  Install Docker?" "n"; then WITH_DOCKER=1; else WITH_DOCKER=0; fi
 fi
+
+save_state
 
 # =============================================================================
 head_ "5. Joining your private network  (required)"
@@ -555,6 +640,8 @@ else
     fi
   fi
 fi
+
+save_state
 
 # =============================================================================
 head_ "6. What will happen"
@@ -601,6 +688,7 @@ if [ -n "$NEED_APT" ]; then
 else
   ok "nothing to install"
 fi
+DONE_PREREQS=1; save_state
 
 if [ "$WITH_DOCKER" = 1 ] && getent group docker >/dev/null 2>&1; then
   sudo usermod -aG docker "$(id -un)"
@@ -662,6 +750,7 @@ if [ "$TS_DONE" != 1 ]; then
   note "Reachable from any of your other Tailscale machines at that address,"
   note "from anywhere, with no ports opened on your router."
 fi
+DONE_TAILSCALE=1; save_state
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 if [ -n "$AGENT_FROM" ]; then
@@ -695,6 +784,7 @@ sudo mkdir -p /opt/xl1-heartbeat
 sudo cp "$WORK/xl1_heartbeat.py" /opt/xl1-heartbeat/
 [ -f "$WORK/xl1-heartbeat.service" ] && sudo cp "$WORK/xl1-heartbeat.service" /etc/systemd/system/
 ok "installed to /opt/xl1-heartbeat"
+DONE_AGENT=1; save_state
 
 # =============================================================================
 head_ "8. Its credential"
@@ -703,17 +793,46 @@ TOKEN="${NODE_HEARTBEAT_TOKEN:-}"
 if [ -z "$TOKEN" ]; then
   printf '  Register %s%s%s here:\n\n' "$B" "$NODE_ID" "$X"
   printf '     %s%s%s\n\n' "$C" "$GRID_URL" "$X"
-  printf '  The token is shown once and cannot be read back afterwards, so copy\n'
-  printf '  it before closing the page. Leave this blank to stop and finish later.\n\n'
-  TOKEN="$(ask_secret "  Paste the token")"
-fi
+  printf '  Open that on any device, add %s%s%s, and it shows a token once.\n' "$B" "$NODE_ID" "$X"
+  printf '  Copy it before closing the page -- it cannot be read back, and a\n'
+  printf '  lost one is replaced by revoking and minting another.\n\n'
+  printf '  %sNothing is typed back to you as you paste.%s That is deliberate:\n' "$D" "$X"
+  printf '  %sa credential should not sit in your scrollback.%s\n\n' "$D" "$X"
 
-if [ -z "$TOKEN" ]; then
-  printf '\n  %sStopped before the credential.%s The agent is installed and idle.\n' "$Y" "$X"
-  printf '  When you have the token:\n\n'
-  printf '    NODE_HEARTBEAT_TOKEN=<token> bash onboard.sh --node-id %s%s --install\n' \
-         "$NODE_ID" "$( [ "$WITH_DOCKER" = 1 ] || printf ' --skip-docker' )"
-  exit 0
+  # There is no blank answer here. The device cannot report without a
+  # credential, so accepting an empty one would only mean failing later and
+  # less clearly. Leaving is still free -- Ctrl+C keeps every answer and this
+  # picks up here on the next run.
+  printf '  %sNo token yet? Ctrl+C. Everything you have answered is saved and\n' "$D"
+  printf '  this resumes at exactly this point.%s\n\n' "$X"
+
+  TOK_TRIES=0
+  while [ -z "$TOKEN" ]; do
+    TOK_TRIES=$((TOK_TRIES+1))
+    if [ "$TOK_TRIES" -gt 6 ]; then
+      printf '\n  %sLeaving it there for now.%s Your answers are saved; run the same\n' "$Y" "$X"
+      printf '  command again once you have the token.\n'
+      exit 1
+    fi
+    [ "$TTY_OK" = 1 ] || die "no terminal to read the token from; pass NODE_HEARTBEAT_TOKEN=... instead"
+    TOKEN="$(ask_secret "  Paste the token")"
+    if [ -z "$TOKEN" ]; then
+      printf '  %sA token is required -- the device cannot report without one.%s\n' "$Y" "$X"
+      continue
+    fi
+    # Shape only, never the value. A half-selected paste is the likely mistake
+    # and it would otherwise surface as a 401 several steps later.
+    case "$TOKEN" in
+      *[!A-Za-z0-9_-]*)
+        printf '  %sThat contains characters a token does not. Did a stray space\n' "$Y"
+        printf '  or a line break come with it?%s\n' "$X"; TOKEN="" ;;
+      *) if [ "${#TOKEN}" -lt 20 ]; then
+           printf '  %sThat is only %s characters; these are around 43. Looks like\n' "$Y" "${#TOKEN}"
+           printf '  only part of it was copied.%s\n' "$X"; TOKEN=""
+         fi ;;
+    esac
+  done
+  ok "token accepted (${#TOKEN} characters)"
 fi
 
 # =============================================================================
@@ -741,3 +860,15 @@ XL1_STATED_LON="$STATED_LON" \
 XL1_STATED_RADIUS_KM="$STATED_RADIUS" \
 bash "$CHECKER" --node-id "$NODE_ID" --backend "$BACKEND_URL" --grid "$GRID_URL" \
      $extra --install
+rc=$?
+
+# Only on success. A failed install is exactly the case where the next run
+# should still know the answers.
+if [ "$rc" -eq 0 ]; then
+  clear_state
+  printf '\n  %sSetup is complete.%s\n' "$G" "$X"
+else
+  printf '\n  %sThat did not finish.%s Your answers are saved -- run the same\n' "$Y" "$X"
+  printf '  command again and it will resume.\n'
+fi
+exit "$rc"

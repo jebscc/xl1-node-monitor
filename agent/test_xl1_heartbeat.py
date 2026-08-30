@@ -59,6 +59,7 @@ REPORTED_FIELDS = {
     'scan_from_block',
     'scan_produced',
     'scan_to_block',
+    "stated_lat", "stated_location", "stated_lon", "stated_radius_km",
 }
 
 def _stub_run(monkeypatch, responses):

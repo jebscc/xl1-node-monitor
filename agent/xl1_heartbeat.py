@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.7.0"
+AGENT_VERSION = "1.8.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -155,6 +155,46 @@ ATTEST_SPOOL = os.environ.get(
 # has to present the same token. Same name as the service reads, so one value
 # configured in one place covers both.
 ATTEST_TOKEN = os.environ.get("XL1_ANCHOR_TOKEN", "")
+# Where the operator SAYS this device is. Opt-in and unset by default: a
+# machine that says nothing about its location stays off any map, which is the
+# right default for hardware that mostly lives in people's houses.
+#
+# Nothing verifies this, and the receiver rounds it to one decimal place (~11km)
+# on the way in, so sending a precise fix gains nothing and reveals nothing.
+# Send a coarse one anyway -- the rounding is a backstop, not permission.
+STATED_LOCATION = os.environ.get("XL1_STATED_LOCATION", "").strip()[:60]
+
+
+def _stated_coord(name, limit):
+    """A coordinate from the environment, or None if it is absent or nonsense.
+
+    Refuses rather than clamps. A latitude of 500 is a typo or a misread
+    config, and quietly turning it into 90 would put the device on the map at a
+    place nobody chose.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if -limit <= value <= limit else None
+
+
+STATED_LAT = _stated_coord("XL1_STATED_LAT", 90)
+STATED_LON = _stated_coord("XL1_STATED_LON", 180)
+
+# How wide the claim is, in kilometres. Defaults to 25 because the usual way to
+# fill the coordinates in is an IP lookup, and city-level IP geolocation is
+# routinely tens of kilometres out -- a point would be a smaller number than the
+# method can support. The receiver floors it at 11 km, which is the rounding it
+# applies anyway.
+try:
+    STATED_RADIUS_KM = max(1, int(os.environ.get("XL1_STATED_RADIUS_KM", "25")))
+except ValueError:
+    STATED_RADIUS_KM = 25
+
 CLI_PACKAGE_PATH = "/usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json"
 # A version string reaches us from a public registry and from inside a
 # container. The backend caps these fields at 32 characters, so an unexpected
@@ -1131,6 +1171,18 @@ def collect():
         payload["rebuild_timer_active"] = timer_active
     if timer_next:
         payload["rebuild_timer_next"] = timer_next
+
+    # Opt-in location. Absent unless configured, and named so that whatever
+    # renders it cannot mistake it for something measured.
+    if STATED_LOCATION:
+        payload["stated_location"] = STATED_LOCATION
+    if STATED_LAT is not None:
+        payload["stated_lat"] = STATED_LAT
+    if STATED_LON is not None:
+        payload["stated_lon"] = STATED_LON
+    # Only alongside a position -- a radius around nothing says nothing.
+    if STATED_LAT is not None and STATED_LON is not None:
+        payload["stated_radius_km"] = STATED_RADIUS_KM
 
     # Surface duplicates rather than quietly monitoring one of them.
     node_containers = list_node_containers()

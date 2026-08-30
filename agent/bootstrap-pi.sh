@@ -20,6 +20,8 @@
 #   --radius KM        how wide the location claim is (default 25)
 #   --no-location      do not ask about location; report none
 #   --with-docker      install Docker (only if this Pi will run a node)
+#   --no-tailscale     skip Tailscale (it is installed by default)
+#   --tailscale-key K  join the tailnet with an auth key instead of a browser
 #   --backend URL      the grid's backend
 #   --grid URL         where devices are registered
 #   --agent-from PATH  use a local xl1_heartbeat.py instead of downloading
@@ -44,7 +46,7 @@ BACKEND_URL="${BACKEND_URL:-https://xyo-backend.onrender.com}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
 STATED_RADIUS="25"; WITH_DOCKER=""; NO_LOCATION=0
-POSTCODE=""; COUNTRY_CC="us"
+POSTCODE=""; COUNTRY_CC="us"; WANT_TS=""; TS_KEY=""
 AGENT_FROM=""; ASSUME_YES=0; CHECK_ONLY=0
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -74,6 +76,8 @@ while [ $# -gt 0 ]; do
     --backend)     BACKEND_URL="${2:-}"; shift ;;
     --grid)        GRID_URL="${2:-}"; shift ;;
     --with-docker) WITH_DOCKER=1 ;;
+    --no-tailscale) WANT_TS=0 ;;
+    --tailscale-key) TS_KEY="${2:-}"; shift ;;
     --agent-from)  AGENT_FROM="${2:-}"; shift ;;
     --yes|-y)      ASSUME_YES=1 ;;
     --check)       CHECK_ONLY=1 ;;
@@ -166,6 +170,29 @@ except Exception:
     print("FOUND_NAME=")
 ' 2>/dev/null)"
   [ -n "$FOUND_NAME" ]
+}
+
+
+# Tailscale, from Tailscale's own apt repository rather than by piping their
+# install script into a shell. Slightly more code, and the difference is that
+# every step here is visible and the packages are signed and updated by apt
+# like everything else on the machine.
+install_tailscale() {
+  local id cn base
+  id="$(. /etc/os-release 2>/dev/null && printf '%s' "${ID:-debian}")"
+  cn="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-bookworm}")"
+  case "$id" in raspbian) base=raspbian ;; *) base=debian ;; esac
+  # A codename newer than anything Tailscale publishes would 404 the whole
+  # install; bookworm is the safe floor and its packages run fine on trixie.
+  curl -fsI --max-time 20 \
+    "https://pkgs.tailscale.com/stable/$base/$cn.tailscale-keyring.list" >/dev/null 2>&1 \
+    || cn=bookworm
+  curl -fsSL --max-time 40 "https://pkgs.tailscale.com/stable/$base/$cn.noarmor.gpg" \
+    | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null || return 1
+  curl -fsSL --max-time 40 "https://pkgs.tailscale.com/stable/$base/$cn.tailscale-keyring.list" \
+    | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null || return 1
+  sudo apt-get update -qq || return 1
+  sudo apt-get install -y -qq tailscale || return 1
 }
 
 printf '%sExplorer Grid -- Raspberry Pi setup%s\n' "$B" "$X"
@@ -492,7 +519,35 @@ else
 fi
 
 # =============================================================================
-head_ "5. What will happen"
+head_ "5. Reaching this Pi later"
+# =============================================================================
+if have tailscale; then
+  WANT_TS=1; ok "Tailscale is already installed"
+elif [ -n "$WANT_TS" ]; then
+  [ "$WANT_TS" = 1 ] && ok "Tailscale requested on the command line" \
+                     || note "Tailscale skipped on the command line."
+else
+  note "Tailscale puts this Pi on a small private network of your own, so you"
+  note "can reach it from anywhere without opening a single port on your"
+  note "router. It is free for personal use and needs an account."
+  note ""
+  note "Two reasons it matters here rather than being a nicety:"
+  note ""
+  note "  Devices on different home subnets cannot see each other. Ours are"
+  note "  on 192.168.4.x and 192.168.5.x and cannot, which is exactly the"
+  note "  case where one device wants to anchor through another's service."
+  note ""
+  note "  A headless Pi in a cupboard is otherwise reachable only from the"
+  note "  same network -- and only until its address changes."
+  printf '\n'
+  if ask_yn "  Install Tailscale?" "y"; then WANT_TS=1; else
+    WANT_TS=0
+    warn "skipping it" "this Pi will only be reachable from its own network, and cannot pair with a device on another one"
+  fi
+fi
+
+# =============================================================================
+head_ "6. What will happen"
 # =============================================================================
 NEED_APT=""
 have python3 || NEED_APT="$NEED_APT python3"
@@ -512,6 +567,7 @@ fi
 printf '  %-14s %s\n' "grid"    "$BACKEND_URL"
 printf '  %-14s %s\n' "apt"     "${NEED_APT:-nothing to install}"
 printf '  %-14s %s\n' "docker"  "$( [ "$WITH_DOCKER" = 1 ] && echo yes || echo no )"
+printf '  %-14s %s\n' "tailscale" "$( [ "${WANT_TS:-0}" = 1 ] && echo yes || echo no )"
 printf '  %-14s %s\n' "agent"   "${AGENT_FROM:-$PUBLIC_REPO}"
 printf '  %-14s %s\n' "installs" "/opt/xl1-heartbeat, running as user xl1agent"
 
@@ -525,7 +581,7 @@ if [ "$ASSUME_YES" != 1 ]; then
 fi
 
 # =============================================================================
-head_ "6. Installing"
+head_ "7. Installing"
 # =============================================================================
 if [ -n "$NEED_APT" ]; then
   sudo apt-get update -qq || die "apt-get update failed"
@@ -541,6 +597,32 @@ if [ "$WITH_DOCKER" = 1 ] && getent group docker >/dev/null 2>&1; then
   ok "added $(id -un) to the docker group"
   warn "log out and back in before Docker works for this user" \
        "group membership is applied at login"
+fi
+
+if [ "${WANT_TS:-0}" = 1 ] && ! have tailscale; then
+  printf '  installing Tailscale\n'
+  if install_tailscale; then ok "Tailscale installed"
+  else warn "Tailscale did not install" "carrying on -- the grid does not depend on it"; WANT_TS=0; fi
+fi
+
+if [ "${WANT_TS:-0}" = 1 ] && have tailscale; then
+  if tailscale status >/dev/null 2>&1; then
+    ok "already on a tailnet as $(tailscale ip -4 2>/dev/null | head -1)"
+  elif [ -n "$TS_KEY" ]; then
+    # Through a file, not the command line: an --auth-key argument is visible
+    # in ps to every user on the machine for as long as the command runs.
+    kf="$(mktemp)"; chmod 600 "$kf"; printf '%s' "$TS_KEY" > "$kf"
+    sudo tailscale up --auth-key="file:$kf" --hostname="$NODE_ID" >/dev/null 2>&1 \
+      && ok "joined the tailnet as $(tailscale ip -4 2>/dev/null | head -1)" \
+      || warn "tailscale up failed with that key" "run: sudo tailscale up"
+    rm -f "$kf"
+  else
+    printf '\n  Tailscale needs to be signed in once. It will print a link --\n'
+    printf '  open it on any device, approve, and this will continue.\n\n'
+    sudo tailscale up --hostname="$NODE_ID" < /dev/tty > /dev/tty 2>&1 \
+      && ok "joined the tailnet as $(tailscale ip -4 2>/dev/null | head -1)" \
+      || warn "not signed in" "the grid works regardless; run 'sudo tailscale up' when convenient"
+  fi
 fi
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
@@ -577,7 +659,7 @@ sudo cp "$WORK/xl1_heartbeat.py" /opt/xl1-heartbeat/
 ok "installed to /opt/xl1-heartbeat"
 
 # =============================================================================
-head_ "7. Its credential"
+head_ "8. Its credential"
 # =============================================================================
 TOKEN="${NODE_HEARTBEAT_TOKEN:-}"
 if [ -z "$TOKEN" ]; then
@@ -597,7 +679,7 @@ if [ -z "$TOKEN" ]; then
 fi
 
 # =============================================================================
-head_ "8. Checking, then starting"
+head_ "9. Checking, then starting"
 # =============================================================================
 # onboard.sh does the eligibility checks and the install. Fetched the same way
 # this script was when there is no copy alongside -- piped into bash there is

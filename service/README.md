@@ -152,6 +152,34 @@ python verify-attestation.py attestation.json
 That recomputes the hash, prints the readings so you see what you verified, and
 exits non-zero on a mismatch.
 
+### What it costs
+
+Measured on Sequence rather than estimated: the attestation wallet's balance
+either side of a single anchor, with nothing else spending from it.
+
+```
+one anchor      118,600,000,000,000 wei   0.0001186 XL1
+hourly, a year                            1.04 XL1
+1 XL1                                     roughly 8,400 anchors
+```
+
+So a year of hourly tamper-evidence costs about **one XL1**, and a wallet
+funded with 50 would run for roughly fifty years before anyone had to think
+about it again. That is the number worth knowing before deciding whether to
+turn this on: the honest answer is that cost is not the reason to hesitate.
+
+Two caveats, because a single figure invites more confidence than it has
+earned. This is one anchor, on one network, with a payload of one shape --
+gas is not a constant, and a bigger record or a busier chain will cost more.
+And the interesting question was never the price of a transaction: it is
+whether the readings are worth committing to at all, which the cost cannot
+answer.
+
+The method is worth repeating rather than the number: read the balance, wait
+for exactly one anchor, read it again. Deriving it instead from "we funded it
+with 50 and there have been N anchors" needs both of those to be exactly true,
+and neither is checkable later.
+
 ### If an anchor is lost in transit
 
 The anchor happens here, and the payload only reaches the caller in the HTTP

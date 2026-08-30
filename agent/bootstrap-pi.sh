@@ -49,7 +49,7 @@ BACKEND_URL="${BACKEND_URL:-https://xyo-backend.onrender.com}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
 STATED_RADIUS="25"; WITH_DOCKER=""; NO_LOCATION=0
-POSTCODE=""; COUNTRY_CC="us"; WANT_TS=""; TS_KEY=""; FRESH=0
+POSTCODE=""; COUNTRY_CC="us"; WANT_TS=""; TS_KEY=""; FRESH=0; REUSING_INSTALLED=0
 DONE_PREREQS=0; DONE_TAILSCALE=0; DONE_AGENT=0
 AGENT_FROM=""; ASSUME_YES=0; CHECK_ONLY=0
 
@@ -243,6 +243,31 @@ on_interrupt() {
 }
 trap on_interrupt INT
 
+
+# What device this machine is ALREADY set up as, if any.
+#
+# More authoritative than anything remembered from a previous run: the config
+# on disk is what the agent is actually using, whereas the state file is what
+# somebody was part way through deciding. Reading it wrong is how a machine
+# ends up renamed, with the old device left revoked or silent and the new one
+# refused -- which is exactly what happened the first time this was used in
+# anger.
+INSTALLED_ID=""
+read_installed_id() {
+  [ -f /etc/xl1-heartbeat.env ] || return 0
+  # 0600 and root-owned, so this needs sudo. Non-interactive first: asking for
+  # a password before saying why is a bad way to open a conversation.
+  INSTALLED_ID="$(sudo -n grep -m1 '^NODE_ID=' /etc/xl1-heartbeat.env 2>/dev/null \
+                  | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  if [ -z "$INSTALLED_ID" ]; then
+    printf '  %sThis machine already has an agent installed.%s\n' "$B" "$X"
+    note "Reading which device it is set up as -- that needs sudo."
+    INSTALLED_ID="$(sudo grep -m1 '^NODE_ID=' /etc/xl1-heartbeat.env 2>/dev/null \
+                    | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  fi
+  return 0
+}
+
 printf '%sExplorer Grid -- Raspberry Pi setup%s\n' "$B" "$X"
 
 # Someone running this may never have heard of any of it. Four sentences up
@@ -417,14 +442,46 @@ fi
 # =============================================================================
 head_ "2. Naming the device"
 # =============================================================================
-note "Two names are asked for, and they do different jobs."
-note ""
-note "This first one is the device's ID -- the permanent handle the grid"
-note "uses in its API, its records and its credential. Think of it as a"
-note "username: short, no spaces, and it CANNOT be changed later."
-note ""
-note "Letters, numbers, dots, dashes and underscores. For example:"
-note "  attic-pi-3     lew-garage-01     pi3-spare"
+read_installed_id
+if [ -n "$INSTALLED_ID" ]; then
+  printf '\n'
+  say "This machine is currently set up as \"$INSTALLED_ID\"."
+  if [ -n "$NODE_ID" ] && [ "$NODE_ID" != "$INSTALLED_ID" ]; then
+    # A flag or a resumed answer disagreeing with the installed config. The
+    # config wins the default, because it is what is actually running.
+    note "A different name was given or remembered: \"$NODE_ID\"."
+  fi
+  note ""
+  note "Keeping it re-uses that device -- which is what you want if its token"
+  note "needs replacing, or if the last run stopped part way."
+  note ""
+  note "Setting up a different one leaves \"$INSTALLED_ID\" behind: it stops"
+  note "reporting the moment this machine starts answering to another name."
+  note "Its record, history and anchors stay, and you can revoke it from Your"
+  note "devices when you are sure."
+  printf '\n'
+  if ask_yn "  Carry on as \"$INSTALLED_ID\"?" "y"; then
+    NODE_ID="$INSTALLED_ID"
+    REUSING_INSTALLED=1
+  else
+    NODE_ID=""
+    note "Right -- a different device then."
+  fi
+fi
+
+# The tutorial below is for somebody naming a device for the first time.
+# Anyone carrying on with the machine's existing one has already done it.
+if [ "${REUSING_INSTALLED:-0}" != 1 ]; then
+  note "Two names are asked for, and they do different jobs."
+  note ""
+  note "This first one is the device's ID -- the permanent handle the grid"
+  note "uses in its API, its records and its credential. Think of it as a"
+  note "username: short, no spaces, and it CANNOT be changed later."
+  note ""
+  note "Letters, numbers, dots, dashes and underscores. For example:"
+  note "  attic-pi-3     lew-garage-01     pi3-spare"
+fi
+
 printf '\n'
 # Bounded. A prompt loop with no ceiling is one broken read away from spinning
 # until someone notices, and "someone notices" is not an error path.
@@ -465,6 +522,24 @@ except Exception:
     pass
 ' 2>/dev/null)"
     fi
+  fi
+
+  # This machine's own device is decided first, and reason by reason. Order
+  # matters: a live device would otherwise be refused as "reporting right now"
+  # when it is simply itself, and a revoked one would be waved through and then
+  # fail at the far end, which is the failure this whole change came from.
+  if [ "${REUSING_INSTALLED:-0}" = 1 ] && [ "$AVAIL" = 0 ]; then
+    if [ "$REASON" = revoked ]; then
+      printf '  %s"%s" has been revoked.%s
+' "$Y" "$NODE_ID" "$X"
+      note "Its credential is refused, so re-installing here cannot help. Open"
+      note "Your devices (or the operator panel), re-issue a credential for it"
+      note "-- that mints a fresh token and keeps the id, its history and its"
+      note "anchors -- then run this again with the new token to hand."
+      die "nothing was changed"
+    fi
+    ok "\"$NODE_ID\" is this machine's device"
+    break
   fi
 
   if [ "$AVAIL" = 0 ] && [ "$REASON" = reporting ]; then

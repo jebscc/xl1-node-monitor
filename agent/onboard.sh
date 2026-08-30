@@ -362,6 +362,15 @@ tmp="$(mktemp)"
   printf 'NODE_ROLE=%s\n' "$NODE_ROLE"
   printf 'NODE_NETWORK=%s\n' "$NODE_NETWORK"
   printf 'NODE_HEARTBEAT_TOKEN=%s\n' "$TOKEN"
+  # Opt-in location, written only where it was actually given. An empty
+  # XL1_STATED_LAT= is NOT the same as an absent one -- it overrides the
+  # default with an empty string, which is the first rule in the env example.
+  [ -n "${XL1_STATED_LOCATION:-}" ] && printf 'XL1_STATED_LOCATION="%s"\n' "$XL1_STATED_LOCATION"
+  [ -n "${XL1_STATED_LAT:-}" ]      && printf 'XL1_STATED_LAT=%s\n' "$XL1_STATED_LAT"
+  [ -n "${XL1_STATED_LON:-}" ]      && printf 'XL1_STATED_LON=%s\n' "$XL1_STATED_LON"
+  [ -n "${XL1_STATED_LAT:-}" ] && [ -n "${XL1_STATED_RADIUS_KM:-}" ] \
+    && printf 'XL1_STATED_RADIUS_KM=%s\n' "$XL1_STATED_RADIUS_KM"
+  true
 } > "$tmp"
 $SUDO cp "$tmp" /etc/xl1-heartbeat.env
 rm -f "$tmp"

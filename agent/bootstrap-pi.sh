@@ -897,7 +897,17 @@ if [ ! -f "$CHECKER" ]; then
     || die "could not download onboard.sh"
 fi
 
-extra=""; [ "$WITH_DOCKER" = 1 ] || extra="--skip-docker"
+# Docker installed this run cannot answer this session -- the group was added
+# after login. Checking it here would fail a machine that is fine, so the
+# checks are skipped and the reason said out loud.
+extra=""
+if [ "$WITH_DOCKER" != 1 ]; then
+  extra="--skip-docker"
+elif ! docker info >/dev/null 2>&1; then
+  extra="--skip-docker"
+  warn "Docker will not answer until you log out and back in" \
+       "expected when it was just installed: this session still has the groups it started with. Skipping its checks; the agent picks the node up once you have logged back in."
+fi
 # The token travels in the environment, never as an argument: arguments are
 # visible in ps to every user on the machine.
 # shellcheck disable=SC2086

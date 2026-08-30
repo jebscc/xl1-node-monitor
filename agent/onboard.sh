@@ -164,8 +164,19 @@ else
   if docker info >/dev/null 2>&1; then
     ok "the Docker daemon is reachable from this account"
   else
-    bad "Docker is installed but this account cannot talk to the daemon" \
-        "Linux: sudo usermod -aG docker \"\$USER\" then log out and back in. Windows: start Docker Desktop."
+    if id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+      bad "Docker is installed but the daemon is not answering" \
+          "the account is in the docker group, so this is the daemon rather than permissions: try 'sudo systemctl start docker'"
+    elif getent group docker 2>/dev/null | grep -q "[:,]$(id -un)\(,\|$\)"; then
+      # In the group on paper but not in this session: the membership was
+      # added after login and a process cannot join a group it did not start
+      # with. Not broken, just not yet.
+      warn "Docker will not answer until you log out and back in" \
+           "$(id -un) was added to the docker group, but a running session keeps the groups it started with. Log out and in, then run this again to check the node."
+    else
+      bad "Docker is installed but this account cannot talk to the daemon" \
+          "Linux: sudo usermod -aG docker \"\$USER\" then log out and back in. Windows: start Docker Desktop."
+    fi
   fi
   RUNNING="$(docker ps --format '{{.Names}}\t{{.Image}}' 2>/dev/null | grep -i 'xl1' | head -3)"
   if [ -n "$RUNNING" ]; then
@@ -240,18 +251,42 @@ else
            # to the first and yes to the second, and this used to ask only the
            # first -- so an id that was already claimed came back clear.
            AV="$(fetch "$BACKEND_URL/api/node/devices/available?node_id=$NODE_ID" 2>/dev/null)"
+           # Whether "taken" is a problem depends entirely on whether we hold
+           # its credential. Installing with a token means the device was just
+           # registered on purpose -- refusing it then would mean the wizard
+           # rejecting the registration it had itself just told the operator to
+           # make. Without a token, taken is somebody else's and stays fatal.
+           #
+           # This is not taking the operator's word for it. The token is the
+           # claim, and it is checked for real a few steps later, when the
+           # first heartbeat either lands or comes back 401.
+           HAVE_CRED=0
+           [ "$DO_INSTALL" = 1 ] && [ -n "${NODE_HEARTBEAT_TOKEN:-}" ] && HAVE_CRED=1
            case "$AV" in
              *'"available":true'*|*'"available": true'*)
-               ok "'$NODE_ID' is free" ;;
+               if [ "$HAVE_CRED" = 1 ]; then
+                 bad "'$NODE_ID' is not registered, but a token was supplied" \
+                     "nothing on the grid holds that name, so no credential can be valid for it. Register it first."
+               else
+                 ok "'$NODE_ID' is free"
+               fi ;;
              *reporting*)
-               bad "'$NODE_ID' is reporting right now" \
-                   "that name belongs to a machine already on the grid" ;;
+               if [ "$HAVE_CRED" = 1 ]; then
+                 warn "'$NODE_ID' is already reporting" \
+                      "reinstalling over a device that is running. Fine if this is that device; its token settles it either way."
+               else
+                 bad "'$NODE_ID' is reporting right now" \
+                     "that name belongs to a machine already on the grid"
+               fi ;;
              *'"available":false'*|*'"available": false'*)
-               # Not a warning. Nothing here can establish that the operator
-               # is the one who registered it, and asking them to say so is
-               # not a check.
-               bad "'$NODE_ID' is already taken" \
-                   "a credential exists for that name. Pick another, or remove that device from the operator panel first -- this cannot tell whether it is yours." ;;
+               if [ "$HAVE_CRED" = 1 ]; then
+                 ok "'$NODE_ID' is registered, which is what we expect here"
+               else
+                 # Nothing here can establish that the operator is the one who
+                 # registered it, and asking them to say so is not a check.
+                 bad "'$NODE_ID' is already taken" \
+                     "a credential exists for that name. Pick another, or remove that device from the operator panel first -- this cannot tell whether it is yours."
+               fi ;;
              *)
                # An older backend without the check. Fall back to what can be
                # seen, and say which question actually got answered.

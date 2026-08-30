@@ -20,8 +20,10 @@
 #   --radius KM        how wide the location claim is (default 25)
 #   --no-location      do not ask about location; report none
 #   --with-docker      install Docker (only if this Pi will run a node)
-#   --no-tailscale     skip Tailscale (it is installed by default)
 #   --tailscale-key K  join the tailnet with an auth key instead of a browser
+#
+# Tailscale is required, not optional. Every device on the grid is reachable
+# over it, and there is no flag to skip it -- see step 5.
 #   --backend URL      the grid's backend
 #   --grid URL         where devices are registered
 #   --agent-from PATH  use a local xl1_heartbeat.py instead of downloading
@@ -76,7 +78,6 @@ while [ $# -gt 0 ]; do
     --backend)     BACKEND_URL="${2:-}"; shift ;;
     --grid)        GRID_URL="${2:-}"; shift ;;
     --with-docker) WITH_DOCKER=1 ;;
-    --no-tailscale) WANT_TS=0 ;;
     --tailscale-key) TS_KEY="${2:-}"; shift ;;
     --agent-from)  AGENT_FROM="${2:-}"; shift ;;
     --yes|-y)      ASSUME_YES=1 ;;
@@ -519,30 +520,39 @@ else
 fi
 
 # =============================================================================
-head_ "5. Reaching this Pi later"
+head_ "5. Joining your private network  (required)"
 # =============================================================================
-if have tailscale; then
-  WANT_TS=1; ok "Tailscale is already installed"
-elif [ -n "$WANT_TS" ]; then
-  [ "$WANT_TS" = 1 ] && ok "Tailscale requested on the command line" \
-                     || note "Tailscale skipped on the command line."
+WANT_TS=1     # required: there is deliberately no way to answer no
+if have tailscale && tailscale status >/dev/null 2>&1; then
+  ok "already on a tailnet as $(tailscale ip -4 2>/dev/null | head -1)"
+  TS_DONE=1
 else
-  note "Tailscale puts this Pi on a small private network of your own, so you"
-  note "can reach it from anywhere without opening a single port on your"
-  note "router. It is free for personal use and needs an account."
+  TS_DONE=0
+  note "Every device on the grid is reachable over Tailscale, so this part is"
+  note "required rather than offered. Two concrete reasons:"
   note ""
-  note "Two reasons it matters here rather than being a nicety:"
+  note "  Devices on different home networks cannot see each other. A device"
+  note "  on 192.168.4.x cannot reach one on 192.168.5.x, which is exactly"
+  note "  the case where one wants to anchor through another's service."
   note ""
-  note "  Devices on different home subnets cannot see each other. Ours are"
-  note "  on 192.168.4.x and 192.168.5.x and cannot, which is exactly the"
-  note "  case where one device wants to anchor through another's service."
+  note "  A headless Pi in a cupboard is otherwise reachable only from its"
+  note "  own network, and only until its address changes."
   note ""
-  note "  A headless Pi in a cupboard is otherwise reachable only from the"
-  note "  same network -- and only until its address changes."
+  note "It is a private network between your own machines. It opens no ports"
+  note "on your router and puts nothing on the public internet."
   printf '\n'
-  if ask_yn "  Install Tailscale?" "y"; then WANT_TS=1; else
-    WANT_TS=0
-    warn "skipping it" "this Pi will only be reachable from its own network, and cannot pair with a device on another one"
+
+  if [ -n "$TS_KEY" ]; then
+    ok "an auth key was supplied; no browser step needed"
+  else
+    printf '  %sWhat you need first: a free Tailscale account.%s\n\n' "$B" "$X"
+    printf '    If you do not have one, open this on your phone or laptop:\n'
+    printf '      %shttps://login.tailscale.com/start%s\n\n' "$C" "$X"
+    printf '    Sign in with Google, Microsoft, GitHub or Apple. No card, and\n'
+    printf '    the personal plan covers 100 devices.\n\n'
+    if [ "$TTY_OK" = 1 ] && [ "$ASSUME_YES" != 1 ]; then
+      ask "  Press Enter once you have an account ready" "ok" >/dev/null
+    fi
   fi
 fi
 
@@ -567,7 +577,7 @@ fi
 printf '  %-14s %s\n' "grid"    "$BACKEND_URL"
 printf '  %-14s %s\n' "apt"     "${NEED_APT:-nothing to install}"
 printf '  %-14s %s\n' "docker"  "$( [ "$WITH_DOCKER" = 1 ] && echo yes || echo no )"
-printf '  %-14s %s\n' "tailscale" "$( [ "${WANT_TS:-0}" = 1 ] && echo yes || echo no )"
+printf '  %-14s %s\n' "tailscale" "$( [ "${TS_DONE:-0}" = 1 ] && echo "already joined" || echo "will join (required)" )"
 printf '  %-14s %s\n' "agent"   "${AGENT_FROM:-$PUBLIC_REPO}"
 printf '  %-14s %s\n' "installs" "/opt/xl1-heartbeat, running as user xl1agent"
 
@@ -599,30 +609,49 @@ if [ "$WITH_DOCKER" = 1 ] && getent group docker >/dev/null 2>&1; then
        "group membership is applied at login"
 fi
 
-if [ "${WANT_TS:-0}" = 1 ] && ! have tailscale; then
-  printf '  installing Tailscale\n'
-  if install_tailscale; then ok "Tailscale installed"
-  else warn "Tailscale did not install" "carrying on -- the grid does not depend on it"; WANT_TS=0; fi
-fi
+# Required, so a failure here stops the run. Nothing of the agent has been
+# installed at this point, which is the reason this sits before it: giving up
+# now leaves a machine exactly as it was found rather than half provisioned.
+if [ "$TS_DONE" != 1 ]; then
+  if ! have tailscale; then
+    printf '\n  %s[5.1]%s Installing the Tailscale package.\n' "$B" "$X"
+    note "From Tailscale's own apt repository, so it is signed and updated"
+    note "by apt like everything else on this machine."
+    if install_tailscale; then
+      ok "installed ($(tailscale version 2>/dev/null | head -1))"
+    else
+      die "Tailscale would not install. Check the network and run this again -- nothing else has been changed."
+    fi
+  fi
 
-if [ "${WANT_TS:-0}" = 1 ] && have tailscale; then
-  if tailscale status >/dev/null 2>&1; then
-    ok "already on a tailnet as $(tailscale ip -4 2>/dev/null | head -1)"
-  elif [ -n "$TS_KEY" ]; then
+  printf '\n  %s[5.2]%s Signing this Pi in to your tailnet.\n' "$B" "$X"
+  if [ -n "$TS_KEY" ]; then
     # Through a file, not the command line: an --auth-key argument is visible
     # in ps to every user on the machine for as long as the command runs.
     kf="$(mktemp)"; chmod 600 "$kf"; printf '%s' "$TS_KEY" > "$kf"
-    sudo tailscale up --auth-key="file:$kf" --hostname="$NODE_ID" >/dev/null 2>&1 \
-      && ok "joined the tailnet as $(tailscale ip -4 2>/dev/null | head -1)" \
-      || warn "tailscale up failed with that key" "run: sudo tailscale up"
-    rm -f "$kf"
+    sudo tailscale up --auth-key="file:$kf" --hostname="$NODE_ID" >/dev/null 2>&1
+    ts_rc=$?; rm -f "$kf"
+    [ "$ts_rc" -eq 0 ] || die "that auth key was refused. Generate another at https://login.tailscale.com/admin/settings/keys"
   else
-    printf '\n  Tailscale needs to be signed in once. It will print a link --\n'
-    printf '  open it on any device, approve, and this will continue.\n\n'
-    sudo tailscale up --hostname="$NODE_ID" < /dev/tty > /dev/tty 2>&1 \
-      && ok "joined the tailnet as $(tailscale ip -4 2>/dev/null | head -1)" \
-      || warn "not signed in" "the grid works regardless; run 'sudo tailscale up' when convenient"
+    note "A link will appear just below. Open it on your phone or laptop,"
+    note "sign in, and approve this machine. Setup continues on its own the"
+    note "moment you do -- nothing else is needed here."
+    printf '\n'
+    if [ "$TTY_OK" = 1 ]; then
+      sudo tailscale up --hostname="$NODE_ID" < /dev/tty > /dev/tty 2>&1 \
+        || die "sign-in did not complete. Run 'sudo tailscale up' and then start this again."
+    else
+      sudo tailscale up --hostname="$NODE_ID" \
+        || die "sign-in did not complete. Run 'sudo tailscale up' and then start this again."
+    fi
   fi
+
+  TS_IP="$(tailscale ip -4 2>/dev/null | head -1)"
+  [ -n "$TS_IP" ] || die "Tailscale reports no address. Run 'tailscale status' to see why."
+  printf '\n'
+  ok "this Pi is on your tailnet as $TS_IP"
+  note "Reachable from any of your other Tailscale machines at that address,"
+  note "from anywhere, with no ports opened on your router."
 fi
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT

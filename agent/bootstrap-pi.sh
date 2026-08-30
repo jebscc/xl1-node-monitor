@@ -624,12 +624,21 @@ if [ "$TS_DONE" != 1 ]; then
     fi
   fi
 
+  # A node id may contain dots, underscores and capitals; a Tailscale name is
+  # a DNS label and may not. Sanitising here means the machine appears in the
+  # tailnet under a name close to its grid id instead of whatever Tailscale
+  # would have silently rewritten it to.
+  TS_HOST="$(printf '%s' "$NODE_ID" \
+    | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//' | cut -c1-63)"
+  [ -n "$TS_HOST" ] || TS_HOST="xl1-node"
+
   printf '\n  %s[5.2]%s Signing this Pi in to your tailnet.\n' "$B" "$X"
+  [ "$TS_HOST" = "$NODE_ID" ] || note "On the tailnet it will be called \"$TS_HOST\" -- Tailscale names are DNS names, so capitals and underscores cannot survive."
   if [ -n "$TS_KEY" ]; then
     # Through a file, not the command line: an --auth-key argument is visible
     # in ps to every user on the machine for as long as the command runs.
     kf="$(mktemp)"; chmod 600 "$kf"; printf '%s' "$TS_KEY" > "$kf"
-    sudo tailscale up --auth-key="file:$kf" --hostname="$NODE_ID" >/dev/null 2>&1
+    sudo tailscale up --auth-key="file:$kf" --hostname="$TS_HOST" >/dev/null 2>&1
     ts_rc=$?; rm -f "$kf"
     [ "$ts_rc" -eq 0 ] || die "that auth key was refused. Generate another at https://login.tailscale.com/admin/settings/keys"
   else
@@ -638,10 +647,10 @@ if [ "$TS_DONE" != 1 ]; then
     note "moment you do -- nothing else is needed here."
     printf '\n'
     if [ "$TTY_OK" = 1 ]; then
-      sudo tailscale up --hostname="$NODE_ID" < /dev/tty > /dev/tty 2>&1 \
+      sudo tailscale up --hostname="$TS_HOST" < /dev/tty > /dev/tty 2>&1 \
         || die "sign-in did not complete. Run 'sudo tailscale up' and then start this again."
     else
-      sudo tailscale up --hostname="$NODE_ID" \
+      sudo tailscale up --hostname="$TS_HOST" \
         || die "sign-in did not complete. Run 'sudo tailscale up' and then start this again."
     fi
   fi

@@ -11,11 +11,10 @@
 # question. Everything it does is idempotent: run it twice and the second run
 # installs nothing and says so.
 #
-# WHAT IT DOES NOT DO: install an XL1 node. That is a much larger thing, it
-# needs far more memory than a Pi 3 has, and it is a decision about what the
-# machine is for rather than a step in joining the grid. A device that reports
-# and anchors is a full member of the grid without it -- corroboration is the
-# point, and that does not require producing blocks.
+# WHAT IT DOES NOT DO: install an XL1 node. That is a much larger thing and a
+# decision about what the machine is for, rather than a step in joining the
+# grid. A device that reports and anchors is a full member of a grid without
+# one -- corroboration is the point, and it does not require producing blocks.
 #
 # Options:
 #   --node-id NAME     what the device is called on the grid (required)
@@ -90,15 +89,23 @@ case "$ARCH" in
   *) warn "unfamiliar architecture: $ARCH" ;;
 esac
 
-# The honest part. A Pi 3 has 1 GB and cannot run a producer -- the Pi 4 this
-# grid started on sits at about 1000 MB used with one running. Saying so here
-# beats letting someone discover it through an OOM kill at 3am.
+# Measured rather than guessed, because the guess was wrong. An earlier version
+# of this said 1 GB "is not enough to run a producer", on the strength of the
+# reference Pi 4 showing ~1000 MB used -- which is the whole system, page cache
+# and all, not the node. The node's actual footprint there, by process tree:
+# producer ~287 MB, anchor service ~80 MB. About 370 MB.
+#
+# So a 1 GB board is not disqualified, and saying it was would have talked
+# people out of hardware that works. What is genuinely unknown is whether a
+# Pi 3 keeps UP: its CPU is materially slower than a Pi 4's, and memory use
+# grows with the chain. That is a question for whoever runs it, not something
+# this script can settle -- so it reports the numbers and leaves the decision.
 if [ -n "${RAM_MB:-}" ]; then
-  if [ "$RAM_MB" -lt 1500 ]; then
-    warn "${RAM_MB} MB RAM is not enough to run an XL1 producer" \
-         "the reference node uses about 1000 MB on its own. This script does not install a node, and the agent itself needs only a few MB -- the device joins the grid by reporting and anchoring, which is what the grid is for."
+  if [ "$RAM_MB" -lt 1200 ]; then
+    warn "${RAM_MB} MB RAM -- enough for the agent, tight for a node" \
+         "the reference node measures about 370 MB (producer ~287, anchor service ~80), so it fits on paper once the OS is accounted for. Whether this board keeps up is the open question, and it is not a memory one. This script installs no node either way."
   elif [ "$RAM_MB" -lt 3000 ]; then
-    warn "${RAM_MB} MB RAM is tight for a producer" "fine for the agent"
+    ok "${RAM_MB} MB RAM -- comfortable for the agent, workable for a node (~370 MB measured)"
   else
     ok "${RAM_MB} MB RAM"
   fi

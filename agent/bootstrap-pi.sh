@@ -1277,8 +1277,17 @@ fi
 # Written through a 0600 temp file and installed as root. Never passed as
 # `docker -e`, which would put a wallet phrase in `ps` for every user on the
 # machine, and never echoed back.
-umask 077
+# chmod, not umask. `umask 077` used to sit here and was never restored, so it
+# leaked into everything that followed -- and sudo takes the UNION of the
+# caller's umask and its own, so every later `sudo mkdir` produced a 0700
+# root-owned directory. That is what emptied /opt/xl1-node-monitor: the files
+# were extracted correctly and this unprivileged shell simply could not see
+# into the directory holding them.
+#
+# The file is empty between mktemp and chmod, so nothing is exposed in the gap.
+# Same shape as the Tailscale key handling further up.
 tmp_env="$(mktemp)"
+chmod 600 "$tmp_env"
 {
   printf '# XL1 block producer. Root-only: this file contains a wallet phrase.\n'
   printf 'XL1_NETWORK=%s\n' "$XL1_NET"
@@ -1357,6 +1366,9 @@ SVC="$MONITOR_REPO/service"
 if [ ! -f "$SVC/Dockerfile" ]; then
   say "fetching the anchor service"
   $SUDO mkdir -p "$MONITOR_REPO"
+  # Stated rather than inherited: the checks below run unprivileged and have to
+  # be able to read what lands here.
+  $SUDO chmod 755 "$MONITOR_REPO"
   tarball="$(mktemp)"
   curl -fsSL --max-time 120 "$MONITOR_TAR" -o "$tarball" \
     || { rm -f "$tarball"; die "could not download the anchor service from $MONITOR_TAR"; }
@@ -1447,8 +1459,8 @@ ANCHOR_TOKEN="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 ATTESTOR_PHRASE="$($SUDO cat "$KEYS_DIR/attestor.key" 2>/dev/null | tr -d '\r\n')"
 [ -n "$ATTESTOR_PHRASE" ] || die "could not read $KEYS_DIR/attestor.key"
 
-umask 077
 tmp_env="$(mktemp)"
+chmod 600 "$tmp_env"
 {
   printf '# Anchor service. Root-only: contains the attestation phrase.\n'
   printf 'XL1_NETWORK=%s\n' "$XL1_NET"

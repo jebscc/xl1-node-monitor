@@ -85,10 +85,33 @@ done
 
 BACKEND_URL="${BACKEND_URL%/}"
 
-# Declared, not guessed: --skip-docker means there is no node here to run.
-if [ -z "$NODE_ROLE" ]; then
-  if [ "$SKIP_DOCKER" = 1 ]; then NODE_ROLE="monitor"; else NODE_ROLE="producer"; fi
+# The role is a PERMANENT property of the device. --skip-docker is a fact about
+# one session -- usually that Docker was installed minutes ago and its group is
+# not active until the next login -- so deciding the role from it wrote
+# "monitor" into the env of a machine that then had a producer installed on it
+# four steps later, and left it there.
+#
+# That is not cosmetic. A device claiming to be a monitor is exempted from the
+# DEGRADED rule, because a machine with no node has no /livez to answer and
+# judging it by that would mark it broken for doing its job. So a producer
+# mislabelled this way reports ONLINE with a dead node, for good.
+#
+# Every device on this grid runs a producer, so this is a rule and not a
+# default. "monitor" describes a device with no node, which setup no longer
+# produces -- and it is not an inert label: the backend exempts a monitor from
+# the DEGRADED rule, so anything wearing it reports ONLINE with a dead node.
+# Leaving a way to ask for that would leave a way to recreate the bug above.
+#
+# --role is still read, and still refused for anything else, because a silent
+# override is how this went wrong the first time. The images repo lists
+# "producer (more roles later)"; when one of those lands it is a decision to
+# make deliberately, not a flag to have left open.
+if [ -n "$NODE_ROLE" ] && [ "$NODE_ROLE" != "producer" ]; then
+  die "--role $NODE_ROLE is not available: every device on this grid runs a producer.
+     A device labelled anything else is exempted from the DEGRADED rule, so a
+     dead node on it would report ONLINE for good."
 fi
+NODE_ROLE="producer"
 
 # --- platform ----------------------------------------------------------------
 UNAME_S="$(uname -s 2>/dev/null || echo unknown)"

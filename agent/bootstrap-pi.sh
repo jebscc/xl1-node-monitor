@@ -53,6 +53,17 @@ ACCOUNT_URL="${ACCOUNT_URL:-${GRID_URL:-https://jimtheexplorer.com/portal}}"
 # account to look at, and a self-hosted copy overrides it on its own.
 GRID_URL="${MAP_URL:-https://jimtheexplorer.com/grid}"
 BACKEND_URL="${BACKEND_URL:-https://xyo-backend.onrender.com}"
+# The XL1 block producer. Built on the device from the published images repo --
+# there is no registry to pull from yet, and the entrypoint is compiled during
+# the Docker build, so no toolchain is needed on the host.
+IMAGES_REPO="${IMAGES_REPO:-/opt/xl1-docker-images}"
+IMAGES_URL="${IMAGES_URL:-https://github.com/XYOracleNetwork/xl1-docker-images.git}"
+CLI_REGISTRY="${CLI_REGISTRY:-https://registry.npmjs.org/@xyo-network/xl1-cli/latest}"
+# Root-owned, 0600, and deliberately NOT inside IMAGES_REPO: the weekly rebuild
+# does a git fetch and ff-only merge in there, and a wallet phrase does not
+# belong in a directory something else is pulling into.
+PRODUCER_ENV="${PRODUCER_ENV:-/etc/xl1-producer.env}"
+XL1_NET="${XL1_NET:-sequence}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
 STATED_RADIUS="25"; WITH_DOCKER=""; NO_LOCATION=0
@@ -234,6 +245,12 @@ save_state() {
     printf 'DONE_PREREQS=%q\n'    "${DONE_PREREQS:-0}"
     printf 'DONE_TAILSCALE=%q\n'  "${DONE_TAILSCALE:-0}"
     printf 'DONE_AGENT=%q\n'      "${DONE_AGENT:-0}"
+    printf 'DONE_PRODUCER=%q\n' "${DONE_PRODUCER:-0}"
+    printf 'REWARD_ADDRESS=%q\n' "${REWARD_ADDRESS:-}"
+    # XL1_MNEMONIC is deliberately absent, for the same reason the device
+    # token is: a resumable wizard that writes a secret to a plain file in
+    # the home directory has quietly made a second copy of the one thing
+    # that matters most. It is asked for again on the next run.
   } > "$STATE.tmp" 2>/dev/null && mv "$STATE.tmp" "$STATE" 2>/dev/null
   chmod 600 "$STATE" 2>/dev/null
   return 0
@@ -723,22 +740,23 @@ save_state
 # =============================================================================
 head_ "4. Docker"
 # =============================================================================
-if [ -n "$WITH_DOCKER" ]; then
-  ok "Docker requested on the command line"
-elif have docker; then
-  WITH_DOCKER=1; ok "Docker is already installed"
+# Docker used to be a question here, and the honest answer for most people was
+# no. It is not optional any more: the XL1 node runs in a container, and step 10
+# installs it.
+#
+# Anchoring needs a SECOND container -- the anchor service -- which this wizard
+# does not install yet. So a device set up by it today produces and reports but
+# does not anchor, and cannot witness anybody until that piece lands. Docker
+# being here is what makes that a follow-up rather than a rebuild.
+WITH_DOCKER=1
+if have docker; then
+  ok "Docker is already installed"
 else
-  note "Docker is only needed if this Pi will ALSO run an XL1 node -- the"
-  note "software that takes part in the chain itself. That is a much bigger"
-  note "job than this agent, and a separate decision."
+  note "Docker is required. The XL1 node -- the software that takes part in"
+  note "the chain itself -- runs in a container, and this wizard installs it."
   note ""
-  note "  no   this Pi reports on itself and joins the map. Most people."
-  note "  yes  you already intend to run a node here, or you run one now."
-  note ""
-  note "Answering no changes nothing about being a member of the grid, and"
-  note "you can install Docker later without redoing any of this."
-  printf '\n'
-  if ask_yn "  Install Docker?" "n"; then WITH_DOCKER=1; else WITH_DOCKER=0; fi
+  note "Anchoring, which is what makes a reading checkable by anyone later,"
+  note "needs a second container that is not part of this wizard yet."
 fi
 
 save_state
@@ -806,6 +824,7 @@ printf '  %-14s %s\n' "docker"  "$( [ "$WITH_DOCKER" = 1 ] && echo yes || echo n
 printf '  %-14s %s\n' "tailscale" "$( [ "${TS_DONE:-0}" = 1 ] && echo "already joined" || echo "will join (required)" )"
 printf '  %-14s %s\n' "agent"   "${AGENT_FROM:-$PUBLIC_REPO}"
 printf '  %-14s %s\n' "installs" "/opt/xl1-heartbeat, running as user xl1agent"
+printf '  %-14s %s\n' "producer" "XL1 $XL1_NET producer, built here (this takes a while)"
 
 if [ "$CHECK_ONLY" = 1 ]; then
   printf '\n%sCheck only -- nothing was changed.%s\n' "$G" "$X"
@@ -978,7 +997,7 @@ if [ -z "$TOKEN" ]; then
 fi
 
 # =============================================================================
-head_ "9. Checking, then starting"
+head_ "9. Checking, then starting the agent"
 # =============================================================================
 # onboard.sh does the eligibility checks and the install. Fetched the same way
 # this script was when there is no copy alongside -- piped into bash there is
@@ -1014,13 +1033,171 @@ bash "$CHECKER" --node-id "$NODE_ID" --backend "$BACKEND_URL" --account "$ACCOUN
      $extra --install
 rc=$?
 
-# Only on success. A failed install is exactly the case where the next run
-# should still know the answers.
-if [ "$rc" -eq 0 ]; then
-  clear_state
-  printf '\n  %sSetup is complete.%s\n' "$G" "$X"
-else
+if [ "$rc" -ne 0 ]; then
   printf '\n  %sThat did not finish.%s Your answers are saved -- run the same\n' "$Y" "$X"
   printf '  command again and it will resume.\n'
+  exit "$rc"
 fi
-exit "$rc"
+DONE_AGENT=1
+save_state
+
+# =============================================================================
+head_ "10. The XL1 block producer  (required)"
+# =============================================================================
+# Everything above puts a device on the grid. This is the part that puts it on
+# the CHAIN, and it is required for a reason worth stating plainly: a device
+# that does not run this cannot anchor, and a device that cannot anchor is a
+# machine making claims about itself that nobody can check afterwards.
+#
+# Built here rather than pulled: the images repo publishes no registry tags yet.
+# Every docker call below goes through sudo, NOT the docker group -- if Docker
+# was installed a few minutes ago this session still has the groups it started
+# with, and `docker` would fail for a machine that is completely fine.
+SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
+
+if [ "${DONE_PRODUCER:-0}" = 1 ] && $SUDO docker ps --filter name=xl1-producer \
+     --format '{{.Names}}' 2>/dev/null | grep -q xl1-producer; then
+  ok "the producer is already running here"
+else
+
+case "$ARCH" in
+  aarch64|arm64|x86_64) : ;;
+  *) die "XL1 node images are published for arm64 and x86_64 only; this is $ARCH.
+     Reflash with the 64-bit Raspberry Pi OS and run this again." ;;
+esac
+
+note "This runs the XL1 producer: the software that takes part in the chain"
+note "itself, proposing blocks and earning the rewards for them."
+note ""
+# Said BEFORE the phrase is asked for and before twenty minutes of building,
+# because it is the one thing that makes a healthy-looking node worthless and
+# nothing in the logs will tell you. `Published block:` means "candidate
+# submitted", never "accepted".
+warn "Your address has to be on the network's producer list first" \
+     "until it is, the node runs perfectly, submits candidates, and has every one ignored. It looks identical to a working producer. Ask to be added before you count on rewards."
+note ""
+note "You need a wallet phrase. It is the node's identity on the chain and it"
+note "is the only thing here that is genuinely irreplaceable -- lose it and you"
+note "lose the identity, and anyone who copies it can produce as you."
+note ""
+note "Generate it in a wallet you already back up (the XYO extension or"
+note "MetaMask both work -- XL1 uses the same derivation), then paste it here."
+note "It is written to $PRODUCER_ENV, readable by root only, and is never"
+note "sent anywhere, never logged, and never saved with your other answers."
+printf '\n'
+
+MNEMONIC=""
+tries=0
+while [ -z "$MNEMONIC" ] && [ "$tries" -lt 5 ]; do
+  tries=$((tries + 1))
+  MNEMONIC="$(ask_secret "  Wallet phrase (hidden as you type)")"
+  words="$(printf '%s' "$MNEMONIC" | tr -s "[:space:]" " " | tr -d "\r" | wc -w | tr -d " ")"
+  case "$words" in
+    12|15|18|21|24) : ;;
+    *) printf '  %sThat is %s words.%s A BIP39 phrase is 12, 15, 18, 21 or 24.\n' \
+              "$Y" "${words:-0}" "$X"; MNEMONIC="" ;;
+  esac
+  # Shape only. A full checksum needs the 2048-word list, and a wrong phrase
+  # fails visibly at startup anyway -- this catches the typo, not the forgery.
+  if [ -n "$MNEMONIC" ] && printf '%s' "$MNEMONIC" | grep -qv "^[a-z ]*$"; then
+    printf '  %sThat contains something other than lowercase words.%s\n' "$Y" "$X"
+    MNEMONIC=""
+  fi
+done
+[ -n "$MNEMONIC" ] || die "no wallet phrase given. Nothing was changed; run this again when you have one."
+
+REWARD_ADDRESS="${REWARD_ADDRESS:-}"
+tries=0
+while [ -z "$REWARD_ADDRESS" ] && [ "$tries" -lt 5 ]; do
+  tries=$((tries + 1))
+  note "Where block rewards are paid. Usually that wallet's own address."
+  REWARD_ADDRESS="$(ask "  Reward address (0x...)" "")"
+  if ! printf '%s' "$REWARD_ADDRESS" | grep -qE "^0x[0-9a-fA-F]{40}$"; then
+    printf '  %sThat is not an address.%s It is 0x followed by 40 hex characters.\n' "$Y" "$X"
+    REWARD_ADDRESS=""
+  fi
+done
+[ -n "$REWARD_ADDRESS" ] || die "no reward address given. Nothing was changed."
+save_state
+
+# --- the images repo ---------------------------------------------------------
+if [ -d "$IMAGES_REPO/.git" ]; then
+  say "updating $IMAGES_REPO"
+  # Scoped to this path rather than root's global config: the checkout belongs
+  # to the operator and this runs as root, which git refuses as dubious
+  # ownership. The exception stays on the one directory that needs it.
+  $SUDO git -C "$IMAGES_REPO" -c "safe.directory=$IMAGES_REPO" fetch --quiet origin \
+    || warn "could not fetch the images repo" "building what is already there"
+  $SUDO git -C "$IMAGES_REPO" -c "safe.directory=$IMAGES_REPO" merge --ff-only --quiet '@{u}' 2>/dev/null || true
+else
+  say "cloning the XL1 images repo into $IMAGES_REPO"
+  $SUDO git clone --quiet "$IMAGES_URL" "$IMAGES_REPO" \
+    || die "could not clone $IMAGES_URL"
+fi
+
+CLI_VERSION="$(curl -fsSL --max-time 30 "$CLI_REGISTRY" 2>/dev/null \
+  | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+[ -n "$CLI_VERSION" ] || die "could not read the current xl1-cli version from npm"
+ok "building xl1:$CLI_VERSION"
+
+printf '\n  %sThis is the long part.%s Ten to twenty minutes on a Pi 4, longer on a\n' "$Y" "$X"
+printf '  Pi 3. It is compiling, not hung. Leave it be.\n\n'
+$SUDO docker build \
+  --file "$IMAGES_REPO/docker/Dockerfile" \
+  --build-arg "XL1_CLI_VERSION=$CLI_VERSION" \
+  --tag "xl1:$CLI_VERSION" \
+  "$IMAGES_REPO" || die "the image did not build. Nothing was started; the agent is unaffected."
+# Tagged by version AND as local. The version tag is what the weekly rebuild
+# compares against; xl1:local is what the container actually runs, so promoting
+# a new build later is a retag rather than a reconfiguration.
+$SUDO docker tag "xl1:$CLI_VERSION" xl1:local
+ok "built xl1:$CLI_VERSION"
+
+# --- the secret --------------------------------------------------------------
+# Written through a 0600 temp file and installed as root. Never passed as
+# `docker -e`, which would put a wallet phrase in `ps` for every user on the
+# machine, and never echoed back.
+umask 077
+tmp_env="$(mktemp)"
+{
+  printf '# XL1 block producer. Root-only: this file contains a wallet phrase.\n'
+  printf 'XL1_NETWORK=%s\n' "$XL1_NET"
+  printf 'XL1_ROLE=producer\n'
+  printf 'XL1_MNEMONIC=%s\n' "$MNEMONIC"
+  printf 'XL1_REWARD_ADDRESS=%s\n' "$REWARD_ADDRESS"
+} > "$tmp_env"
+$SUDO install -o root -g root -m 600 "$tmp_env" "$PRODUCER_ENV"
+rm -f "$tmp_env"
+MNEMONIC=""
+ok "wrote $PRODUCER_ENV (root only)"
+
+# --- start it ----------------------------------------------------------------
+$SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true
+$SUDO docker run -d --name xl1-producer --restart unless-stopped \
+  --env-file "$PRODUCER_ENV" xl1:local >/dev/null \
+  || die "the producer would not start. Check: sudo docker logs xl1-producer"
+
+sleep 15
+if $SUDO docker ps --filter name=xl1-producer --format '{{.Names}}' | grep -q xl1-producer; then
+  ok "xl1-producer is running"
+else
+  printf '\n'
+  $SUDO docker logs --tail 20 xl1-producer 2>&1 | sed 's/^/    /'
+  die "the producer started and stopped again. The lines above say why -- a wrong phrase shows up here."
+fi
+
+DONE_PRODUCER=1
+save_state
+fi
+
+printf '\n'
+note "Watching it:      sudo docker logs -f xl1-producer"
+note "Its config:       $PRODUCER_ENV  (root only)"
+note ""
+note "'Published block: ...' in the log means a candidate was SUBMITTED. It"
+note "does not mean it was accepted -- that needs your address on the producer"
+note "list. Blocks produced on the grid panel is the number that settles it."
+
+clear_state
+printf '\n  %sSetup is complete.%s\n' "$G" "$X"
+exit 0

@@ -1394,7 +1394,11 @@ $SUDO docker build --tag xl1-service:local "$SVC" \
   || die "the anchor service did not build. The producer and agent are untouched."
 ok "built xl1-service:local"
 
-# --- the throwaway key -------------------------------------------------------
+# --- the service, read-only for now ------------------------------------------
+# Started before the key exists and long before any phrase reaches it, because
+# /standing is how the wait below sees a balance arrive. With no mnemonic it
+# holds no signing key at all and /health says signing:false, which is the
+# state it ships in.
 $SUDO mkdir -p "$KEYS_DIR" /var/lib/xl1-attestations
 
 # Both of these are mounted into the service, which runs as a non-root uid, so
@@ -1415,6 +1419,64 @@ $SUDO chown "$SVC_UID:$SVC_UID" "$KEYS_DIR" /var/lib/xl1-attestations
 # and is left readable so verify-attestation.py needs no sudo.
 $SUDO chmod 700 "$KEYS_DIR"
 $SUDO chmod 755 /var/lib/xl1-attestations
+
+start_anchor_service() { # start_anchor_service [env-file]
+  $SUDO docker rm -f xl1-service-anchor-1 >/dev/null 2>&1 || true
+  # Deliberately not `docker compose`. The wizard installs docker.io from apt,
+  # which does not ship the compose plugin, so a compose call would fail on a
+  # fresh Pi -- and this is one container. service/docker-compose.pi.yml is the
+  # reference for these values; the two that are not obvious:
+  #
+  #   0.0.0.0 INSIDE the container, because Docker forwards a published port to
+  #   the bridge address and not to the namespace loopback, so a service bound
+  #   to 127.0.0.1 in there is unreachable through the mapping.
+  #
+  #   127.0.0.1 on the HOST side, which is the actual containment: the only
+  #   interface that decides what your network can reach.
+  # shellcheck disable=SC2086
+  $SUDO docker run -d --name xl1-service-anchor-1 --restart unless-stopped \
+    ${1:+--env-file "$1"} \
+    -e XL1_NETWORK="$XL1_NET" \
+    -e XL1_SERVICE_PORT=8090 \
+    -e XL1_SERVICE_HOST=0.0.0.0 \
+    -e XL1_ATTEST_ARCHIVE=/attestations \
+    -e XL1_INDEXER_FLOOR_BLOCK=0 \
+    -v /var/lib/xl1-attestations:/attestations \
+    -p 127.0.0.1:8090:8090 \
+    xl1-service:local >/dev/null 2>&1
+}
+
+wait_for_service() { # up to ~60s for /health to answer
+  i=0
+  while [ "$i" -lt 30 ]; do
+    curl -fsS --max-time 5 http://127.0.0.1:8090/health >/dev/null 2>&1 && return 0
+    i=$((i + 1)); sleep 2
+  done
+  return 1
+}
+
+start_anchor_service \
+  || die "the anchor service would not start. Check: sudo docker logs xl1-service-anchor-1"
+wait_for_service \
+  || die "the anchor service started but is not answering on 127.0.0.1:8090. Check: sudo docker logs xl1-service-anchor-1"
+ok "anchor service is up (read-only -- it holds no key yet)"
+
+# --- the throwaway key -------------------------------------------------------
+if [ -z "${ATTESTOR_ADDRESS:-}" ] && $SUDO test -s "$KEYS_DIR/attestor.key"; then
+  # A key is already here and this run does not know its address, which happens
+  # whenever the previous run died between writing the key and saving the
+  # state. Generating another is refused -- correctly, since replacing a
+  # delegated key leaves the delegation pointing at an address nobody can sign
+  # for -- so the address is read back off the key that exists.
+  say "reading the attestation key already on this machine"
+  out="$($SUDO docker run --rm -v "$KEYS_DIR":/keys xl1-service:local \
+          node_modules/.bin/tsx new-attestor.ts --from /keys/attestor.key 2>&1)" \
+    || { printf '%s\n' "$out" | sed 's/^/    /'; die "could not read $KEYS_DIR/attestor.key"; }
+  ATTESTOR_ADDRESS="$(printf '%s' "$out" | grep -oiE '(0x)?[0-9a-f]{40}' | head -1)"
+  [ -n "$ATTESTOR_ADDRESS" ] || { printf '%s\n' "$out" | sed 's/^/    /'; die "could not read an address from the output above"; }
+  save_state
+fi
+
 if [ -z "${ATTESTOR_ADDRESS:-}" ]; then
   # Writes the phrase to the host 0600 and prints only the address. Refuses to
   # overwrite: replacing a key that has already been delegated would leave the
@@ -1423,25 +1485,65 @@ if [ -z "${ATTESTOR_ADDRESS:-}" ]; then
           node_modules/.bin/tsx new-attestor.ts --out /keys/attestor.key 2>&1)" \
     || { printf '%s\n' "$out" | sed 's/^/    /'; die "could not create the attestation key"; }
   printf '%s\n' "$out" | sed 's/^/    /'
-  ATTESTOR_ADDRESS="$(printf '%s' "$out" | grep -oE '0x[0-9a-fA-F]{40}' | head -1)"
+  # 0x optional: these addresses are printed bare, and requiring the prefix
+  # threw away a key that had just been written correctly.
+  ATTESTOR_ADDRESS="$(printf '%s' "$out" | grep -oiE '(0x)?[0-9a-f]{40}' | head -1)"
   [ -n "$ATTESTOR_ADDRESS" ] || die "the key was made but its address could not be read from the output above"
   save_state
 fi
 ok "attestation address: $ATTESTOR_ADDRESS"
 
-# --- the one part nobody can do for you --------------------------------------
-printf '\n'
-warn "This address needs gas before anchoring can start" \
-     "it pays for every anchor. About one XL1 covers a year; fund it with more and forget about it. Nothing below works until it has a balance."
-printf '\n    %s%s%s\n\n' "$C" "$ATTESTOR_ADDRESS" "$X"
-if ! ask_yn "  Have you sent it gas?" "n"; then
-  save_state
-  printf '\n  %sStopping here, which is the right place to stop.%s\n' "$Y" "$X"
-  printf '  Send gas to the address above, then run this same command again --\n'
-  printf '  it picks up from here and everything else stays as it is.\n\n'
-  printf '  The producer is running and the agent is reporting. Only anchoring\n'
-  printf '  is waiting on you.\n'
-  exit 0
+# --- waiting for gas ---------------------------------------------------------
+# The one part nobody can automate, so the script waits on it rather than
+# failing. It used to exit and ask for a re-run, which meant the operator had
+# to come back, remember the command, and sit through the checks again for a
+# transfer that usually lands in under a minute.
+attestor_balance() { # echoes a decimal balance, or nothing
+  curl -fsS --max-time 10 \
+    "http://127.0.0.1:8090/standing?address=$ATTESTOR_ADDRESS&network=$XL1_NET" 2>/dev/null \
+    | sed -n 's/.*"balance"[[:space:]]*:[[:space:]]*\([0-9.eE+-]*\).*/\1/p' | head -1
+}
+
+bal="$(attestor_balance)"
+case "${bal:-0}" in ''|0|0.0|0.00) funded=0 ;; *) funded=1 ;; esac
+
+if [ "$funded" = 1 ]; then
+  ok "the attestation key already holds gas ($bal)"
+else
+  printf '\n'
+  printf '  %sThis address needs gas before anchoring can start.%s\n\n' "$Y" "$X"
+  printf '    %s%s%s\n\n' "$C" "$ATTESTOR_ADDRESS" "$X"
+  printf '  It pays for every anchor -- about 0.0001186 XL1 each, hourly, so\n'
+  printf '  roughly one XL1 a year. Send more and forget about it.\n\n'
+  printf '  %sWaiting for it to arrive. Leave this running; it checks every 10\n' "$D"
+  printf '  seconds and continues by itself. Ctrl+C is safe -- everything so far\n'
+  printf '  is saved and the same command picks up here.%s\n\n' "$X"
+
+  # A visible clock, so a wait that is working looks different from a wedge.
+  spin='|/-\'
+  waited=0
+  while [ "$funded" != 1 ]; do
+    n=0
+    while [ "$n" -lt 10 ]; do
+      c="$(printf '%s' "$spin" | cut -c$(( (waited + n) % 4 + 1 )))"
+      printf '\r  %s waiting for gas at %s   %dm %02ds ' \
+             "$c" "$ATTESTOR_ADDRESS" "$((waited / 60))" "$((waited % 60))"
+      sleep 1
+      n=$((n + 1))
+    done
+    waited=$((waited + 10))
+    bal="$(attestor_balance)"
+    case "${bal:-0}" in ''|0|0.0|0.00) : ;; *) funded=1 ;; esac
+    # Hourly, in case the balance can never be read -- so a wait that will
+    # never end says so rather than spinning until somebody gives up.
+    if [ "$funded" != 1 ] && [ "$((waited % 3600))" -eq 0 ]; then
+      printf '\r%*s\r' 78 ''
+      warn "still nothing after $((waited / 3600))h" \
+           "check the address is right, and that the service can reach the network: sudo docker logs xl1-service-anchor-1"
+    fi
+  done
+  printf '\r%*s\r' 78 ''
+  ok "gas arrived: $bal"
 fi
 
 # --- the delegation ----------------------------------------------------------
@@ -1470,7 +1572,7 @@ else
 fi
 PRODUCER_MNEMONIC=""
 
-# --- wire it up --------------------------------------------------------------
+# --- hand the service its key -------------------------------------------------
 # One value on both sides. The service refuses to serve /attest at all when a
 # signing key is set without it -- a key behind an unprotected endpoint is
 # worse than no key.
@@ -1491,34 +1593,13 @@ rm -f "$tmp_env"
 ATTESTOR_PHRASE=""
 ok "wrote the service config"
 
-# Deliberately not `docker compose`. The wizard installs docker.io from apt,
-# which does not ship the compose plugin, so a compose call would fail on a
-# fresh Pi -- and this is one container. service/docker-compose.pi.yml is the
-# reference for these values; the two that are not obvious:
-#
-#   0.0.0.0 INSIDE the container, because Docker forwards a published port to
-#   the bridge address and not to the namespace loopback, so a service bound
-#   to 127.0.0.1 in there is unreachable through the mapping.
-#
-#   127.0.0.1 on the HOST side, which is the actual containment: the only
-#   interface that decides what your network can reach.
-$SUDO docker rm -f xl1-service-anchor-1 >/dev/null 2>&1 || true
-$SUDO docker run -d --name xl1-service-anchor-1 --restart unless-stopped \r
-  --env-file "$ANCHOR_ENV" \r
-  -e XL1_SERVICE_PORT=8090 \r
-  -e XL1_SERVICE_HOST=0.0.0.0 \r
-  -e XL1_ATTEST_ARCHIVE=/attestations \r
-  -e XL1_INDEXER_FLOOR_BLOCK=0 \r
-  -v /var/lib/xl1-attestations:/attestations \r
-  -p 127.0.0.1:8090:8090 \r
-  xl1-service:local >/dev/null 2>&1 \
-  || die "the anchor service would not start. Check: sudo docker logs xl1-service-anchor-1"
+start_anchor_service "$ANCHOR_ENV" \
+  || die "the anchor service would not restart. Check: sudo docker logs xl1-service-anchor-1"
+wait_for_service || die "the anchor service is not answering on 127.0.0.1:8090"
 
-sleep 10
 health="$(curl -fsS --max-time 10 http://127.0.0.1:8090/health 2>/dev/null || true)"
 case "$health" in
-  *'"signing":true'*|*'"signing": true'*) ok "the anchor service is up and holding its key" ;;
-  "") die "the anchor service is not answering on 127.0.0.1:8090" ;;
+  *'"signing":true'*|*'"signing": true'*) ok "the anchor service is holding its key" ;;
   *) warn "the service is up but reports no signing key" \
           "anchoring will not start until that is fixed: sudo docker logs xl1-service-anchor-1" ;;
 esac

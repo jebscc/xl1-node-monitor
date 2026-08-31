@@ -12,6 +12,7 @@
  *   npx tsx new-attestor.ts                 # writes attestor.key, prints the address
  *   npx tsx new-attestor.ts --out /path/to  # somewhere of your choosing
  *   npx tsx new-attestor.ts --show          # print the phrase instead of writing it
+ *   npx tsx new-attestor.ts --from <path>   # address of a key that already exists
  *
  * Written to a file rather than printed by default, because a terminal keeps
  * scrollback and shells keep history, and the phrase would otherwise sit in
@@ -25,7 +26,7 @@
  * Derived on the same path the service signs with, so the address printed here
  * is the address that will actually appear on attestations.
  */
-import { statSync, writeFileSync } from 'node:fs'
+import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { HDWallet } from '@xyo-network/sdk'
@@ -37,14 +38,47 @@ const arg = (name: string): string | undefined => {
 }
 const flag = (name: string): boolean => process.argv.includes(`--${name}`)
 
-const main = async () => {
-  const show = flag('show')
-  const out = resolve(arg('out') ?? 'attestor.key')
-
-  const phrase = String(await HDWallet.generateMnemonic()).trim()
+const addressOf = async (phrase: string): Promise<string> => {
   const wallet = await generateXyoBaseWalletFromPhrase(phrase)
   const account = await wallet.derivePath(ADDRESS_INDEX.XYO)
-  const address = account.address.toLowerCase()
+  return account.address.toLowerCase()
+}
+
+const main = async () => {
+  const show = flag('show')
+  const from = arg('from')
+  const out = resolve(arg('out') ?? 'attestor.key')
+
+  // --from: print the address of a key that already exists, generating nothing.
+  //
+  // Its absence wedged a setup script. The key had been written and the run
+  // died before recording the address; re-running could not generate (this
+  // refuses to overwrite, correctly) and could not read one either, so there
+  // was no way forward that did not involve moving a real key aside. Deriving
+  // it belongs here rather than in whatever is calling, so there is one
+  // derivation and it is the one the service signs with.
+  if (from) {
+    const path = resolve(from)
+    let phrase: string
+    try {
+      phrase = readFileSync(path, 'utf8').trim()
+    } catch (e) {
+      console.error(`\n  Could not read ${path}: ${(e as Error).message}\n`)
+      process.exit(2)
+    }
+    if (!phrase) {
+      console.error(`\n  ${path} is empty -- there is no key there to read.\n`)
+      process.exit(2)
+    }
+    // Address only. The phrase was deliberately put in a file rather than a
+    // terminal, and printing it here would undo that.
+    console.log('\n  attestation address :', await addressOf(phrase))
+    console.log('  read from           :', path, '\n')
+    return
+  }
+
+  const phrase = String(await HDWallet.generateMnemonic()).trim()
+  const address = await addressOf(phrase)
 
   // The address is announced only once the phrase is somewhere durable.
   // Printing it first reads as success, and a key whose phrase was never

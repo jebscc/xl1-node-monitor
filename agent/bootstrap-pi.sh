@@ -64,6 +64,18 @@ CLI_REGISTRY="${CLI_REGISTRY:-https://registry.npmjs.org/@xyo-network/xl1-cli/la
 # belong in a directory something else is pulling into.
 PRODUCER_ENV="${PRODUCER_ENV:-/etc/xl1-producer.env}"
 XL1_NET="${XL1_NET:-sequence}"
+# The anchor service. Published in the same repo as this script, under service/,
+# so a stranger needs nothing that is not already public.
+MONITOR_REPO="${MONITOR_REPO:-/opt/xl1-node-monitor}"
+MONITOR_URL="${MONITOR_URL:-https://github.com/jebscc/xl1-node-monitor.git}"
+# The attestation phrase is written here by new-attestor.ts, 0600, on the host
+# rather than in the container so a rebuild cannot take it with it.
+KEYS_DIR="${KEYS_DIR:-/opt/xl1-keys}"
+# Same reasoning as PRODUCER_ENV: out of the checkout, since this step
+# fetches and merges in there. Compose reads it through --env-file rather
+# than by it sitting beside the compose file.
+ANCHOR_ENV="${ANCHOR_ENV:-/etc/xl1-anchor.env}"
+AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
 STATED_RADIUS="25"; WITH_DOCKER=""; NO_LOCATION=0
@@ -247,6 +259,10 @@ save_state() {
     printf 'DONE_AGENT=%q\n'      "${DONE_AGENT:-0}"
     printf 'DONE_PRODUCER=%q\n' "${DONE_PRODUCER:-0}"
     printf 'REWARD_ADDRESS=%q\n' "${REWARD_ADDRESS:-}"
+    printf 'DONE_ANCHOR=%q\n'   "${DONE_ANCHOR:-0}"
+    # Public, and the wizard stops on it waiting for gas -- so it has to
+    # survive the operator closing the terminal and coming back tomorrow.
+    printf 'ATTESTOR_ADDRESS=%q\n' "${ATTESTOR_ADDRESS:-}"
     # XL1_MNEMONIC is deliberately absent, for the same reason the device
     # token is: a resumable wizard that writes a secret to a plain file in
     # the home directory has quietly made a second copy of the one thing
@@ -1190,13 +1206,197 @@ DONE_PRODUCER=1
 save_state
 fi
 
+# =============================================================================
+head_ "11. Anchoring  (required)"
+# =============================================================================
+# Producing blocks puts this machine on the chain. Anchoring is what makes the
+# things it says about ITSELF -- temperature, load, uptime -- checkable by a
+# stranger afterwards, which is the entire argument the grid rests on. Blocks
+# are already public; hardware readings are the machine describing itself, and
+# nothing stops a description being edited later.
+#
+# Three moving parts, and only two of them can be automated:
+#
+#   the service      a container that hashes a reading and writes the hash to
+#                    XL1, bound to loopback so nothing on your network sees it
+#   a throwaway key  it anchors hashes and holds a little gas; it controls no
+#                    producer, no stake, nothing worth taking
+#   one delegation   your producer signs a single statement binding that key to
+#                    it, by hand, once -- so a verifier can follow
+#                    attestation -> delegation -> producer without the producer
+#                    key ever going near a service with an HTTP endpoint
+#
+# The part that cannot be automated is putting gas in the throwaway key. The
+# wizard stops there and waits, and the wait survives closing the terminal.
+if [ "${DONE_ANCHOR:-0}" = 1 ]; then
+  ok "anchoring is already set up here"
+else
+
+note "Anchoring writes the hash of each reading to XL1, so anyone can check"
+note "later that the reading was not edited. Only the hash goes on chain --"
+note "no telemetry is published by it."
+note ""
+note "It costs gas: about 0.0001186 XL1 per anchor, hourly, so roughly one"
+note "XL1 a year. That is measured on Sequence, not estimated."
+printf '\n'
+
+# --- the service source ------------------------------------------------------
+if [ -d "$MONITOR_REPO/.git" ]; then
+  say "updating $MONITOR_REPO"
+  $SUDO git -C "$MONITOR_REPO" -c "safe.directory=$MONITOR_REPO" fetch --quiet origin || true
+  $SUDO git -C "$MONITOR_REPO" -c "safe.directory=$MONITOR_REPO" merge --ff-only --quiet '@{u}' 2>/dev/null || true
+else
+  say "fetching the anchor service"
+  $SUDO git clone --quiet "$MONITOR_URL" "$MONITOR_REPO" || die "could not clone $MONITOR_URL"
+fi
+SVC="$MONITOR_REPO/service"
+[ -f "$SVC/Dockerfile" ] || die "no Dockerfile at $SVC -- the repo layout has changed"
+
+printf '\n  %sBuilding the anchor service.%s A few minutes.\n\n' "$Y" "$X"
+# --build is not optional, here or ever: the Dockerfile COPYs src, so a plain
+# `up -d` silently brings the container back on the previous code.
+$SUDO docker build --tag xl1-service:local "$SVC" \
+  || die "the anchor service did not build. The producer and agent are untouched."
+ok "built xl1-service:local"
+
+# --- the throwaway key -------------------------------------------------------
+$SUDO mkdir -p "$KEYS_DIR" /var/lib/xl1-attestations
+if [ -z "${ATTESTOR_ADDRESS:-}" ]; then
+  # Writes the phrase to the host 0600 and prints only the address. Refuses to
+  # overwrite: replacing a key that has already been delegated would leave the
+  # delegation pointing at an address nobody can sign for.
+  out="$($SUDO docker run --rm -v "$KEYS_DIR":/keys xl1-service:local \
+          node_modules/.bin/tsx new-attestor.ts --out /keys/attestor.key 2>&1)" \
+    || { printf '%s\n' "$out" | sed 's/^/    /'; die "could not create the attestation key"; }
+  printf '%s\n' "$out" | sed 's/^/    /'
+  ATTESTOR_ADDRESS="$(printf '%s' "$out" | grep -oE '0x[0-9a-fA-F]{40}' | head -1)"
+  [ -n "$ATTESTOR_ADDRESS" ] || die "the key was made but its address could not be read from the output above"
+  save_state
+fi
+ok "attestation address: $ATTESTOR_ADDRESS"
+
+# --- the one part nobody can do for you --------------------------------------
+printf '\n'
+warn "This address needs gas before anchoring can start" \
+     "it pays for every anchor. About one XL1 covers a year; fund it with more and forget about it. Nothing below works until it has a balance."
+printf '\n    %s%s%s\n\n' "$C" "$ATTESTOR_ADDRESS" "$X"
+if ! ask_yn "  Have you sent it gas?" "n"; then
+  save_state
+  printf '\n  %sStopping here, which is the right place to stop.%s\n' "$Y" "$X"
+  printf '  Send gas to the address above, then run this same command again --\n'
+  printf '  it picks up from here and everything else stays as it is.\n\n'
+  printf '  The producer is running and the agent is reporting. Only anchoring\n'
+  printf '  is waiting on you.\n'
+  exit 0
+fi
+
+# --- the delegation ----------------------------------------------------------
+# The producer phrase goes in on STDIN. Never an argument, never an -e: the
+# delegate tool reads stdin for exactly this reason.
+note "Binding that key to your producer. This is the only time the producer"
+note "phrase is used after setup, and it is used here by you, once."
+PRODUCER_MNEMONIC="$($SUDO sed -n 's/^XL1_MNEMONIC=//p' "$PRODUCER_ENV" 2>/dev/null)"
+[ -n "$PRODUCER_MNEMONIC" ] || die "could not read the producer phrase from $PRODUCER_ENV"
+
+# Dry run first, printed in full, so what is about to go on chain is seen
+# before it goes there.
+printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
+  node_modules/.bin/tsx delegate-attestor.ts --attestor "$ATTESTOR_ADDRESS" 2>&1 | sed 's/^/    /'
+
+printf '\n'
+if ask_yn "  Put that on chain?" "y"; then
+  printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
+    node_modules/.bin/tsx delegate-attestor.ts --attestor "$ATTESTOR_ADDRESS" --anchor 2>&1 \
+    | sed 's/^/    /' \
+    || { PRODUCER_MNEMONIC=""; die "the delegation did not anchor. Nothing else was changed."; }
+  ok "the delegation is on chain"
+else
+  PRODUCER_MNEMONIC=""
+  die "stopped before delegating. Run this again when you are ready; nothing was changed."
+fi
+PRODUCER_MNEMONIC=""
+
+# --- wire it up --------------------------------------------------------------
+# One value on both sides. The service refuses to serve /attest at all when a
+# signing key is set without it -- a key behind an unprotected endpoint is
+# worse than no key.
+ANCHOR_TOKEN="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+ATTESTOR_PHRASE="$($SUDO cat "$KEYS_DIR/attestor.key" 2>/dev/null | tr -d '\r\n')"
+[ -n "$ATTESTOR_PHRASE" ] || die "could not read $KEYS_DIR/attestor.key"
+
+umask 077
+tmp_env="$(mktemp)"
+{
+  printf '# Anchor service. Root-only: contains the attestation phrase.\n'
+  printf 'XL1_NETWORK=%s\n' "$XL1_NET"
+  printf 'XYO_WALLET_MNEMONIC=%s\n' "$ATTESTOR_PHRASE"
+  printf 'XL1_ANCHOR_TOKEN=%s\n' "$ANCHOR_TOKEN"
+} > "$tmp_env"
+$SUDO install -o root -g root -m 600 "$tmp_env" "$ANCHOR_ENV"
+rm -f "$tmp_env"
+ATTESTOR_PHRASE=""
+ok "wrote the service config"
+
+# Deliberately not `docker compose`. The wizard installs docker.io from apt,
+# which does not ship the compose plugin, so a compose call would fail on a
+# fresh Pi -- and this is one container. service/docker-compose.pi.yml is the
+# reference for these values; the two that are not obvious:
+#
+#   0.0.0.0 INSIDE the container, because Docker forwards a published port to
+#   the bridge address and not to the namespace loopback, so a service bound
+#   to 127.0.0.1 in there is unreachable through the mapping.
+#
+#   127.0.0.1 on the HOST side, which is the actual containment: the only
+#   interface that decides what your network can reach.
+$SUDO docker rm -f xl1-service-anchor-1 >/dev/null 2>&1 || true
+$SUDO docker run -d --name xl1-service-anchor-1 --restart unless-stopped \r
+  --env-file "$ANCHOR_ENV" \r
+  -e XL1_SERVICE_PORT=8090 \r
+  -e XL1_SERVICE_HOST=0.0.0.0 \r
+  -e XL1_ATTEST_ARCHIVE=/attestations \r
+  -e XL1_INDEXER_FLOOR_BLOCK=0 \r
+  -v /var/lib/xl1-attestations:/attestations \r
+  -p 127.0.0.1:8090:8090 \r
+  xl1-service:local >/dev/null 2>&1 \
+  || die "the anchor service would not start. Check: sudo docker logs xl1-service-anchor-1"
+
+sleep 10
+health="$(curl -fsS --max-time 10 http://127.0.0.1:8090/health 2>/dev/null || true)"
+case "$health" in
+  *'"signing":true'*|*'"signing": true'*) ok "the anchor service is up and holding its key" ;;
+  "") die "the anchor service is not answering on 127.0.0.1:8090" ;;
+  *) warn "the service is up but reports no signing key" \
+          "anchoring will not start until that is fixed: sudo docker logs xl1-service-anchor-1" ;;
+esac
+
+# --- tell the agent about it -------------------------------------------------
+# Appended to the agent's env and the service restarted. Both sides carry the
+# same token under the same variable name, so one value covers both.
+$SUDO sed -i '/^XL1_ATTEST_URL=/d;/^XL1_ANCHOR_TOKEN=/d' "$AGENT_ENV" 2>/dev/null || true
+printf 'XL1_ATTEST_URL=http://127.0.0.1:8090/attest\nXL1_ANCHOR_TOKEN=%s\n' "$ANCHOR_TOKEN" \
+  | $SUDO tee -a "$AGENT_ENV" >/dev/null
+ANCHOR_TOKEN=""
+$SUDO systemctl restart xl1-heartbeat 2>/dev/null || true
+ok "the agent will anchor from its next cycle"
+
+DONE_ANCHOR=1
+save_state
+fi
+
 printf '\n'
 note "Watching it:      sudo docker logs -f xl1-producer"
 note "Its config:       $PRODUCER_ENV  (root only)"
 note ""
+note "Anchor service:   sudo docker logs -f xl1-service-anchor-1"
+note "Attestation key:  $KEYS_DIR/attestor.key  (root only -- back this up)"
+note ""
 note "'Published block: ...' in the log means a candidate was SUBMITTED. It"
 note "does not mean it was accepted -- that needs your address on the producer"
 note "list. Blocks produced on the grid panel is the number that settles it."
+note ""
+note "Anchoring runs hourly. The first one lands within the hour, and ends"
+note "this device's probation early -- it is the faster of the two ways off"
+note "pending."
 
 clear_state
 printf '\n  %sSetup is complete.%s\n' "$G" "$X"

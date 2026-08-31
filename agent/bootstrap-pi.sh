@@ -1396,6 +1396,25 @@ ok "built xl1-service:local"
 
 # --- the throwaway key -------------------------------------------------------
 $SUDO mkdir -p "$KEYS_DIR" /var/lib/xl1-attestations
+
+# Both of these are mounted into the service, which runs as a non-root uid, so
+# root-owned mounts are not writable by it. The key generator fails outright
+# with EACCES and says so.
+#
+# The archive would have failed LATER and quieter: a payload is written there
+# the moment an anchor succeeds and before the backend is told, so between
+# those two events it is the only copy of what the on-chain hash commits to.
+# An unwritable archive is not a broken directory, it is a lost payload.
+#
+# Asked rather than assumed. The node image happens to use 1000, but reading it
+# off the image costs one call and does not go stale.
+SVC_UID="$($SUDO docker run --rm --entrypoint id xl1-service:local -u 2>/dev/null | tr -d '\r\n')"
+case "$SVC_UID" in ''|*[!0-9]*) SVC_UID=1000 ;; esac
+$SUDO chown "$SVC_UID:$SVC_UID" "$KEYS_DIR" /var/lib/xl1-attestations
+# The phrase is readable only by that uid; the archive holds published payloads
+# and is left readable so verify-attestation.py needs no sudo.
+$SUDO chmod 700 "$KEYS_DIR"
+$SUDO chmod 755 /var/lib/xl1-attestations
 if [ -z "${ATTESTOR_ADDRESS:-}" ]; then
   # Writes the phrase to the host 0600 and prints only the address. Refuses to
   # overwrite: replacing a key that has already been delegated would leave the

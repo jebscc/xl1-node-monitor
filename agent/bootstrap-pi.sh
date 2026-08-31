@@ -1138,6 +1138,41 @@ else
   note "ufw is not installed, so no firewall rules were set. The node runs"
   note "either way; XYO's published steps use ufw if you want to add it later."
 fi
+# Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf
+# setting Storage=volatile, to spare the SD card. The effect is invisible until
+# it matters: /var/log/journal exists and stays empty, journald writes to
+# /run/log/journal, and every log dies at reboot -- so the crash you most want
+# to read has already erased itself, and it reads as journald being
+# misconfigured rather than deliberately overridden.
+#
+# The name must sort AFTER 40-. Drop-ins merge by filename across directories
+# and the last name wins, so a 10- file is silently beaten by the vendor's.
+#
+# The caps keep the vendor's concern honest rather than pretending it was
+# wrong: a bounded journal, not an unbounded one.
+JOURNAL_CONF=/etc/systemd/journald.conf.d/99-xl1-persistent.conf
+if [ ! -f "$JOURNAL_CONF" ]; then
+  say "keeping logs across reboots"
+  $SUDO mkdir -p /etc/systemd/journald.conf.d
+  tmp_j="$(mktemp)"
+  chmod 644 "$tmp_j"
+  {
+    printf '# Explorer Grid: keep the journal across reboots, bounded.\n'
+    printf '# Must sort after 40-rpi-volatile-storage.conf, which sets Storage=volatile.\n'
+    printf '[Journal]\n'
+    printf 'Storage=persistent\n'
+    printf 'SystemMaxUse=200M\n'
+    printf 'SystemMaxFileSize=20M\n'
+    printf 'SystemKeepFree=500M\n'
+    printf 'MaxRetentionSec=2week\n'
+  } > "$tmp_j"
+  $SUDO install -o root -g root -m 644 "$tmp_j" "$JOURNAL_CONF"
+  rm -f "$tmp_j"
+  $SUDO systemctl restart systemd-journald 2>/dev/null || true
+  ok "logs now survive a reboot (capped at 200M, kept two weeks)"
+else
+  ok "logs already survive a reboot"
+fi
 printf '\n'
 
 note "This runs the XL1 producer: the software that takes part in the chain"
@@ -1301,10 +1336,50 @@ MNEMONIC=""
 ok "wrote $PRODUCER_ENV (root only)"
 
 # --- start it ----------------------------------------------------------------
+# Node picks its default heap ceiling from TOTAL system memory -- and inside the
+# container it sees the HOST's, because stock Raspberry Pi OS ships without the
+# memory cgroup controller, so `docker --memory` is accepted and discarded.
+# Measured: 32 GB of RAM gives a 4288 MB default. It scales with memory and tops
+# out around 4 GB.
+#
+# Which means the cap does the MOST work on a big board and the least on a small
+# one -- the opposite of the intuition. A 4 GB Pi 4 defaults to roughly 4 GB of
+# heap for a producer measured at ~287 MB resident, sharing the machine with the
+# anchor service and the agent. A 905 MB Pi 3 already defaults to about 450, so
+# a flat 512 there was ABOVE the default: it loosened the ceiling on the one
+# board it was meant to protect.
+#
+# Derived from what is left after everything else rather than from the board,
+# because the board does not tell you the memory: a Pi 4 ships with 1, 2, 4 or
+# 8 GB and a Pi 5 with 4, 8 or 16. RAM is readable and exact; the model is not
+# a proxy for it.
+#
+# 320 MB reserved: the OS, the anchor service (~80 measured), the agent, and the
+# producer's own non-heap memory. 70% of the rest, so a spike has somewhere to
+# go before the SD card does. Floor 256 -- below that the producer cannot work
+# and a cap is the wrong tool for a board that is too small.
+if [ -n "${RAM_MB:-}" ] && [ "$RAM_MB" -gt 576 ]; then
+  NODE_HEAP_MB=$(( (RAM_MB - 320) * 7 / 10 ))
+else
+  NODE_HEAP_MB=256
+fi
+[ "$NODE_HEAP_MB" -lt 256 ] && NODE_HEAP_MB=256
+# The producer has never been measured needing more than a few hundred MB of
+# heap. Past a point this stops being headroom and starts being permission to
+# swap, so it is bounded at both ends.
+[ "$NODE_HEAP_MB" -gt 1024 ] && NODE_HEAP_MB=1024
+
+# Docker's default json-file driver NEVER rotates. A producer logging a line a
+# block fills the card over months and then everything stops at once -- the
+# node, the agent and the anchor service -- with the logs that would explain it
+# being the thing that filled the disk.
 $SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true
 $SUDO docker run -d --name xl1-producer --restart unless-stopped \
+  -e NODE_OPTIONS="--max-old-space-size=$NODE_HEAP_MB" \
+  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   --env-file "$PRODUCER_ENV" xl1:local >/dev/null \
   || die "the producer would not start. Check: sudo docker logs xl1-producer"
+ok "heap capped at ${NODE_HEAP_MB}M, logs rotate at 10M x 3"
 
 sleep 15
 if $SUDO docker ps --filter name=xl1-producer --format '{{.Names}}' | grep -q xl1-producer; then
@@ -1434,7 +1509,11 @@ start_anchor_service() { # start_anchor_service [env-file]
   #   127.0.0.1 on the HOST side, which is the actual containment: the only
   #   interface that decides what your network can reach.
   # shellcheck disable=SC2086
+  # Rotation for the same reason as the producer. No heap ceiling: this one's
+  # resident set is small, but /producer walks the whole chain, and a cap set
+  # too low turns something slow into something that crashes.
   $SUDO docker run -d --name xl1-service-anchor-1 --restart unless-stopped \
+    --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
     ${1:+--env-file "$1"} \
     -e XL1_NETWORK="$XL1_NET" \
     -e XL1_SERVICE_PORT=8090 \

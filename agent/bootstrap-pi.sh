@@ -1244,6 +1244,74 @@ if [ ! -f "$JOURNAL_CONF" ]; then
 else
   ok "logs already survive a reboot"
 fi
+# --- giving the board back what it is not using ------------------------------
+# A headless node has no use for 48 MB of GPU memory, and on a 905 MB board that
+# is 5% of everything there is. Raspberry Pi only: the config file is the tell,
+# and its absence means this is not a Pi and there is nothing to reclaim.
+#
+# Backed up first. This file decides whether the board boots at all, and an
+# unbootable Pi is a card reader and a trip to wherever it is mounted.
+BOOT_CONFIG=/boot/firmware/config.txt
+[ -f "$BOOT_CONFIG" ] || BOOT_CONFIG=/boot/config.txt
+if [ -f "$BOOT_CONFIG" ]; then
+  if grep -qE '^[[:space:]]*gpu_mem=16[[:space:]]*$' "$BOOT_CONFIG" 2>/dev/null; then
+    ok "gpu_mem is already 16M"
+  else
+    $SUDO cp -n "$BOOT_CONFIG" "$BOOT_CONFIG.bak-xl1" 2>/dev/null || true
+    # Delete then append, rather than edit in place: a config.txt with two
+    # gpu_mem lines takes the last, so editing the first changes nothing
+    # visible and costs an afternoon.
+    $SUDO sed -i -E '/^[[:space:]]*gpu_mem=/d' "$BOOT_CONFIG" 2>/dev/null || true
+    printf '\n# Explorer Grid: headless node, GPU memory returned to the system\ngpu_mem=16\n' \
+      | $SUDO tee -a "$BOOT_CONFIG" >/dev/null
+    ok "gpu_mem=16 written to $BOOT_CONFIG -- about 48 MB back on the next boot"
+  fi
+fi
+
+# The stock governor idles the CPU down between blocks. Whether a Pi 3 keeps up
+# is the open question about this hardware, and this is the one setting that
+# speaks to it directly.
+#
+# Skipped where there is no cpufreq at all, which is most virtual machines: a
+# governor cannot be set on a CPU whose speed the kernel does not control.
+CPUFREQ=/sys/devices/system/cpu/cpu0/cpufreq
+if [ -r "$CPUFREQ/scaling_available_governors" ] \
+   && grep -qw performance "$CPUFREQ/scaling_available_governors" 2>/dev/null; then
+  for c in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
+    [ -w "$c" ] || [ -e "$c" ] || continue
+    printf 'performance' | $SUDO tee "$c" >/dev/null 2>&1 || true
+  done
+  # Applied again at boot: the governor is not persistent, and a node that runs
+  # fast until its first reboot and slowly afterwards is the kind of difference
+  # nobody connects back to this.
+  if [ ! -f /etc/systemd/system/xl1-cpu-governor.service ]; then
+    tmp_g="$(mktemp)"
+    chmod 644 "$tmp_g"
+    {
+      printf '[Unit]\n'
+      printf 'Description=Pin the CPU governor to performance for the XL1 node\n'
+      printf 'After=multi-user.target\n\n'
+      printf '[Service]\n'
+      printf 'Type=oneshot\n'
+      printf 'RemainAfterExit=yes\n'
+      # \$c, escaped. Unescaped it expands HERE, in this shell, and bakes in
+      # whichever core the loop above finished on -- so the unit would set one
+      # CPU at boot and look entirely correct doing it. The loop has to reach
+      # systemd as text.
+      printf "ExecStart=/bin/sh -c 'for c in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do echo performance > \"\$c\" 2>/dev/null || true; done'\n\n"
+      printf '[Install]\n'
+      printf 'WantedBy=multi-user.target\n'
+    } > "$tmp_g"
+    $SUDO install -o root -g root -m 644 "$tmp_g" /etc/systemd/system/xl1-cpu-governor.service
+    rm -f "$tmp_g"
+    $SUDO systemctl daemon-reload 2>/dev/null || true
+    $SUDO systemctl enable --now xl1-cpu-governor.service >/dev/null 2>&1 || true
+  fi
+  ok "CPU governor set to performance, and pinned there across reboots"
+else
+  say "no cpufreq here, so the CPU governor is left alone"
+fi
+
 printf '\n'
 
 note "This runs the XL1 producer: the software that takes part in the chain"

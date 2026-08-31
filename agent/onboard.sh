@@ -29,7 +29,11 @@
 set -uo pipefail    # deliberately NOT -e: every check runs, then we report.
 
 BACKEND_URL="${BACKEND_URL:-https://xyo-backend.onrender.com}"
-GRID_URL="${GRID_URL:-https://jimtheexplorer.com/grid}"
+# Registering moved from the public grid page into the operator's account.
+# GRID_URL is still read so an older invocation keeps working.
+ACCOUNT_URL="${ACCOUNT_URL:-${GRID_URL:-https://jimtheexplorer.com/portal}}"
+# The map itself needs no account; overridable on its own for a self-hosted copy.
+GRID_URL="${MAP_URL:-https://jimtheexplorer.com/grid}"
 NODE_ID="${NODE_ID:-}"
 NODE_LABEL="${NODE_LABEL:-}"
 # Set after the arguments are read, because it depends on --skip-docker: a
@@ -70,7 +74,8 @@ while [ $# -gt 0 ]; do
     --role)         NODE_ROLE="${2:-}"; shift ;;
     --network)      NODE_NETWORK="${2:-}"; shift ;;
     --backend)      BACKEND_URL="${2:-}"; shift ;;
-    --grid)         GRID_URL="${2:-}"; shift ;;
+    --grid)         ACCOUNT_URL="${2:-}"; shift ;;  # kept: older callers pass it
+    --account)      ACCOUNT_URL="${2:-}"; shift ;;
     --skip-docker)  SKIP_DOCKER=1 ;;
     -h|--help)      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)              die "unknown option: $1 (try --help)" ;;
@@ -324,7 +329,7 @@ if [ -n "${NODE_HEARTBEAT_TOKEN:-}" ]; then
   ok "a credential is present in the environment"
 else
   warn "no credential yet (NODE_HEARTBEAT_TOKEN is unset)" \
-       "register the device at $GRID_URL -- the token is shown once"
+       "add the device in your account at $ACCOUNT_URL -- shown once"
 fi
 
 # =============================================================================
@@ -376,7 +381,7 @@ printf '\n%sThis machine is eligible.%s\n' "$G" "$X"
 
 if [ "$DO_INSTALL" != 1 ]; then
   printf '\nNothing was changed. To install:\n'
-  printf '  1. Register the device at %s\n' "$GRID_URL"
+  printf '  1. Add the device in your account at %s\n' "$ACCOUNT_URL"
   printf '  2. NODE_HEARTBEAT_TOKEN=<the token> ./onboard.sh --node-id %s --install\n' \
          "${NODE_ID:-<name>}"
   if [ "$OS" = windows ]; then
@@ -407,7 +412,7 @@ if [ -z "$TOKEN" ]; then
   printf 'Paste the token for %s (input hidden): ' "$NODE_ID"
   stty -echo 2>/dev/null; read -r TOKEN; stty echo 2>/dev/null; printf '\n'
 fi
-[ -z "$TOKEN" ] && die "no token given; register at $GRID_URL"
+[ -z "$TOKEN" ] && die "no token given; add the device in your account at $ACCOUNT_URL"
 
 SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
 SRC_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"

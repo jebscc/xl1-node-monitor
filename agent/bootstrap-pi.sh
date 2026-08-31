@@ -44,7 +44,14 @@
 
 set -uo pipefail
 
-GRID_URL="${GRID_URL:-https://jimtheexplorer.com/grid}"
+# Where a device is registered. This was the public grid page, which offered a
+# proof-of-work puzzle and no account; it is the operator's own portal now, so a
+# device belongs to somebody from the moment it exists. GRID_URL is still read
+# so an older invocation keeps working.
+ACCOUNT_URL="${ACCOUNT_URL:-${GRID_URL:-https://jimtheexplorer.com/portal}}"
+# The map itself, named separately: it is what the device joins, it needs no
+# account to look at, and a self-hosted copy overrides it on its own.
+GRID_URL="${MAP_URL:-https://jimtheexplorer.com/grid}"
 BACKEND_URL="${BACKEND_URL:-https://xyo-backend.onrender.com}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
@@ -78,7 +85,8 @@ while [ $# -gt 0 ]; do
     --radius)      STATED_RADIUS="${2:-}"; shift ;;
     --no-location) NO_LOCATION=1 ;;
     --backend)     BACKEND_URL="${2:-}"; shift ;;
-    --grid)        GRID_URL="${2:-}"; shift ;;
+    --grid)        ACCOUNT_URL="${2:-}"; shift ;;   # kept: older callers pass it
+    --account)     ACCOUNT_URL="${2:-}"; shift ;;
     --with-docker) WITH_DOCKER=1 ;;
     --tailscale-key) TS_KEY="${2:-}"; shift ;;
     --agent-from)  AGENT_FROM="${2:-}"; shift ;;
@@ -922,9 +930,12 @@ head_ "8. Its credential"
 # =============================================================================
 TOKEN="${NODE_HEARTBEAT_TOKEN:-}"
 if [ -z "$TOKEN" ]; then
-  printf '  Register %s%s%s here:\n\n' "$B" "$NODE_ID" "$X"
-  printf '     %s%s%s\n\n' "$C" "$GRID_URL" "$X"
-  printf '  Open that on any device, add %s%s%s, and it shows a token once.\n' "$B" "$NODE_ID" "$X"
+  printf '  Register %s%s%s in your account:\n\n' "$B" "$NODE_ID" "$X"
+  printf '     %s%s%s\n\n' "$C" "$ACCOUNT_URL" "$X"
+  printf '  Open that on any device. It asks you to sign in and offers to make\n'
+  printf '  an account if you have not got one. That account owns this device\n'
+  printf '  afterwards, so you can rename, revoke or re-issue it yourself.\n'
+  printf '  Add %s%s%s there and it shows a token once.\n' "$B" "$NODE_ID" "$X"
   printf '  Copy it before closing the page -- it cannot be read back, and a\n'
   printf '  lost one is replaced by revoking and minting another.\n\n'
   printf '  %sNothing is typed back to you as you paste.%s That is deliberate:\n' "$D" "$X"
@@ -999,7 +1010,7 @@ XL1_STATED_LOCATION="$STATED_LOCATION" \
 XL1_STATED_LAT="$STATED_LAT" \
 XL1_STATED_LON="$STATED_LON" \
 XL1_STATED_RADIUS_KM="$STATED_RADIUS" \
-bash "$CHECKER" --node-id "$NODE_ID" --backend "$BACKEND_URL" --grid "$GRID_URL" \
+bash "$CHECKER" --node-id "$NODE_ID" --backend "$BACKEND_URL" --account "$ACCOUNT_URL" \
      $extra --install
 rc=$?
 

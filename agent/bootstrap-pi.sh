@@ -69,6 +69,9 @@ NODE_VERSION="${NODE_VERSION:-24.14.1}"
 # belong in a directory something else is pulling into.
 PRODUCER_ENV="${PRODUCER_ENV:-/etc/xl1-producer.env}"
 XL1_NET="${XL1_NET:-sequence}"
+# Checked in step 1, because a node that cannot reach this cannot take part and
+# that is worth knowing before anything is built or any phrase is asked for.
+XL1_RPC_URL="${XL1_RPC_URL:-https://beta.api.chain.xyo.network/rpc}"
 # The anchor service. Published in the same repo as this script, under service/,
 # so a stranger needs nothing that is not already public.
 MONITOR_REPO="${MONITOR_REPO:-/opt/xl1-node-monitor}"
@@ -359,6 +362,24 @@ case "$ARCH" in
   *) warn "unfamiliar architecture: $ARCH" ;;
 esac
 
+# uname -m reports the KERNEL. Raspberry Pi OS ships a 64-bit kernel with a
+# 32-bit userland by default on some images, and that combination passes the
+# check above and then fails at the node image, which is published for arm64
+# only -- after a twenty-minute build, having asked for a wallet phrase.
+if have dpkg; then
+  USERLAND="$(dpkg --print-architecture 2>/dev/null)"
+  case "$ARCH:$USERLAND" in
+    aarch64:armhf|arm64:armhf)
+      bad "64-bit kernel, 32-bit userland (armhf)"
+      note "  This is the default on some Raspberry Pi OS images and it cannot"
+      note "  run the node: XL1 images are arm64 only. Reflash with the 64-bit"
+      note "  Raspberry Pi OS."
+      BLOCKED=1 ;;
+    *:arm64|*:amd64) ok "64-bit userland ($USERLAND)" ;;
+    *) [ -n "$USERLAND" ] && say "userland: $USERLAND" ;;
+  esac
+fi
+
 # Measured rather than guessed, because the guess was wrong. An earlier version
 # of this said 1 GB "is not enough to run a producer", on the strength of the
 # reference Pi 4 showing ~1000 MB used -- which is the whole system, page cache
@@ -381,8 +402,52 @@ if [ -n "${RAM_MB:-}" ]; then
   fi
 fi
 
-[ -n "${DISK_MB:-}" ] && { [ "$DISK_MB" -ge 500 ] && ok "disk space is fine" \
-  || { bad "less than 500 MB free on /"; BLOCKED=1; }; }
+# 500 MB was right when this installed a Python agent and nothing else. It now
+# builds the node image on the device -- around 545 MB before its base layers --
+# and then a second image for the anchor service, with build cache alongside.
+# A machine that passes at 500 MB is one that fails part way through a build,
+# which is a much worse place to find out.
+#
+# 3 GB is what the images repo's own preflight asks for, and it is not
+# conservative: it is roughly what the two builds and their layers occupy.
+if [ -n "${DISK_MB:-}" ]; then
+  if [ "$DISK_MB" -lt 1000 ]; then
+    bad "${DISK_MB} MB free on / -- the node images need about 3 GB to build"
+    BLOCKED=1
+  elif [ "$DISK_MB" -lt 3000 ]; then
+    warn "${DISK_MB} MB free on / -- tight" \
+         "building both images wants about 3 GB with layers and cache. It may finish; it may stop part way through, which is the expensive way to find out."
+  else
+    ok "${DISK_MB} MB free on /"
+  fi
+fi
+
+# The Pi has no clock of its own. It signs against chain time, and a producer
+# whose clock has drifted is refused rather than merely late.
+if have timedatectl; then
+  if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -q yes; then
+    ok "clock is synchronised"
+  else
+    warn "clock is not synchronised yet" \
+         "usually clears on its own within a minute of boot; the producer signs against chain time, so it matters here more than on a desktop"
+  fi
+fi
+
+# The one endpoint the producer cannot work without. The backend check further
+# down proves this site is reachable, which is a different question.
+if have curl; then
+  # POST with an empty body, and not a GET: the endpoint answers 404 to a GET,
+  # which would report every healthy network as unreachable. `{}` names no
+  # method -- this asks whether the endpoint is THERE, and deliberately does not
+  # call anything on it. Chain reads belong in the SDK, never in a shell.
+  if curl -fsS --max-time 15 -o /dev/null -X POST -H "content-type: application/json" \
+          -d "{}" "$XL1_RPC_URL" 2>/dev/null; then
+    ok "the XL1 network is reachable"
+  else
+    warn "could not reach the XL1 network at $XL1_RPC_URL" \
+         "the agent still installs and reports; the node cannot take part until this resolves. A proxy or a filtered network is the usual cause."
+  fi
+fi
 
 # --- how the board itself is doing -------------------------------------------
 # These four are lifted from the preflight in LewSales/xl1-block-producer-pi,
@@ -1116,10 +1181,18 @@ esac
 # this. --force because `ufw enable` otherwise asks a question nothing here can
 # answer.
 #
-# 30303 is the P2P port from XYO's published steps. A federated producer
-# submits through the JsonRpc mempool rather than gossip, so it may not be
-# needed for this role -- opened anyway, because the published steps say to and
-# a closed port that turns out to be required is a silent, confusing failure.
+# 30303 is NOT opened, and that is a change from XYO's published steps.
+#
+# Measured on the reference node rather than reasoned about: a producer with
+# 1211 blocks to its name publishes no ports at all (PortBindings is empty),
+# nothing on the machine listens on 30303, and it had signed a block six before
+# the current head when this was checked. A federated producer submits through
+# the JsonRpc mempool; it does not gossip, and it does not accept inbound
+# connections -- which is the same property the whole grid depends on.
+#
+# So the rule opened a port to nothing. Small, but a firewall whose rules do not
+# match what listens is a firewall nobody can reason about later. If a role that
+# does peer ever lands here, open it then, with something behind it.
 if have ufw; then
   say "setting up the firewall"
   $SUDO ufw allow ssh >/dev/null 2>&1 || true
@@ -1127,12 +1200,10 @@ if have ufw; then
   # interface. Default-deny would otherwise make the tailnet address
   # unreachable, which is the one route you would use to fix a firewall.
   $SUDO ufw allow in on tailscale0 >/dev/null 2>&1 || true
-  $SUDO ufw allow 30303/tcp >/dev/null 2>&1 || true
-  $SUDO ufw allow 30303/udp >/dev/null 2>&1 || true
   $SUDO ufw default deny incoming >/dev/null 2>&1 || true
   $SUDO ufw default allow outgoing >/dev/null 2>&1 || true
   $SUDO ufw --force enable >/dev/null 2>&1 \
-    && ok "firewall on: ssh, tailscale and 30303 in, everything else out only" \
+    && ok "firewall on: ssh and tailscale in, everything else outbound only" \
     || warn "could not enable the firewall" "not fatal -- the node runs either way; see: sudo ufw status"
 else
   note "ufw is not installed, so no firewall rules were set. The node runs"

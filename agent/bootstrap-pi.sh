@@ -53,12 +53,17 @@ ACCOUNT_URL="${ACCOUNT_URL:-${GRID_URL:-https://jimtheexplorer.com/portal}}"
 # account to look at, and a self-hosted copy overrides it on its own.
 GRID_URL="${MAP_URL:-https://jimtheexplorer.com/grid}"
 BACKEND_URL="${BACKEND_URL:-https://xyo-backend.onrender.com}"
-# The XL1 block producer. Built on the device from the published images repo --
-# there is no registry to pull from yet, and the entrypoint is compiled during
-# the Docker build, so no toolchain is needed on the host.
+# The XL1 block producer. Built on the device from the published images repo,
+# because that repo publishes no registry tags yet. The entrypoint is compiled
+# in a container first -- the Dockerfile COPYs the result and does not produce
+# it -- so no Node or pnpm is needed on this host.
 IMAGES_REPO="${IMAGES_REPO:-/opt/xl1-docker-images}"
 IMAGES_URL="${IMAGES_URL:-https://github.com/XYOracleNetwork/xl1-docker-images.git}"
 CLI_REGISTRY="${CLI_REGISTRY:-https://registry.npmjs.org/@xyo-network/xl1-cli/latest}"
+# Matches the default in the images repo's own build-image.sh, and is the Node
+# the resulting image runs. Compiling the entrypoint on a different major than
+# the one that will execute it is a difference nothing here would notice.
+NODE_VERSION="${NODE_VERSION:-24.14.1}"
 # Root-owned, 0600, and deliberately NOT inside IMAGES_REPO: the weekly rebuild
 # does a git fetch and ff-only merge in there, and a wallet phrase does not
 # belong in a directory something else is pulling into.
@@ -964,6 +969,24 @@ DONE_AGENT=1; save_state
 head_ "8. Its credential"
 # =============================================================================
 TOKEN="${NODE_HEARTBEAT_TOKEN:-}"
+
+# A device already set up on this machine has its credential in the agent's
+# env, and there is no way to get another copy: the portal shows a token once.
+# Without this, re-running the wizard on a working device -- which is exactly
+# what adding the producer and anchoring asks every existing operator to do --
+# demanded a token they cannot read back, and the only way through was to
+# revoke and re-issue a credential that was working perfectly.
+#
+# Only when the id matches what is installed. Reading it for a DIFFERENT device
+# would hand one device's credential to another.
+if [ -z "$TOKEN" ] && [ -n "${INSTALLED_ID:-}" ] && [ "$NODE_ID" = "$INSTALLED_ID" ]; then
+  # sudo is warm by now -- step 7 ran apt through it -- so -n normally answers.
+  # Falling back the same way step 1 does rather than failing on a cold cache.
+  TOKEN="$(sudo -n sed -n 's/^NODE_HEARTBEAT_TOKEN=//p' /etc/xl1-heartbeat.env 2>/dev/null | head -1)"
+  [ -z "$TOKEN" ] && TOKEN="$(sudo sed -n 's/^NODE_HEARTBEAT_TOKEN=//p' /etc/xl1-heartbeat.env 2>/dev/null | head -1)"
+  [ -n "$TOKEN" ] && ok "using the credential already on this machine"
+fi
+
 if [ -z "$TOKEN" ]; then
   printf '  Register %s%s%s in your account:\n\n' "$B" "$NODE_ID" "$X"
   printf '     %s%s%s\n\n' "$C" "$ACCOUNT_URL" "$X"
@@ -1082,6 +1105,37 @@ case "$ARCH" in
      Reflash with the 64-bit Raspberry Pi OS and run this again." ;;
 esac
 
+# Firewall first, because it is the only part of this that can lock you out of
+# your own machine, and doing it before anything is running means a mistake
+# costs nothing. Order matters: SSH is allowed BEFORE the default-deny takes
+# effect, or an operator working over SSH loses the session that is running
+# this. --force because `ufw enable` otherwise asks a question nothing here can
+# answer.
+#
+# 30303 is the P2P port from XYO's published steps. A federated producer
+# submits through the JsonRpc mempool rather than gossip, so it may not be
+# needed for this role -- opened anyway, because the published steps say to and
+# a closed port that turns out to be required is a silent, confusing failure.
+if have ufw; then
+  say "setting up the firewall"
+  $SUDO ufw allow ssh >/dev/null 2>&1 || true
+  # Tailscale is required by step 5 and its traffic arrives on its own
+  # interface. Default-deny would otherwise make the tailnet address
+  # unreachable, which is the one route you would use to fix a firewall.
+  $SUDO ufw allow in on tailscale0 >/dev/null 2>&1 || true
+  $SUDO ufw allow 30303/tcp >/dev/null 2>&1 || true
+  $SUDO ufw allow 30303/udp >/dev/null 2>&1 || true
+  $SUDO ufw default deny incoming >/dev/null 2>&1 || true
+  $SUDO ufw default allow outgoing >/dev/null 2>&1 || true
+  $SUDO ufw --force enable >/dev/null 2>&1 \
+    && ok "firewall on: ssh, tailscale and 30303 in, everything else out only" \
+    || warn "could not enable the firewall" "not fatal -- the node runs either way; see: sudo ufw status"
+else
+  note "ufw is not installed, so no firewall rules were set. The node runs"
+  note "either way; XYO's published steps use ufw if you want to add it later."
+fi
+printf '\n'
+
 note "This runs the XL1 producer: the software that takes part in the chain"
 note "itself, proposing blocks and earning the rewards for them."
 note ""
@@ -1151,23 +1205,69 @@ else
     || die "could not clone $IMAGES_URL"
 fi
 
+# From the published steps. Unused by the federated producer preset, which
+# keeps no local store, but the repo's own instructions make them and an empty
+# directory costs nothing next to guessing which roles need one.
+$SUDO mkdir -p "$IMAGES_REPO/data" "$IMAGES_REPO/config" "$IMAGES_REPO/keystore"
+
 CLI_VERSION="$(curl -fsSL --max-time 30 "$CLI_REGISTRY" 2>/dev/null \
   | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 [ -n "$CLI_VERSION" ] || die "could not read the current xl1-cli version from npm"
 ok "building xl1:$CLI_VERSION"
 
+# The Dockerfile does `COPY dist/node`, and dist/ is NOT in the repository.
+# Upstream's build-image.sh compiles it first with `pnpm xy compile`, which a
+# plain docker build skips -- so a fresh clone fails at that COPY. It worked on
+# the reference Pi 4 only because that checkout had been compiled by hand once,
+# years of weekly rebuilds inheriting the result.
+#
+# Compiled in a container rather than on the host. Doing it on the host means
+# Node 24 and the whole xy toolchain installed on a Raspberry Pi, to build
+# something that then runs in a container anyway.
+if [ ! -f "$IMAGES_REPO/dist/node/entrypoint.mjs" ]; then
+  say "compiling the image entrypoint"
+  printf '  A few minutes, and it is downloading a toolchain the first time.\n\n'
+  $SUDO docker run --rm -v "$IMAGES_REPO":/w -w /w "node:$NODE_VERSION-bookworm-slim" \
+    sh -c 'corepack enable && pnpm install --frozen-lockfile && pnpm xy compile' \
+    || die "could not compile the image entrypoint. Nothing was started; the agent is unaffected."
+  # Checked rather than assumed: a compile that exits 0 and writes nothing
+  # would otherwise fail later at the COPY, which reads as a Docker problem.
+  [ -f "$IMAGES_REPO/dist/node/entrypoint.mjs" ] \
+    || die "the compile finished but produced no entrypoint at dist/node"
+  ok "entrypoint compiled"
+fi
+
 printf '\n  %sThis is the long part.%s Ten to twenty minutes on a Pi 4, longer on a\n' "$Y" "$X"
 printf '  Pi 3. It is compiling, not hung. Leave it be.\n\n'
-$SUDO docker build \
-  --file "$IMAGES_REPO/docker/Dockerfile" \
-  --build-arg "XL1_CLI_VERSION=$CLI_VERSION" \
-  --tag "xl1:$CLI_VERSION" \
-  "$IMAGES_REPO" || die "the image did not build. Nothing was started; the agent is unaffected."
+# Upstream's own build script rather than a hand-rolled docker build, so build
+# arguments it grows later arrive here for free. It compiles first when dist is
+# missing -- which by now it is not, so the pnpm it would reach for on the host
+# is never needed.
+# `env` and not a bare VAR=... prefix: with sudo in front, a prefix is consumed
+# by the shell and never crosses into the sudo environment. And `$SUDO -E`
+# would expand to `-E bash` when this runs as root, where SUDO is empty --
+# which is not a command.
+$SUDO env XL1_CLI_VERSION="$CLI_VERSION" TAG="xl1:$CLI_VERSION" \
+  bash "$IMAGES_REPO/scripts/build-image.sh" \
+  || die "the image did not build. Nothing was started; the agent is unaffected."
 # Tagged by version AND as local. The version tag is what the weekly rebuild
 # compares against; xl1:local is what the container actually runs, so promoting
 # a new build later is a retag rather than a reconfiguration.
 $SUDO docker tag "xl1:$CLI_VERSION" xl1:local
 ok "built xl1:$CLI_VERSION"
+
+# From the published steps, and worth the seconds: it proves the binary in the
+# image runs at all. Without it the first evidence of a broken image is a
+# producer that will not stay up, which reads as a configuration problem.
+# -f, not -x: it is invoked through bash either way, and testing the exec bit
+# would silently skip the check on any clone that did not preserve it.
+if [ -f "$IMAGES_REPO/scripts/smoke-run.sh" ]; then
+  if $SUDO bash "$IMAGES_REPO/scripts/smoke-run.sh" >/dev/null 2>&1; then
+    ok "the image runs"
+  else
+    die "the image built but does not run. Nothing was started; the agent is unaffected."
+  fi
+fi
 
 # --- the secret --------------------------------------------------------------
 # Written through a 0600 temp file and installed as root. Never passed as

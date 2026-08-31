@@ -1503,10 +1503,20 @@ else
   NODE_HEAP_MB=256
 fi
 [ "$NODE_HEAP_MB" -lt 256 ] && NODE_HEAP_MB=256
-# The producer has never been measured needing more than a few hundred MB of
-# heap. Past a point this stops being headroom and starts being permission to
-# swap, so it is bounded at both ends.
-[ "$NODE_HEAP_MB" -gt 1024 ] && NODE_HEAP_MB=1024
+# The ceiling is 2048, and it was 1024 until the default was measured rather
+# than guessed. Node reports a 2090 MB limit on a 3795 MB board -- roughly half
+# of RAM, not the ~4 GB assumed here earlier. A 1024 ceiling therefore did not
+# trim an over-generous default, it HALVED the working heap of the reference
+# producer, which is a much larger intervention than this was ever meant to be.
+#
+# 2048 sits just under that measured default, so on the boards anyone runs this
+# on the cap trims rather than constrains, while still bounding a machine large
+# enough for the default to become permission to swap.
+#
+# Measure again before lowering this. The producer's resident set is ~287 MB,
+# but resident is not heap, and nobody has yet watched one work under a cap for
+# long enough to know what it actually wants.
+[ "$NODE_HEAP_MB" -gt 2048 ] && NODE_HEAP_MB=2048
 
 # Docker's default json-file driver NEVER rotates. A producer logging a line a
 # block fills the card over months and then everything stops at once -- the

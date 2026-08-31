@@ -72,7 +72,11 @@ XL1_NET="${XL1_NET:-sequence}"
 # The anchor service. Published in the same repo as this script, under service/,
 # so a stranger needs nothing that is not already public.
 MONITOR_REPO="${MONITOR_REPO:-/opt/xl1-node-monitor}"
-MONITOR_URL="${MONITOR_URL:-https://github.com/jebscc/xl1-node-monitor.git}"
+# An archive of github.com/jebscc/xl1-node-monitor, not a clone of it: this
+# needs the service's files and never its history. The clone URL used to sit
+# here beside it and went unused once the clone did, which is the kind of thing
+# that has the next reader looking for the git command that is not there.
+MONITOR_TAR="${MONITOR_TAR:-https://codeload.github.com/jebscc/xl1-node-monitor/tar.gz/refs/heads/main}"
 # The attestation phrase is written here by new-attestor.ts, 0600, on the host
 # rather than in the container so a rebuild cannot take it with it.
 KEYS_DIR="${KEYS_DIR:-/opt/xl1-keys}"
@@ -1341,16 +1345,35 @@ note "XL1 a year. That is measured on Sequence, not estimated."
 printf '\n'
 
 # --- the service source ------------------------------------------------------
-if [ -d "$MONITOR_REPO/.git" ]; then
-  say "updating $MONITOR_REPO"
-  $SUDO git -C "$MONITOR_REPO" -c "safe.directory=$MONITOR_REPO" fetch --quiet origin || true
-  $SUDO git -C "$MONITOR_REPO" -c "safe.directory=$MONITOR_REPO" merge --ff-only --quiet '@{u}' 2>/dev/null || true
-else
-  say "fetching the anchor service"
-  $SUDO git clone --quiet "$MONITOR_URL" "$MONITOR_REPO" || die "could not clone $MONITOR_URL"
-fi
+# Only the files are wanted here, never the history, so this is a tarball
+# rather than a clone. A clone on the Pi 3 reported success and left no
+# working tree, and there was no way to tell from the failure whether the
+# repository, the network or the disk was at fault -- `git clone --quiet`
+# says nothing on the way past. curl and tar say what they did.
+#
+# It is also less to go wrong: no git on PATH, no ownership exception, no
+# default-branch assumption, and re-running simply overwrites.
 SVC="$MONITOR_REPO/service"
-[ -f "$SVC/Dockerfile" ] || die "no Dockerfile at $SVC -- the repo layout has changed"
+if [ ! -f "$SVC/Dockerfile" ]; then
+  say "fetching the anchor service"
+  $SUDO mkdir -p "$MONITOR_REPO"
+  tarball="$(mktemp)"
+  curl -fsSL --max-time 120 "$MONITOR_TAR" -o "$tarball" \
+    || { rm -f "$tarball"; die "could not download the anchor service from $MONITOR_TAR"; }
+  # --strip-components=1 drops the <repo>-<branch>/ wrapper the archive adds.
+  $SUDO tar -xzf "$tarball" -C "$MONITOR_REPO" --strip-components=1 \
+    || { rm -f "$tarball"; die "the anchor service archive would not unpack"; }
+  rm -f "$tarball"
+fi
+
+# Said with what is actually there. The previous version failed with only the
+# path it had looked at, which is the least useful half of the problem.
+if [ ! -f "$SVC/Dockerfile" ]; then
+  printf '\n  What arrived in %s instead:\n' "$MONITOR_REPO"
+  ls -A "$MONITOR_REPO" 2>/dev/null | head -20 | sed 's/^/    /'
+  printf '  Disk: %s\n' "$(df -h "$MONITOR_REPO" 2>/dev/null | awk 'NR==2 {print $4" free of "$2}')"
+  die "no Dockerfile at $SVC -- see above"
+fi
 
 printf '\n  %sBuilding the anchor service.%s A few minutes.\n\n' "$Y" "$X"
 # --build is not optional, here or ever: the Dockerfile COPYs src, so a plain

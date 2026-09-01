@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.23.0"
+AGENT_VERSION = "1.23.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -551,6 +551,19 @@ def _windows_memory():
         return (None, None, None, None)
 
 
+def _have(tool):
+    """Whether a command exists on PATH. shutil is imported here rather than at
+    the top because this is the only place the agent needs it."""
+    import shutil
+    return bool(shutil.which(tool))
+
+
+# Set when vcgencmd is present but would not answer -- which is a failure, as
+# distinct from not being on a Pi at all. Read by collect() so the operator
+# sees "this could not be read" rather than a blank that looks deliberate.
+_throttle_unreadable = False
+
+
 def read_throttling():
     """The Pi's own account of power and clock, or {} anywhere else.
 
@@ -564,9 +577,14 @@ def read_throttling():
     Silent off a Pi, and silent when vcgencmd is not reachable. Neither is a
     failure: it is a question this hardware cannot be asked.
     """
+    global _throttle_unreadable
     out = run(["vcgencmd", "get_throttled"], timeout=5)
     if not out or "=" not in out:
+        # Only a failure if the tool is there. Absent means this is not a Pi,
+        # which is an answer.
+        _throttle_unreadable = _have("vcgencmd")
         return {}
+    _throttle_unreadable = False
     try:
         bits = int(out.strip().split("=", 1)[1], 16)
     except (ValueError, IndexError):
@@ -1869,6 +1887,7 @@ def collect():
     if installed:
         payload["cli_version"] = installed
     # Only a failure if there was a container to ask in the first place.
+    _degraded_note(degraded, "throttling", _throttle_unreadable)
     _degraded_note(degraded, "cli_version", bool(name) and not installed)
     latest = _slow_get("cli_latest", fetch_cli_latest)
     if latest:

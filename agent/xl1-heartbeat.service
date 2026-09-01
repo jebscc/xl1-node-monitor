@@ -15,6 +15,19 @@ RestartSec=15
 # The 'docker' group is required for the Docker socket.
 User=xl1agent
 Group=docker
+# vcgencmd reads the board's undervoltage and throttling flags through
+# /dev/vchiq, which is root:video 0660 -- so without this the agent gets
+# "Can't open device file" and the panel has nothing to show for power or
+# clock on a machine that can perfectly well answer.
+#
+# Granted here rather than by adding xl1agent to the group permanently: the
+# service gets it, nothing else that user might run does, and the reason is
+# written next to the grant instead of living in /etc/group where it has none.
+#
+# It is read-only use of a GPU mailbox on a headless node. Worth stating
+# because it is a real widening: `video` also reaches the framebuffer and DRI
+# devices, which this agent never touches.
+SupplementaryGroups=video
 
 NoNewPrivileges=true
 PrivateTmp=true

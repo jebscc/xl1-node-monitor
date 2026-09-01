@@ -749,6 +749,224 @@ app.get('/earnings', async (req, res) => {
   }
 })
 
+// What anchoring actually costs this wallet, measured rather than assumed.
+//
+// Both panels used to guess. The portal carried a constant measured once by
+// hand; the operator panel worked it out as (50 - balance) / anchors, which is
+// right only for a wallet funded with exactly 50 that has never been topped
+// up. On anyone else's wallet it is arithmetic on an invented starting figure,
+// and on the first top-up it goes worse than wrong: a balance above 50 makes
+// the spend negative, the cost clamps to zero, and the runway becomes infinite
+// -- the panel reporting "forever" at precisely the moment it has real data.
+//
+// The chain knows. Every anchor leaves a network.xyo.transfer whose `from` is
+// this wallet, and accountBalanceHistory returns them with the block that
+// carried them. The amount transferred IS the whole cost: measured against
+// this wallet on sequence, the balance either side of an anchor differs by
+// exactly the transfer, so gas needs no modelling and no separate read.
+// (scripts/probe-head.ts is that measurement, kept runnable.)
+//
+// The history comes back as a recent window rather than the wallet's whole
+// life, which suits the question: what an anchor costs at today's gas, not
+// what it averaged since funding.
+type WalletMove = {
+  height: number | null
+  /** What left this wallet in this entry, and what arrived. */
+  out: bigint
+  in: bigint
+}
+
+/** This wallet's transfers, oldest first, or null if the viewer will not say.
+ *
+ * Defensive for the reason accountBalance is: the history tuple is not typed
+ * here, and a shape change should cost a runway estimate rather than take out
+ * an endpoint the monitoring depends on.
+ */
+const walletMoves = async (
+  viewer: { accountBalanceHistory?: (address: string) => unknown },
+  bare: string,
+): Promise<WalletMove[] | null> => {
+  let raw: unknown
+  try {
+    raw = await viewer.accountBalanceHistory?.(bare)
+  } catch { return null }
+  if (!Array.isArray(raw)) return null
+  const me = bare.replace(/^0x/i, '').toLowerCase()
+  const wei = (hex: unknown) => {
+    try { return BigInt('0x' + String(hex).replace(/^0x/i, '')) } catch { return 0n }
+  }
+  const moves: WalletMove[] = []
+  for (const entry of raw) {
+    if (!Array.isArray(entry)) continue
+    // [block, transaction | null, transfer]. The transaction is absent for a
+    // mint, which is one of the ways a reward is told from a spend.
+    const block = entry[0] as { block?: number } | undefined
+    const transfer = entry[2] as { from?: string, transfers?: Record<string, unknown> } | undefined
+    if (!transfer) continue
+    const from = String(transfer.from ?? '').replace(/^0x/i, '').toLowerCase()
+    let out = 0n
+    let incoming = 0n
+    for (const [addr, hex] of Object.entries(transfer.transfers ?? {})) {
+      const amount = wei(hex)
+      if (from === me) out += amount
+      if (addr.replace(/^0x/i, '').toLowerCase() === me) incoming += amount
+    }
+    // A transfer this wallet neither sent nor received is somebody else's.
+    if (out === 0n && incoming === 0n) continue
+    moves.push({ height: typeof block?.block === 'number' ? block.block : null, out, in: incoming })
+  }
+  // Oldest first. Sorted rather than assumed: blocksByNumber returns
+  // descending on this chain, and taking the viewer's order on trust is how
+  // that bug got in the first time.
+  moves.sort((a, b) => (a.height ?? 0) - (b.height ?? 0))
+  return moves
+}
+
+app.get('/anchor-cost', async (req, res) => {
+  const address = typeof req.query.address === 'string' ? req.query.address : ''
+  if (!/^(0x)?[0-9a-fA-F]{40}$/i.test(address)) {
+    return res.status(422).json({ error: 'valid 20-byte address required' })
+  }
+  const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
+  try {
+    const { connection: { viewer } } = await getReadGateway(network)
+    const bare = address.replace(/^0x/i, '')
+    const moves = await walletMoves(viewer as never, bare)
+    const balance = await accountBalance(viewer as never, bare)
+
+    // A wallet that has not spent yet has no cost to report. Said as null
+    // rather than as a number, so the panel shows a balance with no runway
+    // instead of a runway with no basis.
+    const unmeasured = (why: string) => res.json({
+      network,
+      address,
+      balance: balance === null ? null : toXL1(balance),
+      balanceRaw: balance === null ? null : balance.toString(),
+      costPerAnchor: null,
+      costPerAnchorRaw: null,
+      anchorsMeasured: 0,
+      unmeasured: why,
+      decimals: Number(XL1_DECIMALS),
+      symbol: XL1_SYMBOL,
+      at: new Date().toISOString(),
+    })
+
+    if (moves === null) return unmeasured('the gateway would not return this wallet history')
+    if (balance === null) return unmeasured('the gateway would not return this wallet balance')
+    const spends = moves.filter(m => m.out > 0n).map(m => m.out).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    if (spends.length === 0) return unmeasured('this wallet has not spent anything yet')
+
+    // The median, not the mean. Anchors cost near-identical amounts, so the
+    // two agree in the ordinary case; where they disagree it is because
+    // something that was not an anchor left this wallet -- a sweep, a
+    // mis-send -- and that should not be allowed to set the runway an operator
+    // decides top-ups from. The median describes the typical anchor; the mean
+    // would describe the typical anchor plus one bad day.
+    const mid = spends.length >> 1
+    const perAnchor = spends.length % 2 === 1
+      ? spends[mid]
+      : (spends[mid - 1] + spends[mid]) / 2n
+
+    res.json({
+      network,
+      address,
+      balance: toXL1(balance),
+      balanceRaw: balance.toString(),
+      // What one anchor costs this wallet, on this chain, at today's gas.
+      costPerAnchor: toXL1(perAnchor),
+      costPerAnchorRaw: perAnchor.toString(),
+      anchorsMeasured: spends.length,
+      // The spread, so a reader can see whether the median is describing a
+      // steady cost or papering over a wide one.
+      cheapestAnchor: toXL1(spends[0]),
+      dearestAnchor: toXL1(spends[spends.length - 1]),
+      // The window the figure rests on.
+      fromBlock: moves[0]?.height ?? null,
+      toBlock: moves[moves.length - 1]?.height ?? null,
+      unmeasured: null,
+      decimals: Number(XL1_DECIMALS),
+      symbol: XL1_SYMBOL,
+      at: new Date().toISOString(),
+    })
+  } catch (e) {
+    res.status(502).json({ error: e instanceof Error ? e.message : String(e) })
+  }
+})
+
+// Is this transaction actually on the chain?
+//
+// The panels list anchors out of the site's own records -- what this system
+// says it did. Those rows carry real transaction hashes, captured when the
+// anchor was submitted, and each links out to the explorer. What nothing did
+// until now was CHECK one.
+//
+// The check that matters is the failing one. A hash we recorded that the chain
+// does not have means an anchor was written down as done and did not land, and
+// the anchoring record quietly stopped meaning what it claims. A hash that IS
+// there tells a reader almost nothing they could not get by clicking the link,
+// which is why the panel marks only the failures and leaves confirmed rows
+// plain: a tick here would look like proof and would only be this service
+// asserting an answer.
+//
+// There is no by-address transaction lookup in the SDK -- byHash,
+// byBlockHashAndIndex, byBlockNumberAndIndex, and nothing else -- so this
+// cannot become "list what the wallet did". It can only answer, one hash at a
+// time, "did this land".
+app.get('/transaction', async (req, res) => {
+  const hash = typeof req.query.hash === 'string' ? req.query.hash.replace(/^0x/i, '') : ''
+  if (!/^[0-9a-fA-F]{64}$/.test(hash)) {
+    return res.status(422).json({ error: 'valid 32-byte transaction hash required' })
+  }
+  const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
+  try {
+    const { connection: { viewer } } = await getReadGateway(network)
+    const v = viewer as unknown as {
+      transaction?: { byHash?: (h: string) => Promise<unknown> }
+      block?: { blockByTransactionHash?: (h: string) => Promise<unknown> }
+    }
+
+    let tx: { _hash?: string, from?: string, fees?: Record<string, string> } | null = null
+    try {
+      const got = await v.transaction?.byHash?.(hash)
+      // byHash answers with the bound witness first, like the other viewers.
+      const first = Array.isArray(got) ? got[0] : got
+      if (first && typeof first === 'object') tx = first as typeof tx
+    } catch { tx = null }
+
+    // Absence is the answer, not an error: "the chain does not have this" is
+    // exactly what the caller asked. A 502 would be indistinguishable from a
+    // gateway having a bad minute, and the node would keep retrying forever
+    // instead of raising the one case worth raising.
+    if (!tx?._hash) {
+      return res.json({ network, hash, found: false, at: new Date().toISOString() })
+    }
+
+    // Best effort, and null when it fails. The block is a convenience for a
+    // reader following the link; it is not part of the finding.
+    let block: number | null = null
+    try {
+      const b = await v.block?.blockByTransactionHash?.(hash)
+      const bw = (Array.isArray(b) ? b[0] : b) as { block?: number } | undefined
+      if (typeof bw?.block === 'number') block = bw.block
+    } catch { block = null }
+
+    res.json({
+      network,
+      hash,
+      found: true,
+      // Who paid for it. On an anchor this is the attestation wallet, and a
+      // hash that resolves to a different payer is a different kind of problem
+      // from one that does not resolve at all.
+      from: typeof tx.from === 'string' ? tx.from : null,
+      block,
+      fees: tx.fees ?? null,
+      at: new Date().toISOString(),
+    })
+  } catch (e) {
+    res.status(502).json({ error: e instanceof Error ? e.message : String(e) })
+  }
+})
+
 // Which @xyo-network packages this process actually loaded.
 //
 // The node container reports its CLI version and the panel flags a mismatch;

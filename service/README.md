@@ -92,6 +92,8 @@ and both refuse without `XL1_ANCHOR_TOKEN` alongside it.
 | GET | `/producer?address=&from=&to=` | Blocks the address produced in a range. Walks down to `XL1_INDEXER_FLOOR_BLOCK` |
 | GET | `/standing?address=&network=` | Balance as `balance` and `balanceRaw` (a string — the raw figure exceeds what a JSON number holds exactly), plus stake. **Stake is on the BACKING EVM, not on XL1**: without `XL1_SEQUENCE_EVM_RPC_URL` set, stake comes back `null` rather than zero |
 | GET | `/earnings?address=&network=` | Splits what producing *paid* from what merely arrived. Block rewards are minted, so a balance built only from them is an exact multiple of the per-block reward and the remainder is everything that is not reward money. `earned: null` means the split could not be made — not that nothing was earned |
+| GET | `/anchor-cost?address=&network=` | What one anchor costs this wallet, as the median of what its recent anchors actually transferred — plus `cheapestAnchor`/`dearestAnchor` and the block window measured over. `costPerAnchor: null` with an `unmeasured` reason means the wallet has not spent enough to measure, which is a better answer than a number. Reads `accountBalanceHistory`; no chain walk |
+| GET | `/transaction?hash=&network=` | Whether one transaction is on the chain: `found`, plus `from`, `block` and `fees` when it is. Absence is a 200 with `found: false`, not an error — "the chain does not have this" is the answer being asked for, and a 502 would be indistinguishable from a gateway having a bad minute. There is no by-address lookup in the SDK (`byHash`, `byBlockHashAndIndex`, `byBlockNumberAndIndex`, and nothing else), so this can never become "list what a wallet did" |
 | GET | `/peers?network=&window=` | The producer set over the last N blocks (50–2000, default 1000), each with block count and balance, plus totals. One request plus a balance lookup per producer found; cached, because the walk is the expensive part. Producers whose balance could not be read are excluded from `totalBalance` rather than counted as zero |
 
 ### Writes
@@ -179,6 +181,26 @@ The method is worth repeating rather than the number: read the balance, wait
 for exactly one anchor, read it again. Deriving it instead from "we funded it
 with 50 and there have been N anchors" needs both of those to be exactly true,
 and neither is checkable later.
+
+Both panels did derive it that way, and both were wrong in the ways that
+warning predicts — so `/anchor-cost` now does the measuring continuously, and
+neither panel carries a figure of its own. It does not need the balance either
+side of an anchor: `accountBalanceHistory` returns every transfer this wallet
+made, and the transfer IS the whole cost. That was worth checking rather than
+assuming, and `scripts/probe-head.ts` is the check — it prints the balance at
+each historical block beside the transfer that moved it, and the two agree
+exactly, which is what rules out a separate fee deducted somewhere else.
+
+Measured that way on 2026-08-31, over seven anchors:
+
+```
+typical anchor  118,600,000,000,000 wei   0.0001186 XL1
+cheapest         112,400,000,000,000 wei  0.0001124 XL1
+```
+
+The median rather than the mean, because the thing that would skew a mean is
+not a dearer anchor — it is something that was not an anchor at all leaving
+the wallet, and that should not be allowed to set a runway.
 
 ### Witnessing another device
 

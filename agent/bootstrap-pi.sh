@@ -222,7 +222,12 @@ ask() { # ask <prompt> <default> -> answer on stdout
 
 ask_yn() { # ask_yn <prompt> <default y|n> -> 0 yes, 1 no
   local prompt="$1" default="${2:-n}" reply="" hint="y/N"
-  if [ "$TTY_OK" != 1 ]; then [ "$default" = y ] && return 0 || return 1; fi
+  # --yes took the default at two call sites and asked at the rest, so it read
+  # as broken rather than partial: an operator who passed it still sat through
+  # questions. Taken here, it covers every prompt in the script.
+  if [ "$TTY_OK" != 1 ] || [ "${ASSUME_YES:-0}" = 1 ]; then
+    [ "$default" = y ] && return 0 || return 1
+  fi
   [ "$default" = y ] && hint="Y/n"
   printf '%s %s[%s]%s: ' "$prompt" "$D" "$hint" "$X" > /dev/tty
   IFS= read -r reply < /dev/tty || reply=""
@@ -1622,6 +1627,28 @@ head_ "11. Anchoring  (required)"
 #
 # The part that cannot be automated is putting gas in the throwaway key. The
 # wizard stops there and waits, and the wait survives closing the terminal.
+# Whether this device has finished anchoring, asked of the machine rather than
+# of the state file. Both of these are written at the very end of this step,
+# after the delegation is on chain, so together they mean it ran to completion.
+#
+# The state file cannot answer this on its own. It lives in the invoking user's
+# home, so it is missing on devices set up before the wizard kept state, under
+# another user, or under sudo -- and on those the wizard offered to delegate a
+# key that was already delegated, which costs gas and buys nothing. Step 10 has
+# always paired its flag with a live docker ps for the same reason; this is
+# that, for anchoring.
+anchor_configured() {
+  $SUDO test -s "$ANCHOR_ENV" 2>/dev/null || return 1
+  $SUDO grep -q '^XL1_ANCHOR_TOKEN=.' "$AGENT_ENV" 2>/dev/null
+}
+
+if [ "${DONE_ANCHOR:-0}" != 1 ] && anchor_configured; then
+  ok "anchoring is already set up on this machine"
+  # Adopt it, so the rest of this run and every run after it agree.
+  DONE_ANCHOR=1
+  save_state
+fi
+
 # Re-running this is how a device is upgraded, so what follows has to happen
 # every time -- the source is re-fetched, the image rebuilt and the container
 # recreated. That is the only way a newer SDK reaches a Pi: it is pinned by

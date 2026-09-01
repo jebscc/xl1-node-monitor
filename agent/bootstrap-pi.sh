@@ -69,6 +69,12 @@ NODE_VERSION="${NODE_VERSION:-24.14.1}"
 # belong in a directory something else is pulling into.
 PRODUCER_ENV="${PRODUCER_ENV:-/etc/xl1-producer.env}"
 XL1_NET="${XL1_NET:-sequence}"
+# The public gateway for each network. A federated producer serves no RPC of
+# its own, so reads go here. Same defaults as docker-compose.pi.yml, and
+# overridable the same way: every read in the service builds a gateway first,
+# so without these it starts cleanly and answers 503 to everything.
+XL1_SEQUENCE_RPC_URL="${XL1_SEQUENCE_RPC_URL:-https://beta.api.chain.xyo.network/rpc}"
+XL1_MAINNET_RPC_URL="${XL1_MAINNET_RPC_URL:-https://api.chain.xyo.network/rpc}"
 # Checked in step 1, because a node that cannot reach this cannot take part and
 # that is worth knowing before anything is built or any phrase is asked for.
 XL1_RPC_URL="${XL1_RPC_URL:-https://beta.api.chain.xyo.network/rpc}"
@@ -1648,8 +1654,21 @@ start_anchor_service() { # start_anchor_service [env-file]
   $SUDO docker rm -f xl1-service-anchor-1 >/dev/null 2>&1 || true
   # Deliberately not `docker compose`. The wizard installs docker.io from apt,
   # which does not ship the compose plugin, so a compose call would fail on a
-  # fresh Pi -- and this is one container. service/docker-compose.pi.yml is the
-  # reference for these values; the two that are not obvious:
+  # fresh Pi -- and this is one container. service/docker-compose.pi.yml is
+  # the reference for these values, and keeping the two in step is not
+  # optional: this list drifted from it once and cost a clean install.
+  #
+  # The gateway URLs were the ones missing. Nothing here fails loudly without
+  # them -- the container starts, the process runs, and /health answers 503
+  # "RPC URL not configured" because every read builds a gateway first. The
+  # wizard then waits sixty seconds for a service that was never going to
+  # answer. It did not show up on the Pi that already worked, because that one
+  # runs under compose and compose supplies them.
+  #
+  # test-bootstrap.sh now compares the two lists, so the next omission is a
+  # failing test rather than a failed install.
+  #
+  # Two other values that are not obvious:
   #
   #   0.0.0.0 INSIDE the container, because Docker forwards a published port to
   #   the bridge address and not to the namespace loopback, so a service bound
@@ -1667,6 +1686,8 @@ start_anchor_service() { # start_anchor_service [env-file]
     -e XL1_NETWORK="$XL1_NET" \
     -e XL1_SERVICE_PORT=8090 \
     -e XL1_SERVICE_HOST=0.0.0.0 \
+    -e XL1_SEQUENCE_RPC_URL="$XL1_SEQUENCE_RPC_URL" \
+    -e XL1_MAINNET_RPC_URL="$XL1_MAINNET_RPC_URL" \
     -e XL1_ATTEST_ARCHIVE=/attestations \
     -e XL1_INDEXER_FLOOR_BLOCK=0 \
     -v /var/lib/xl1-attestations:/attestations \
@@ -1685,8 +1706,14 @@ wait_for_service() { # up to ~60s for /health to answer
 
 start_anchor_service \
   || die "the anchor service would not start. Check: sudo docker logs xl1-service-anchor-1"
-wait_for_service \
-  || die "the anchor service started but is not answering on 127.0.0.1:8090. Check: sudo docker logs xl1-service-anchor-1"
+wait_for_service || {
+  # The body, not just "no answer". This service starts cleanly and then
+  # refuses every read when a gateway URL is missing, so the container log
+  # shows nothing wrong and the reason is only ever in the reply.
+  why="$(curl -sS --max-time 5 http://127.0.0.1:8090/health 2>&1 | head -c 300)"
+  [ -n "$why" ] && printf '  the service replied: %s\n' "$why" >&2
+  die "the anchor service started but is not answering on 127.0.0.1:8090. Check: sudo docker logs xl1-service-anchor-1"
+}
 ok "anchor service is up (read-only -- it holds no key yet)"
 
 # --- the throwaway key -------------------------------------------------------

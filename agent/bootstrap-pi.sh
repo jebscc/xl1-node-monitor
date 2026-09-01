@@ -1844,6 +1844,69 @@ note "phrase is used after setup, and it is used here by you, once."
 PRODUCER_MNEMONIC="$($SUDO sed -n 's/^XL1_MNEMONIC=//p' "$PRODUCER_ENV" 2>/dev/null)"
 [ -n "$PRODUCER_MNEMONIC" ] || die "could not read the producer phrase from $PRODUCER_ENV"
 
+spin_char() { # spin_char <n> -> one frame of the spinner
+  printf '%s' '|/-\' | cut -c$(( ${1:-0} % 4 + 1 ))
+}
+
+# One live line for the confirmation wait, instead of one line per attempt.
+#
+# The SDK prints "Transaction not confirmed yet, attempt N. Retrying..." with
+# the full 64-character hash every time. Nine of those scrolled the payload off
+# the screen -- and the payload is the one thing on that page the operator is
+# told to keep and publish, shown to them exactly once.
+#
+# Same shape as the gas wait: a spinner, an elapsed clock, a short hash.
+# Anything that is not a retry passes through untouched, so the anchored /
+# tx hash / signed by block still arrives in full.
+#
+# Node block-buffers stdout into a pipe, so these can arrive in a burst rather
+# than as they happen, which makes the clock approximate. Nine lines still
+# collapse to one, which is the point of it.
+confirm_progress() {
+  line=""; hash=""; attempt=0; started="$(date +%s)"
+  while IFS= read -r line; do
+    case "$line" in
+      *"Confirming transaction "*)
+        hash="${line##* }"
+        # Swallowed on a terminal, where the live line below replaces it.
+        # Kept in a log, where it marks when the wait began.
+        [ -z "$EOL" ] && printf '    %s\n' "$line"
+        ;;
+      *"not confirmed yet, attempt "*)
+        attempt=$((attempt + 1))
+        [ -z "$hash" ] && hash="${line##* }"
+        if [ -n "$EOL" ]; then
+          printf '\r    %s confirming %.12s  %ds  (check %d)%s' \
+                 "$(spin_char "$attempt")" "$hash" \
+                 "$(( $(date +%s) - started ))" "$attempt" "$EOL"
+        else
+          # No terminal to redraw on, so keep every line: this is a log, and a
+          # collapsed one loses the history it exists to hold.
+          printf '    %s\n' "$line"
+        fi
+        ;;
+      *"Transaction confirmed"*)
+        [ -n "$EOL" ] && printf '\r%s' "$EOL"
+        if [ "$attempt" -gt 0 ]; then
+          printf '    confirmed after %ds and %d checks\n' \
+                 "$(( $(date +%s) - started ))" "$attempt"
+        else
+          printf '    confirmed after %ds\n' "$(( $(date +%s) - started ))"
+        fi
+        # The wait is over, so what follows needs no clearing -- and without
+        # this every remaining line of the anchored block carries an escape
+        # for nothing.
+        attempt=0
+        ;;
+      *)
+        # Leaving the spinner line in place under a new one would strand it.
+        [ -n "$EOL" ] && [ "$attempt" -gt 0 ] && printf '\r%s' "$EOL"
+        printf '    %s\n' "$line"
+        ;;
+    esac
+  done
+}
+
 # Dry run first, printed in full, so what is about to go on chain is seen
 # before it goes there.
 printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
@@ -1853,7 +1916,7 @@ printf '\n'
 if ask_yn "  Put that on chain?" "y"; then
   printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
     node_modules/.bin/tsx delegate-attestor.ts --attestor "$ATTESTOR_ADDRESS" --anchor 2>&1 \
-    | sed 's/^/    /' \
+    | confirm_progress \
     || { PRODUCER_MNEMONIC=""; die "the delegation did not anchor. Nothing else was changed."; }
   ok "the delegation is on chain"
 else

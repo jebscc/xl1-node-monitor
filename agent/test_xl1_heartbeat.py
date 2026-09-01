@@ -4,9 +4,10 @@ No Docker required -- `run()` is stubbed with real `docker ps` output.
 Run with:  pytest pi-agent/test_xl1_heartbeat.py
 """
 
+import json
 import re
-import sys
 import time
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,48 +20,27 @@ import xl1_heartbeat as agent  # noqa: E402
 # Real output from the Pi on 2026-08-22, when the tag had moved off the
 # running producer and it showed as a bare image ID.
 PS_FULL = (
-    "xl1-service-xl1-service-1\txl1-service:local\tnpx tsx src/server.ts\n"
+    "xl1-service-anchor-1\txl1-service:local\tnpx tsx src/server.ts\n"
     "charming_einstein\t3a27a9e5f10d\tnode /opt/xl1/lib/entrypoint.mjs\n"
 )
 
 
-REPORTED_FIELDS = {
-    'agent_degraded',
-    'backfill_from_block',
-    'backfill_produced',
-    'backfill_to_block',
-    'block_height',
-    'blocks_since_produced',
-    'chain_heights',
-    'cli_latest',
-    'cli_version',
-    'container_status',
-    'explorer_block_url',
-    'finalized_head',
-    'indexer_floor',
-    'last_block_epoch',
-    'last_produced_block',
-    'log_tail',
-    'node_containers',
-    'node_image_count',
-    'os_updates',
-    'os_security_updates',
-    'os_apt_age_hours',
-    'os_reboot_required',
-    'pending_blocks',
-    'pending_transactions',
-    'produced_recent',
-    'produced_window',
-    'producer_blocked',
-    'producer_unit',
-    'rebuild_timer_active',
-    'rebuild_timer_next',
-    'scan_finalized',
-    'scan_from_block',
-    'scan_produced',
-    'scan_to_block',
-    "stated_lat", "stated_location", "stated_lon", "stated_radius_km",
-}
+class _StopLoop(Exception):
+    """Breaks the worker's forever-loop in a test.
+
+    Not StopIteration raised from a generator expression, which is what this
+    was. That construct is version-dependent -- 3.14 lets it through as
+    StopIteration while 3.9 converts it to RuntimeError under PEP 479 -- so the
+    tests passed here and failed on the runner. A plain exception from a plain
+    function behaves the same everywhere.
+    """
+
+
+def _break_loop_after_one_cycle(monkeypatch):
+    def stop(_seconds):
+        raise _StopLoop
+    monkeypatch.setattr(agent.time, "sleep", stop)
+
 
 def _stub_run(monkeypatch, responses):
     """responses: list of (match_substring, return_value), first match wins."""
@@ -101,7 +81,7 @@ def test_finds_running_container_after_the_image_tag_moved(monkeypatch):
 
 def test_does_not_mistake_the_sidecar_service_for_the_node(monkeypatch):
     """xl1-service runs beside the node and must never be picked up."""
-    only_sidecar = "xl1-service-xl1-service-1\txl1-service:local\tnpx tsx src/server.ts\n"
+    only_sidecar = "xl1-service-anchor-1\txl1-service:local\tnpx tsx src/server.ts\n"
     _stub_run(monkeypatch, [("ancestor=xl1:local", ""), ("docker ps", only_sidecar)])
     assert agent.find_container() is None
 
@@ -204,7 +184,7 @@ def test_container_error_is_captured(monkeypatch):
 
 PS_TWO_NODES = (
     "keen_bassi\txl1:local\tnode /opt/xl1/lib/entrypoint.mjs\n"
-    "xl1-service-xl1-service-1\txl1-service:local\tdocker-entrypoint.sh\n"
+    "xl1-service-anchor-1\txl1-service:local\tdocker-entrypoint.sh\n"
     "charming_einstein\t3a27a9e5f10d\tnode /opt/xl1/lib/entrypoint.mjs\n"
 )
 
@@ -217,7 +197,7 @@ def test_lists_every_running_node_container(monkeypatch):
 
 def test_sidecar_is_not_counted_as_a_node(monkeypatch):
     _stub_run(monkeypatch, [("docker ps", PS_TWO_NODES)])
-    assert "xl1-service-xl1-service-1" not in agent.list_node_containers()
+    assert "xl1-service-anchor-1" not in agent.list_node_containers()
 
 
 def test_tagged_container_is_preferred_when_several_run(monkeypatch):
@@ -326,14 +306,14 @@ def _reward_env(monkeypatch, value):
 
 
 def test_reward_address_read_from_container(monkeypatch):
-    _reward_env(monkeypatch, "0000000000000000000000000000000000000abc")
-    assert agent.read_reward_address("node") == "0000000000000000000000000000000000000abc"
+    _reward_env(monkeypatch, "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0")
+    assert agent.read_reward_address("node") == "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0"
 
 
 def test_quoted_reward_address_is_accepted(monkeypatch):
     """docker --env-file does not strip quotes; a quoted value must still work."""
-    _reward_env(monkeypatch, '"0x0000000000000000000000000000000000000abc"')
-    assert agent.read_reward_address("node") == "0x0000000000000000000000000000000000000abc"
+    _reward_env(monkeypatch, '"0xd1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0"')
+    assert agent.read_reward_address("node") == "0xd1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0"
 
 
 def test_missing_reward_address_warns_rather_than_failing_silently(monkeypatch, capsys):
@@ -362,7 +342,7 @@ def test_warning_is_not_repeated_every_thirty_seconds(monkeypatch, capsys):
 
 def test_mnemonic_is_never_returned_or_logged(monkeypatch, capsys):
     """The mnemonic sits in the same environment block."""
-    _reward_env(monkeypatch, "0000000000000000000000000000000000000abc")
+    _reward_env(monkeypatch, "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0")
     result = agent.read_reward_address("node")
     out = capsys.readouterr()
     assert "secret words" not in str(result)
@@ -447,160 +427,470 @@ def test_over_long_registry_version_is_dropped_not_forwarded(monkeypatch, capsys
     assert "implausible version" in capsys.readouterr().err
 
 
-def test_version_check_off_means_no_docker_exec(monkeypatch):
-    """`docker exec` is the call that makes socket access root-equivalent.
-    With health read over HTTP, this is the last one -- so switching version
-    checking off has to remove it, or read-only Docker access is impossible."""
-    calls = []
-    monkeypatch.setattr(agent, "run", lambda cmd, **kw: calls.append(cmd))
-    monkeypatch.setattr(agent, "CLI_REGISTRY", "")
-    agent._cli_cache["installed"] = None
-    assert agent.read_cli_version("node") is None
-    assert calls == [], f"expected no docker call, got {calls}"
+# --- the version has to move when the payload does ----------------------------
 
-
-def test_version_check_on_still_reads_the_container(monkeypatch):
-    monkeypatch.setattr(agent, "CLI_REGISTRY", "https://registry.example/latest")
-    monkeypatch.setattr(agent, "run", lambda cmd, **kw: '{"version": "5.2.2"}')
-    agent._cli_cache["installed"] = None
-    assert agent.read_cli_version("node") == "5.2.2"
-
-
-# --- is the agent working, or merely running? --------------------------------
+# Every field the agent can report. This is its entire interface to the
+# receiver, and AGENT_VERSION on the operator panel is how someone tells which
+# of these to expect from a given Pi.
 #
-# Every collector returns None on failure so that a failure can never break a
-# heartbeat. The cost is that a blank field could mean "not collected yet" or
-# "collection is failing", and a half-blind agent looks exactly like a healthy
-# one. collect() reports which readers came back empty.
+# Pinned as a literal on purpose. The test below re-derives the same set from
+# the source, so adding a field breaks it and the person adding it has to come
+# here, notice the version note, and bump it.
+REPORTED_FIELDS = {
+    # Where the operator SAYS this device is. Opt-in, coarse, and verified by
+    # nothing -- the names carry that so a renderer cannot forget it.
+    "stated_location", "stated_lat", "stated_lon", "stated_radius_km",
+    # identity and liveness
+    "node_id", "label", "role", "network", "live", "ready", "agent_version", "agent_degraded",
+    "os_updates", "os_security_updates", "os_apt_age_hours", "os_reboot_required",
+    "producer_balance_symbol", "producer_balance_raw",
+    # stake held against this producer on the backing EVM, and the minimum,
+    # both raw -- reported without a verdict about whether it is enough
+    "producer_stake_raw", "producer_stake_min_raw",
+    # SDK the companion service reads the chain with, and what npm publishes
+    "sdk_version", "sdk_latest",
+    "peer_count", "produced_share", "peer_window",
+    # container
+    "container_status", "container_started_at", "container_error", "exit_code",
+    "exited_at", "health_status", "image", "restart_count", "running",
+    "node_containers",
+    # host
+    "cpu_percent", "mem_used_mb", "mem_total_mb", "host_mem_used_mb",
+    "disk_used_percent", "host_uptime_seconds", "temperature_c",
+    # chain
+    "chain_heights", "block_height",
+    # production counting
+    "produced_recent", "produced_window", "pending_transactions",
+    "pending_blocks", "last_block_epoch", "scan_from_block", "scan_to_block",
+    "scan_produced", "scan_finalized", "finalized_head", "indexer_floor",
+    "backfill_from_block", "backfill_to_block", "backfill_produced",
+    "scan_minted_by_day",
+    "minted_from_block", "minted_to_block", "minted_by_day",
+    "last_produced_block", "blocks_since_produced", "explorer_block_url",
+    # staying current
+    "cli_version", "cli_latest",
+    "repo_commit", "repo_upstream", "repo_behind", "repo_tag", "repo_upstream_tag",
+    # supervision
+    "rebuild_timer_active", "rebuild_timer_next", "producer_unit",
+    # eligibility
+    "producer_balance", "producer_funded", "producer_blocked",
+    # earnings: what production actually paid, as distinct from the balance
+    "producer_earned", "producer_blocks_rewarded", "producer_reward_per_block",
+    "producer_non_reward", "producer_reward_sdk_ok",
+    "node_image_count", "log_tail",
+    # The wallet that pays for anchoring. Operator-only on the receiving
+    # side; a balance has never been public and this one is not either.
+    "attestor_address", "attestor_balance", "attestor_balance_raw",
+    "attestor_cost_per_anchor", "attestor_anchor_interval_s",
+}
 
 
-def _blind_agent(monkeypatch):
-    """An ESTABLISHED agent where a container exists and every reader fails.
+def _fields_in_source():
+    """Every field name the agent can put in a heartbeat, read from the source.
 
-    Established matters. A freshly started agent has not been told its cursor
-    and deliberately does not scan -- scanning blind would re-count a range the
-    receiver already has -- so producer_stats returning nothing is correct
-    there, and must not read as a fault.
-
-    The caches are reset because they are what makes this agent cheap: the CLI
-    version is read once an hour, not every 30 seconds. A value left behind by
-    an earlier test would be served from cache here and the reader would look
-    healthy -- which is a genuine property of the feature, not just a test
-    artefact. A cached reading means the last successful one, not the current
-    one, so a reader that has only just started failing stays quiet until its
-    cache expires.
+    Static rather than by calling collect(): most fields only appear on
+    branches that need a reachable service, a configured feature or a Linux
+    /proc, so a runtime check would pass while covering a fraction of them --
+    which is how the first version of this guard passed without testing
+    anything.
     """
-    monkeypatch.setitem(agent._cli_cache, "installed", None)
-    monkeypatch.setitem(agent._cli_cache, "latest", None)
-    monkeypatch.setitem(agent._producer_cursor, "known", True)
-    monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 4000)
-    monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
+    import re
+    src = (Path(__file__).parent / "xl1_heartbeat.py").read_text(encoding="utf-8")
+    keys = set(re.findall(r'payload\["([a-z_]+)"\]', src))
+    for fn in ("collect", "container_info", "container_stats", "host_metrics"):
+        body = re.search(r"\ndef %s\(.*?(?=\ndef |\Z)" % fn, src, re.S)
+        if body:
+            keys |= set(re.findall(r'"([a-z_]+)":', body.group(0)))
+            keys |= set(re.findall(r'(?:info|data|out)\["([a-z_]+)"\]', body.group(0)))
+    return keys
+
+
+def test_reported_fields_are_pinned_to_the_version():
+    """A new reported field means a new MINOR version.
+
+    AGENT_VERSION is shown on the operator panel to answer "which agent is on
+    that Pi". It sat at 1.0.0 through twelve commits and several deploys, so
+    the tile read the same before and after every one of them.
+
+    If you are here because this failed: add the field to REPORTED_FIELDS
+    above, and raise the MINOR in xl1_heartbeat.py. If you removed one instead,
+    that is a MAJOR -- the receiver will stop seeing something it was shown.
+    """
+    found = _fields_in_source()
+    added = found - REPORTED_FIELDS
+    gone = REPORTED_FIELDS - found
+
+    assert not added, (
+        f"heartbeat gained field(s) {sorted(added)} — add them to "
+        "REPORTED_FIELDS and bump the MINOR in AGENT_VERSION"
+    )
+    assert not gone, (
+        f"field(s) {sorted(gone)} are no longer reported — removing one is a "
+        "MAJOR bump, since the receiver stops seeing something it was shown"
+    )
+
+
+def test_the_version_is_a_plain_semver():
+    """The receiver caps agent_version at 32 characters and the panel prints it
+    verbatim, so anything exotic ends up on screen."""
+    import re
+    assert re.fullmatch(r"\d+\.\d+\.\d+", agent.AGENT_VERSION), agent.AGENT_VERSION
+
+
+def test_the_version_is_sent_with_every_heartbeat(monkeypatch):
+    _stub_run(monkeypatch, [])
+    monkeypatch.setattr(agent, "HEIGHT_URL", "")
+    assert agent.collect()["agent_version"] == agent.AGENT_VERSION
+
+
+# --- a null answer is not an answer -------------------------------------------
+
+def test_a_null_balance_is_not_cached(monkeypatch):
+    """The service returns 200 with a null balance when it cannot read the
+    chain, or when handed an address it will not accept. Treating that as a
+    value pins the field blank for the whole interval, long after the cause is
+    fixed -- which is how this shipped the first time."""
+    calls = []
+
+    class _Resp:
+        status = 200
+        def __init__(self, body): self._body = body
+        def read(self): return self._body.encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    bodies = ['{"balance": null, "fundedForProduction": null}',
+              '{"balance": 23903.03, "fundedForProduction": true}']
+
+    def fake_urlopen(url, timeout=0):
+        calls.append(url)
+        return _Resp(bodies[min(len(calls) - 1, len(bodies) - 1)])
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "0x" + "a" * 40)
+    agent._standing_cache["value"] = None
+    agent._standing_cache["at"] = 0.0
+
+    assert agent.fetch_standing("xl1-producer") == agent.NO_STANDING
+    # A cached null wouldshort-circuit here and never make a second request.
+    assert agent.fetch_standing("xl1-producer") == (23903.03, True, None, None, None, None)
+    assert len(calls) == 2, "the null must not have been cached"
+
+
+def test_a_real_balance_is_cached(monkeypatch):
+    """One RPC call per interval, not one per heartbeat."""
+    calls = []
+
+    class _Resp:
+        status = 200
+        def read(self): return b'{"balance": 1.5, "fundedForProduction": true}'
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(url, timeout=0):
+        calls.append(url)
+        return _Resp()
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "0x" + "b" * 40)
+    agent._standing_cache["value"] = None
+    agent._standing_cache["at"] = 0.0
+
+    assert agent.fetch_standing("xl1-producer") == (1.5, True, None, None, None, None)
+    assert agent.fetch_standing("xl1-producer") == (1.5, True, None, None, None, None)
+    assert len(calls) == 1, "a real answer should be cached for the interval"
+
+
+# --- the node's own eligibility verdict ---------------------------------------
+
+def test_insufficient_stake_is_surfaced(monkeypatch):
+    """The stake figure is not readable from the public gateway, but the node
+    states its own conclusion on the code path that decides whether it can
+    produce. That verdict is what gets reported."""
+    log = "\n".join([
+        "[xl1] system ready (producer in 7982ms)",
+        "Producer d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0 has insufficient stake.",
+    ])
+    _stub_run(monkeypatch, [("docker logs", log)])
+    assert agent.read_blocked_reason("xl1-producer") == "insufficient stake"
+
+
+def test_no_balance_is_surfaced(monkeypatch):
+    _stub_run(monkeypatch, [
+        ("docker logs", "Producer d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0 has no balance."),
+    ])
+    assert agent.read_blocked_reason("xl1-producer") == "no balance"
+
+
+def test_a_healthy_log_reports_nothing(monkeypatch):
+    """The absence of a complaint is the normal case and must not be dressed
+    up as a finding."""
+    _stub_run(monkeypatch, [
+        ("docker logs", "\n".join([
+            "[BlockRunner] Building block 569649",
+            "[BlockRunner] Building block 569650",
+        ])),
+    ])
+    assert agent.read_blocked_reason("xl1-producer") is None
+
+
+def test_no_container_means_no_verdict(monkeypatch):
+    _stub_run(monkeypatch, [])
+    assert agent.read_blocked_reason(None) is None
+
+
+def test_the_search_is_windowed(monkeypatch):
+    """A complaint from days ago that has since been resolved is not a current
+    fault. Reporting it as one would be worse than reporting nothing."""
+    seen = []
+
+    def fake_run(args, timeout=10, **_kw):
+        seen.append(args)
+        return ""
+
+    monkeypatch.setattr(agent, "run", fake_run)
+    agent.read_blocked_reason("xl1-producer")
+    assert "--since" in seen[0], seen[0]
+    assert agent.ELIGIBILITY_WINDOW in seen[0]
+
+
+# --- how many node images are on disk -----------------------------------------
+
+def test_counts_only_versioned_images(monkeypatch):
+    """One image accumulates per CLI release at roughly half a gigabyte. The
+    promotion tag points at one of them and must not be counted twice."""
+    listing = chr(10).join(["local", "5.3.0", "5.2.4", "5.2.3", "<none>"])
+    _stub_run(monkeypatch, [("docker images", listing)])
+    assert agent.read_image_inventory() == 3
+
+
+def test_no_images_is_zero_not_unknown(monkeypatch):
+    _stub_run(monkeypatch, [("docker images", "")])
+    assert agent.read_image_inventory() == 0
+
+
+def test_a_docker_failure_reports_nothing_rather_than_zero(monkeypatch):
+    """Zero images and "docker did not answer" are different facts, and
+    reporting the second as the first would look like the prune worked."""
     monkeypatch.setattr(agent, "run", lambda *a, **k: None)
-    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
-    monkeypatch.setattr(agent, "fetch_block_heights", lambda: None)
-    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
-    monkeypatch.setattr(agent, "fetch_cli_latest", lambda: None)
+    assert agent.read_image_inventory() is None
 
 
-def test_a_blind_agent_says_so(monkeypatch):
-    _blind_agent(monkeypatch)
-    failing = agent.collect()["agent_degraded"]
-    for expected in ("cli_version", "cli_latest", "log_tail",
-                     "producer_stats", "chain_heights", "node_image_count"):
-        assert expected in failing, f"{expected} failed silently: {failing}"
+# --- the node log tail --------------------------------------------------------
 
-
-def test_silence_that_is_an_answer_is_not_a_failure(monkeypatch):
-    """The guard that decides whether this is a signal or a nuisance.
-
-    Most collectors are legitimately quiet: no rebuild timer installed, no
-    systemd unit managing the container, no reason the node is blocked. Those
-    are answers. An operator who learns this line cries wolf stops reading it.
-    """
-    _blind_agent(monkeypatch)
-    failing = agent.collect()["agent_degraded"]
-    for never in ("rebuild_timer_active", "producer_unit", "producer_blocked",
-                  "node_containers", "backfill_chunk"):
-        assert never not in failing, f"{never} is normally absent, not broken"
-
-
-def test_optional_services_are_not_blamed_when_not_configured(monkeypatch):
-    """Running without the companion service is supported, so its absence is a
-    choice rather than a fault."""
-    _blind_agent(monkeypatch)
-    monkeypatch.setattr(agent, "HEIGHT_URL", "")
-    monkeypatch.setattr(agent, "PRODUCER_URL", "")
-    monkeypatch.setattr(agent, "CLI_REGISTRY", "")
-    failing = agent.collect()["agent_degraded"]
-    for never in ("chain_heights", "producer_stats", "cli_latest"):
-        assert never not in failing, failing
-
-
-def test_no_container_means_no_container_readers_are_blamed(monkeypatch):
-    """With the container gone the panel already says so. Six more failures
-    underneath it are noise about a cause already known."""
-    _blind_agent(monkeypatch)
-    monkeypatch.setattr(agent, "find_container", lambda: None)
-    failing = agent.collect()["agent_degraded"]
-    for needs_container in ("cli_version", "log_tail", "producer_stats"):
-        assert needs_container not in failing, failing
-
-
-def test_a_healthy_agent_reports_an_empty_list(monkeypatch):
-    """Sent even when empty: absent would be indistinguishable from an older
-    agent that cannot report this at all."""
-    _blind_agent(monkeypatch)
-    monkeypatch.setattr(agent, "find_container", lambda: None)
-    monkeypatch.setattr(agent, "HEIGHT_URL", "")
-    monkeypatch.setattr(agent, "PRODUCER_URL", "")
-    monkeypatch.setattr(agent, "CLI_REGISTRY", "")
-    monkeypatch.setattr(agent, "read_image_inventory", lambda: 2)
-    # A blind agent is not a healthy one until every reader works, and apt was
-    # the one still left blind. Without this the test agrees with whichever
-    # machine runs it: /usr/bin/apt is absent on Windows and present on the
-    # Ubuntu runner, so it passed locally and failed in CI.
-    monkeypatch.setattr(agent, "read_os_updates", lambda: (0, 0, 1.0, False))
-    assert agent.collect()["agent_degraded"] == []
+def test_the_tail_is_capped_by_line_count(monkeypatch):
+    """A heartbeat is not a log shipper. Whatever docker returns, only the
+    configured number of lines leaves the Pi."""
+    monkeypatch.setattr(agent, "LOG_TAIL_LINES", 3)
+    _stub_run(monkeypatch, [("docker logs", chr(10).join("line%d" % i for i in range(20)))])
+    tail = agent.read_log_tail("xl1-producer")
+    assert tail == ["line17", "line18", "line19"]
 
 
 def _stub_docker_logs(monkeypatch, all_lines):
-    """A `docker logs` stub that honours --tail, as the real one does. A tail
-    test whose stub ignores --tail passes with the bug present."""
+    """A `docker logs` stub that honours --tail, as the real one does.
+
+    The general-purpose stub returns its canned string whatever arguments it
+    is handed. That is fine for most of these tests and useless for this one:
+    a tail test whose stub ignores --tail passes with the bug present, which is
+    exactly what the first version of it did.
+    """
     def fake_run(args, timeout=10, **_kw):
         if "logs" not in args:
             return None
         n = int(args[args.index("--tail") + 1])
-        return "\n".join(all_lines[-n:])
+        return chr(10).join(all_lines[-n:])
     monkeypatch.setattr(agent, "run", fake_run)
 
 
 def test_blank_lines_do_not_shrink_the_tail(monkeypatch):
-    """Blanks are dropped after the tail is taken, so asking for exactly N
-    returns fewer than N and the panel reads "last 20 lines" one minute and
-    "last 16" the next, for no reason a reader can see."""
+    """The count must not wobble. Blanks are dropped after the tail is taken,
+    so asking docker for exactly N returns fewer than N and the panel reads
+    "last 20 lines" one minute and "last 16" the next, for no reason a reader
+    can see."""
     monkeypatch.setattr(agent, "LOG_TAIL_LINES", 20)
-    _stub_docker_logs(monkeypatch, ["" if i % 3 else "line%d" % i for i in range(90)])
+    # Every third line blank: 90 lines available, 60 of them real.
+    noisy = ["" if i % 3 else "line%d" % i for i in range(90)]
+    _stub_docker_logs(monkeypatch, noisy)
     tail = agent.read_log_tail("xl1-producer")
-    assert len(tail) == 20, f"expected a full 20 despite blanks, got {len(tail)}"
+    assert len(tail) == 20, f"should be a full 20 despite the blanks, got {len(tail)}"
     assert all(line.strip() for line in tail)
 
 
 def test_the_tail_is_the_most_recent_lines(monkeypatch):
-    """Filling the count must not mean reaching further back than asked."""
+    """Filling the count must not mean reaching further back than asked --
+    what you want is the newest 20, not the oldest 20 of a wider window."""
     monkeypatch.setattr(agent, "LOG_TAIL_LINES", 5)
     _stub_docker_logs(monkeypatch, ["line%d" % i for i in range(50)])
     assert agent.read_log_tail("xl1-producer") == [
         "line45", "line46", "line47", "line48", "line49"]
 
 
-def test_every_setting_is_documented():
-    """A setting a reader cannot discover is not really a setting: this file is
-    the whole reason nobody should have to read the source to configure the
-    agent. It drifted in the sibling repo, which is why it is pinned here.
+def test_it_asks_for_more_lines_than_it_keeps(monkeypatch):
+    """The over-fetch is what makes the count stable, so it is worth pinning
+    rather than leaving to be quietly optimised away."""
+    seen = []
+
+    def fake_run(args, timeout=10, **_kw):
+        seen.append(args)
+        return "a"
+
+    monkeypatch.setattr(agent, "LOG_TAIL_LINES", 20)
+    monkeypatch.setattr(agent, "run", fake_run)
+    agent.read_log_tail("xl1-producer")
+    requested = int(seen[0][seen[0].index("--tail") + 1])
+    assert requested > 20, f"asked for only {requested}"
+
+
+def test_a_short_log_returns_what_there_is(monkeypatch):
+    """A freshly started container has not printed 20 lines yet, and saying so
+    is better than padding."""
+    monkeypatch.setattr(agent, "LOG_TAIL_LINES", 20)
+    _stub_run(monkeypatch, [("docker logs", chr(10).join(["one", "two", "three"]))])
+    assert agent.read_log_tail("xl1-producer") == ["one", "two", "three"]
+
+
+def test_long_lines_are_truncated(monkeypatch):
+    """One enormous stack trace should not turn a heartbeat into a megabyte."""
+    monkeypatch.setattr(agent, "LOG_TAIL_LINES", 5)
+    _stub_run(monkeypatch, [("docker logs", "x" * 5000)])
+    tail = agent.read_log_tail("xl1-producer")
+    assert len(tail) == 1
+    assert len(tail[0]) == agent.LOG_TAIL_MAX_CHARS
+
+
+def test_blank_lines_are_dropped(monkeypatch):
+    monkeypatch.setattr(agent, "LOG_TAIL_LINES", 10)
+    _stub_run(monkeypatch, [("docker logs", chr(10).join(["real", "", "   ", "also real"]))])
+    assert agent.read_log_tail("xl1-producer") == ["real", "also real"]
+
+
+def test_zero_lines_disables_it(monkeypatch):
+    monkeypatch.setattr(agent, "LOG_TAIL_LINES", 0)
+    _stub_run(monkeypatch, [("docker logs", "something")])
+    assert agent.read_log_tail("xl1-producer") is None
+
+
+def test_no_container_means_no_tail(monkeypatch):
+    _stub_run(monkeypatch, [])
+    assert agent.read_log_tail(None) is None
+
+
+# --- is the agent working, or merely running? --------------------------------
+#
+# Every collector returns None on failure so that a failure can never break a
+# heartbeat. The cost is that a blank field could mean "not collected yet" or
+# "collection is failing", and a half-blind agent looked exactly like a
+# healthy one. collect() now says which readers came back empty.
+
+
+def _blind_agent(monkeypatch, tmp_path):
+    """An ESTABLISHED agent where a container exists and every reader fails.
+
+    Pins the host filesystem too. The apt reader is only reported as failing on
+    a machine that HAS apt, so leaving os.path.exists alone made these tests
+    agree with whatever the runner happened to be: they passed on Windows,
+    where /usr/bin/apt is absent, and failed on Ubuntu, where it is not. A test
+    whose result depends on the operating system is testing the operating
+    system.
+
+    Established matters. A freshly started agent has not been told its cursor
+    yet and deliberately does not scan -- scanning blind would re-count a range
+    the backend already has -- so producer_stats returning nothing is correct
+    there, and must not read as a fault.
     """
-    here = Path(__file__).parent
-    src = (here / "xl1_heartbeat.py").read_text(encoding="utf-8")
-    example = (here / "xl1-heartbeat.env.example").read_text(encoding="utf-8")
+    monkeypatch.setitem(agent._producer_cursor, "known", True)
+    monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 4000)
+    monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
+    monkeypatch.setattr(agent.os.path, "exists", lambda p: "apt" in str(p))
+    monkeypatch.setattr(agent, "CONTAINER", "xl1-producer")
+    monkeypatch.setattr(agent, "IMAGES_REPO", str(tmp_path / "no-such-repo"))
+    monkeypatch.setattr(agent, "STANDING_URL", "http://localhost:9/standing")
+    monkeypatch.setattr(agent, "CLI_REGISTRY", "http://localhost:9/latest")
+    monkeypatch.setattr(agent, "REBUILD_TIMER", "")
+    monkeypatch.setattr(agent, "PRODUCER_UNIT", "")
+    monkeypatch.setattr(agent, "run", lambda *a, **k: None)
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: None)
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
+    monkeypatch.setattr(agent, "fetch_cli_latest", lambda: None)
+    monkeypatch.setattr(agent, "fetch_standing", lambda name: agent.NO_STANDING)
+    monkeypatch.setattr(agent, "fetch_peers", lambda name: (None, None, None))
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+
+
+def test_a_blind_agent_says_so(monkeypatch, tmp_path):
+    """The failure this exists to catch: heartbeats still arriving, panel
+    still ONLINE, and nothing behind it actually working."""
+    _blind_agent(monkeypatch, tmp_path)
+    failing = agent.collect()["agent_degraded"]
+    for expected in ("cli_version", "cli_latest", "log_tail",
+                     "producer_stats", "chain_heights", "node_image_count"):
+        assert expected in failing, f"{expected} failed silently: {failing}"
+
+
+def test_silence_that_is_an_answer_is_not_a_failure(monkeypatch, tmp_path):
+    """The guard that decides whether this feature is worth having.
+
+    Most collectors are legitimately quiet: no rebuild timer installed, no
+    systemd unit managing the container, no reason the node is blocked. Those
+    are answers. Listing them would swap a missing signal for a false one, and
+    an operator who learns the amber line cries wolf stops reading it.
+    """
+    _blind_agent(monkeypatch, tmp_path)
+    failing = agent.collect()["agent_degraded"]
+    for never in ("rebuild_timer_active", "rebuild_timer_next", "producer_unit",
+                  "producer_blocked", "backfill_chunk", "node_containers"):
+        assert never not in failing, f"{never} is normally absent, not broken"
+
+
+def test_a_disabled_lookup_is_not_a_failure(monkeypatch, tmp_path):
+    """Switching the registry check off is a choice, not a fault."""
+    _blind_agent(monkeypatch, tmp_path)
+    monkeypatch.setattr(agent, "CLI_REGISTRY", "")
+    monkeypatch.setattr(agent, "VERSIONS_URL", "")
+    monkeypatch.setattr(agent, "SDK_REGISTRY", "")
+    assert "cli_latest" not in agent.collect()["agent_degraded"]
+
+
+def test_no_container_means_no_container_readers_are_blamed(monkeypatch, tmp_path):
+    """With the container gone the panel already says so loudly. Reporting
+    six more failures underneath it is noise about a cause already known."""
+    _blind_agent(monkeypatch, tmp_path)
+    monkeypatch.setattr(agent, "find_container", lambda: None)
+    failing = agent.collect()["agent_degraded"]
+    for needs_container in ("cli_version", "log_tail", "producer_stats",
+                            "producer_balance"):
+        assert needs_container not in failing, failing
+
+
+def test_a_healthy_agent_reports_an_empty_list(monkeypatch, tmp_path):
+    """Sent even when empty: absent would be indistinguishable from an older
+    agent that does not report this at all."""
+    _blind_agent(monkeypatch, tmp_path)
+    monkeypatch.setattr(agent, "find_container", lambda: None)
+    monkeypatch.setattr(agent, "CLI_REGISTRY", "")
+    monkeypatch.setattr(agent, "VERSIONS_URL", "")
+    monkeypatch.setattr(agent, "SDK_REGISTRY", "")
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 570000})
+    monkeypatch.setattr(agent, "read_image_inventory", lambda: 3)
+    # A blind agent is not a healthy one until every reader is working, and apt
+    # was the reader still left blind here.
+    monkeypatch.setattr(agent, "read_os_updates", lambda: (0, 0, 1.0, False))
+    payload = agent.collect()
+    assert payload["agent_degraded"] == [], payload["agent_degraded"]
+
+
+def test_every_setting_is_documented():
+    """The example env file claims to be the complete list, and drifted anyway:
+    four variables were added over time and none reached it. A reader
+    configuring this agent has no way to discover a setting that exists only in
+    the source, so an undocumented one is effectively not a setting at all.
+
+    If this fails, add the variable to xl1-heartbeat.env.example with a comment
+    saying what it is for -- not just the name.
+    """
+    src = (Path(__file__).parent / "xl1_heartbeat.py").read_text(encoding="utf-8")
+    example = (Path(__file__).parent / "xl1-heartbeat.env.example").read_text(encoding="utf-8")
     read = set(re.findall(r'os\.environ\.get\(\s*"([A-Z0-9_]+)"', src))
     documented = set(re.findall(r'^#?\s*([A-Z0-9_]+)=', example, re.M))
     missing = read - documented
@@ -608,112 +898,11 @@ def test_every_setting_is_documented():
         f"read by the agent but absent from the example file: {sorted(missing)}")
 
 
-# --- the two faults this version fixes ---------------------------------------
-
-
-@pytest.fixture
-def worker_on(monkeypatch):
-    """Pretend the worker thread is running, without starting one."""
-    monkeypatch.setitem(agent._slow, "on", True)
-    monkeypatch.setitem(agent._slow, "data", {})
-    return agent._slow
-
-
-def test_a_healthy_steady_state_agent_reports_nothing_failing(monkeypatch):
-    """The test that catches a collector whose quiet path is normal.
-
-    Checking a hand-picked list of normally-quiet collectors only ever covers
-    cases already thought of, and it passed while this agent reported
-    producer_stats as failing on a perfectly healthy node -- 29 beats out of
-    30, naming the most consequential reader it has. This instead builds an
-    agent where everything works and asserts that NOTHING is reported.
-    """
-    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
-    monkeypatch.setattr(agent, "read_cli_version", lambda name: "5.3.0")
-    monkeypatch.setattr(agent, "fetch_cli_latest", lambda: "5.3.0")
-    monkeypatch.setattr(agent, "read_log_tail", lambda name: ["a block"])
-    monkeypatch.setattr(agent, "read_image_inventory", lambda: 3)
-    monkeypatch.setattr(agent, "read_blocked_reason", lambda name: None)
-    monkeypatch.setattr(agent, "read_producer_unit", lambda: None)
-    monkeypatch.setattr(agent, "read_rebuild_timer", lambda: (None, None))
-    monkeypatch.setattr(agent, "list_node_containers", lambda: ["xl1-producer"])
-    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 571178})
-
-    # A scan ran nine minutes ago and is not due again for fifteen: the
-    # overwhelmingly common state on any given heartbeat.
-    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
-    monkeypatch.setitem(agent._producer_cursor, "known", True)
-    monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 540)
-    monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
-    # apt too, or this passes on a machine without it and fails on the Ubuntu
-    # runner that actually executes it -- which is testing the operating system
-    # rather than the agent.
-    monkeypatch.setattr(agent, "read_os_updates", lambda: (0, 0, 1.0, False))
-
-    failing = agent.collect()["agent_degraded"]
-    assert failing == [], f"a healthy node must report nothing failing, got {failing}"
-
-
-def test_a_scan_that_was_due_and_failed_is_still_reported(monkeypatch):
-    """Suppressing the not-due case must not suppress the real one."""
-    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
-    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
-    monkeypatch.setitem(agent._producer_cursor, "known", True)
-    monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 4000)
-    monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
-    assert "producer_stats" in agent.collect()["agent_degraded"]
-
-
-def test_the_beat_does_not_wait_for_a_slow_collector(worker_on, monkeypatch):
-    """The production scan allows 180 seconds against the receiver's 90-second
-    staleness threshold, so run inline it could report a healthy node OFFLINE."""
-    def glacial(*a, **k):
-        time.sleep(5)
-        raise AssertionError("the beat called a slow collector directly")
-
-    for slow in ("fetch_producer_stats", "read_log_tail", "fetch_cli_latest"):
-        monkeypatch.setattr(agent, slow, glacial)
-    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
-    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 1})
-
-    started = time.monotonic()
-    agent.collect()
-    assert time.monotonic() - started < 1.0, "the beat waited on background work"
-
-
-def test_a_scan_is_reported_once_not_on_every_beat(worker_on, monkeypatch):
-    """The scan reports a RANGE the receiver accumulates, so re-reading the
-    worker's last result each beat would re-send an already-counted range."""
-    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
-    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 1})
-    agent._slow_put("producer_stats", {"fromBlock": 100, "toBlock": 199, "produced": 3})
-    assert agent.collect().get("scan_from_block") == 100
-    assert agent.collect().get("scan_from_block") is None, "and not reported again"
-
-
-def test_reported_fields_are_pinned_to_the_version():
-    """Every field this agent sends, pinned to the version that sends it.
-
-    The sibling repo has had this for a while and it caught three version
-    bumps that would otherwise have shipped silently. This one did not, and
-    drifted eight releases behind as a result.
-
-    If this fails: add the field below and raise the MINOR. If a field was
-    removed instead, that is a MAJOR -- the receiver stops seeing something it
-    was shown.
-    """
-    src = (Path(__file__).parent / "xl1_heartbeat.py").read_text(encoding="utf-8")
-    found = set(re.findall(r'payload\["([a-z_0-9]+)"\]\s*=', src))
-    added = found - REPORTED_FIELDS
-    gone = REPORTED_FIELDS - found
-    assert not added, f"heartbeat gained field(s) {sorted(added)} — add them and bump the MINOR"
-    assert not gone, f"heartbeat lost field(s) {sorted(gone)} — that is a MAJOR"
-
-
 # --- host packages -----------------------------------------------------------
 #
-# The layer under the node. A machine can sit unpatched for months while every
-# node signal reads perfectly normal, because nothing else here looks at it.
+# The layer under everything else. A block producer holding keys can sit on a
+# months-old OpenSSL while every node signal on the dashboard reads perfectly
+# normal, because nothing here was looking at the machine itself.
 
 UPGRADABLE = """Listing...
 libssl3/bookworm-security 3.0.14-1~deb12u2 arm64 [upgradable from: 3.0.11-1~deb12u2]
@@ -768,6 +957,321 @@ def test_the_check_can_be_switched_off(monkeypatch):
     _stub_apt(monkeypatch, UPGRADABLE)
     monkeypatch.setattr(agent, "OS_UPDATE_INTERVAL", 0)
     assert agent.read_os_updates() is None
+
+
+def test_a_host_without_apt_is_not_a_broken_reader(monkeypatch):
+    """Not every machine is Debian. Reporting a missing apt as a failing
+    reader would be a permanent false alarm on such a host."""
+    _stub_apt(monkeypatch, None, exists=False)
+    monkeypatch.setattr(agent, "find_container", lambda: None)
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 1})
+    monkeypatch.setattr(agent, "read_image_inventory", lambda: 1)
+    monkeypatch.setattr(agent, "CLI_REGISTRY", "")
+    monkeypatch.setattr(agent, "VERSIONS_URL", "")
+    monkeypatch.setattr(agent, "SDK_REGISTRY", "")
+    assert "os_updates" not in agent.collect()["agent_degraded"]
+
+
+def test_a_healthy_steady_state_agent_reports_nothing_failing(monkeypatch):
+    """The test the earlier ones should have been.
+
+    `test_silence_that_is_an_answer_is_not_a_failure` checks a list of
+    collectors I hand-picked as normally-quiet, which only ever covers cases
+    already thought of. It passed while the panel showed two false alarms on a
+    perfectly healthy node.
+
+    This instead builds an agent where everything genuinely works and asserts
+    that NOTHING is reported -- so any collector whose quiet path is normal
+    fails here without anyone having to have anticipated it.
+
+    Both bugs it would have caught:
+
+      producer_stats returns None on ~29 beats in 30 by design. It is a rate
+      limiter, not a cache: serving the previous scan would re-send an
+      already-counted range every heartbeat. Not-due is not failure.
+
+      repo_upstream leaves `behind` as None whenever local and upstream match,
+      because there is nothing to compare. Keying on it meant every up-to-date
+      checkout read as a broken reader, on the same screen as a tile saying
+      "up to date".
+    """
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "read_cli_version", lambda name: "5.2.4")
+    monkeypatch.setattr(agent, "fetch_cli_latest", lambda: "5.2.4")
+    # A version behind is a mismatch for the panel to flag, not a failure to
+    # collect -- so a healthy agent still reports nothing degraded here.
+    monkeypatch.setattr(agent, "read_sdk_version", lambda: "5.3.3")
+    monkeypatch.setattr(agent, "fetch_sdk_latest", lambda: "5.4.1")
+    monkeypatch.setattr(agent, "read_log_tail", lambda name: ["a block", "another"])
+    monkeypatch.setattr(agent, "read_image_inventory", lambda: 3)
+    monkeypatch.setattr(agent, "read_os_updates", lambda: (8, 3, 4.0, False))
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 570990})
+    monkeypatch.setattr(agent, "fetch_standing",
+                        lambda name: (12.5, True, "XL1", "12500000000000000000", "0", "1"))
+    monkeypatch.setattr(agent, "fetch_earnings", lambda name: (37950.0, 759, 50.0, 3.055, True))
+    monkeypatch.setattr(agent, "fetch_peers", lambda name: (4, 14.7, 1000))
+    monkeypatch.setattr(agent, "read_blocked_reason", lambda name: None)
+    monkeypatch.setattr(agent, "read_producer_unit", lambda: None)
+    monkeypatch.setattr(agent, "read_rebuild_timer", lambda: (None, None))
+    monkeypatch.setattr(agent, "list_node_containers", lambda: ["xl1-producer"])
+    monkeypatch.setattr(agent, "read_repo_head", lambda: "a" * 40)
+
+    # The repo is up to date, so there is nothing to compare and `behind`
+    # is legitimately None. This is the normal state, not a fault.
+    monkeypatch.setattr(agent, "fetch_repo_upstream",
+                        lambda local: ("a" * 40, None, "v5.2.4", "v5.2.4"))
+
+    # A scan ran nine minutes ago and is not due again for fifteen. The
+    # overwhelmingly common case on any given heartbeat.
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
+    monkeypatch.setitem(agent._producer_cursor, "known", True)
+    monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 540)
+    monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
+
+    failing = agent.collect()["agent_degraded"]
+    assert failing == [], f"a healthy node must report nothing failing, got {failing}"
+
+
+def test_a_scan_that_was_due_and_failed_is_still_reported(monkeypatch):
+    """The other half. Suppressing the not-due case must not suppress the
+    real one -- production counting stopping is the most consequential thing
+    this agent can fail to notice."""
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
+    monkeypatch.setitem(agent._producer_cursor, "known", True)
+    monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 4000)
+    monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
+    assert "producer_stats" in agent.collect()["agent_degraded"]
+
+
+def test_the_ticker_comes_from_the_service_not_from_here(monkeypatch):
+    """A number on an operator panel with no unit beside it is not a balance.
+    The symbol is read from whatever actually queried the chain, so the panel
+    cannot label a figure with a ticker nothing verified."""
+    class _Resp:
+        status = 200
+        def read(self):
+            return (b'{"balance": 1.5, "fundedForProduction": true, '
+                    b'"symbol": "XL1", "balanceRaw": "1500000000000000000"}')
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", lambda url, timeout=0: _Resp())
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "0x" + "c" * 40)
+    agent._standing_cache["value"] = None
+    agent._standing_cache["at"] = 0.0
+    assert agent.fetch_standing("xl1-producer") == (1.5, True, "XL1", "1500000000000000000", None, None)
+
+
+def test_an_older_service_sends_no_ticker_and_that_is_fine(monkeypatch):
+    """The panel falls back to an unlabelled number rather than inventing one."""
+    class _Resp:
+        status = 200
+        def read(self): return b'{"balance": 1.5, "fundedForProduction": true}'
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", lambda url, timeout=0: _Resp())
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "0x" + "d" * 40)
+    agent._standing_cache["value"] = None
+    agent._standing_cache["at"] = 0.0
+    balance, funded, symbol, raw, _stake, _min = agent.fetch_standing("xl1-producer")
+    assert (balance, funded) == (1.5, True)
+    assert symbol is None and raw is None
+
+
+def test_a_junk_ticker_is_refused(monkeypatch):
+    """The service is on this host's loopback, but the value is rendered and
+    the shape is cheap to pin."""
+    class _Resp:
+        status = 200
+        def read(self):
+            return (b'{"balance": 1.5, "fundedForProduction": true, '
+                    b'"symbol": "<script>alert(1)</script>", "balanceRaw": "not a number"}')
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", lambda url, timeout=0: _Resp())
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "0x" + "e" * 40)
+    agent._standing_cache["value"] = None
+    agent._standing_cache["at"] = 0.0
+    _, _, symbol, raw, _stake, _min = agent.fetch_standing("xl1-producer")
+    assert symbol is None and raw is None
+
+
+# --- peer context ------------------------------------------------------------
+#
+# A block count says nothing on its own. The same number is healthy against
+# three other producers and alarming against ten.
+
+PEERS_BODY = {
+    "window": 1000, "totalBlocks": 1000,
+    "producers": [
+        {"address": "7ac8355c0ed1b6aaaaaaaaaaaaaaaaaaaaaaaaaa", "blocks": 316, "balance": 280419.0},
+        {"address": "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0", "blocks": 147, "balance": 27053.0},
+    ],
+}
+
+
+def _stub_peers(monkeypatch, body, status=200, reward="0xd1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0"):
+    class _Resp:
+        def __init__(self): self.status = status
+        def read(self): return json.dumps(body).encode() if body is not None else b"{}"
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(agent.urllib.request, "urlopen", lambda url, timeout=0: _Resp())
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", reward)
+    monkeypatch.setitem(agent._peers_cache, "value", None)
+    monkeypatch.setitem(agent._peers_cache, "at", 0.0)
+
+
+def test_our_share_is_found_among_the_peers(monkeypatch):
+    _stub_peers(monkeypatch, PEERS_BODY)
+    count, share, window = agent.fetch_peers("xl1-producer")
+    assert count == 2
+    assert share == 14.7, f"147 of 1000 blocks is 14.7%, got {share}"
+    assert window == 1000
+
+
+def test_a_leading_zero_in_the_address_still_matches(monkeypatch):
+    """The reward address arrives 0x-prefixed. Stripping it with lstrip("0x")
+    also eats a leading zero of the address itself, so 0x0a65... would never
+    match its own row and the node would report a 0% share of its own blocks --
+    quietly, and looking exactly like a node that had stopped producing."""
+    addr = "0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9"
+    body = {"window": 100, "totalBlocks": 100,
+            "producers": [{"address": addr, "blocks": 40, "balance": 1.0}]}
+    _stub_peers(monkeypatch, body, reward="0x" + addr)
+    count, share, _ = agent.fetch_peers("xl1-producer")
+    assert share == 40.0, f"leading zero lost: got {share}"
+
+
+def test_a_node_absent_from_the_window_reports_zero_not_nothing(monkeypatch):
+    """Producing nothing in the window is a real answer and the one worth
+    seeing. It must not be confused with the reader having failed."""
+    body = {"window": 1000, "totalBlocks": 1000,
+            "producers": [{"address": "b" * 40, "blocks": 1000, "balance": 5.0}]}
+    _stub_peers(monkeypatch, body)
+    count, share, _ = agent.fetch_peers("xl1-producer")
+    assert count == 1 and share == 0.0
+
+
+def test_an_unreadable_answer_is_not_a_zero_share(monkeypatch):
+    """The opposite trap: a failed lookup must never render as "produced
+    nothing", which would send someone chasing a fault that is not there."""
+    _stub_peers(monkeypatch, {"producers": None, "totalBlocks": 0})
+    assert agent.fetch_peers("xl1-producer") == (None, None, None)
+
+
+def test_peer_lookup_is_cached(monkeypatch):
+    """One wide scan per interval, not one per heartbeat."""
+    calls = []
+    class _Resp:
+        status = 200
+        def read(self):
+            calls.append(1)
+            return json.dumps(PEERS_BODY).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(agent.urllib.request, "urlopen", lambda url, timeout=0: _Resp())
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "0xd1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0")
+    monkeypatch.setitem(agent._peers_cache, "value", None)
+    monkeypatch.setitem(agent._peers_cache, "at", 0.0)
+    agent.fetch_peers("xl1-producer")
+    agent.fetch_peers("xl1-producer")
+    assert len(calls) == 1, f"expected one scan per interval, made {len(calls)}"
+
+
+# --- slow work must not delay the beat ---------------------------------------
+#
+# The production scan allows 180 seconds and the peer scan 120, against a
+# 90-second staleness threshold at the backend. Run inline, one slow scan could
+# push the next heartbeat past the point where a node that is producing
+# perfectly well is declared OFFLINE -- and alerted about. The agent could make
+# its own node look dead by doing its job.
+
+
+@pytest.fixture
+def worker_on(monkeypatch):
+    """Pretend the worker thread is running, without starting one."""
+    monkeypatch.setitem(agent._slow, "on", True)
+    monkeypatch.setitem(agent._slow, "data", {})
+    monkeypatch.setitem(agent._slow, "degraded", set())
+    return agent._slow
+
+
+def test_the_beat_does_not_wait_for_a_slow_collector(worker_on, monkeypatch):
+    """The whole point. With the worker running, a collector that takes longer
+    than the staleness threshold must not be on the heartbeat's path at all."""
+    def glacial(*a, **k):
+        time.sleep(5)
+        raise AssertionError("the beat called a slow collector directly")
+
+    for slow in ("fetch_producer_stats", "fetch_peers", "fetch_standing",
+                 "read_os_updates", "read_log_tail"):
+        monkeypatch.setattr(agent, slow, glacial)
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 1})
+
+    started = time.monotonic()
+    agent.collect()
+    assert time.monotonic() - started < 1.0, "the beat waited on background work"
+
+
+def test_without_a_worker_everything_runs_inline(monkeypatch):
+    """The fallback that keeps this honest: with no worker, the collectors are
+    called directly, so every other test exercises the real code path rather
+    than a stub of it."""
+    calls = []
+    monkeypatch.setitem(agent._slow, "on", False)
+    monkeypatch.setattr(agent, "find_container", lambda: None)
+    monkeypatch.setattr(agent, "read_os_updates", lambda: calls.append("os") or (1, 0, 1.0, False))
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 1})
+    agent.collect()
+    assert calls == ["os"], "the collector should have been called inline"
+
+
+def test_a_scan_is_reported_once_not_on_every_beat(worker_on, monkeypatch):
+    """The production scan reports a RANGE the backend accumulates. Re-reading
+    the worker's last result each beat would re-send an already-counted range
+    thirty times a cycle, which the backend can only reject as a replay."""
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 1})
+    agent._slow_put("producer_stats", {"fromBlock": 100, "toBlock": 199, "produced": 3})
+
+    first = agent.collect()
+    second = agent.collect()
+    assert first.get("scan_from_block") == 100, "the new scan should be reported"
+    assert second.get("scan_from_block") is None, "and not reported again"
+
+
+def test_a_last_known_value_is_reused_every_beat(worker_on, monkeypatch):
+    """Everything that is not a range is a current reading, and should appear
+    on every beat until the worker replaces it."""
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_block_heights", lambda: {"sequence": 1})
+    agent._slow_put("standing", (12.5, True, "XL1", "12500000000000000000", "0", "1"))
+
+    for _ in range(3):
+        assert agent.collect().get("producer_balance") == 12.5
+
+
+def test_the_worker_survives_a_collector_that_raises(monkeypatch):
+    """A dead worker is a silent one: every field it feeds would simply stop
+    updating, with the panel showing stale values and saying nothing."""
+    rounds = []
+
+    def explode(*a, **k):
+        rounds.append(1)
+        raise RuntimeError("docker is having a day")
+
+    monkeypatch.setattr(agent, "find_container", explode)
+    monkeypatch.setattr(agent, "SLOW_CYCLE", 0)
+    _break_loop_after_one_cycle(monkeypatch)
+
+    with pytest.raises(_StopLoop):
+        agent._slow_worker()
+    assert rounds, "the cycle ran"
 
 
 def test_a_clean_host_is_not_re_read_often(monkeypatch):
@@ -825,6 +1329,375 @@ def test_a_pending_reboot_alone_keeps_the_fast_cadence(monkeypatch):
     assert len(calls) == 1, "a reboot still outstanding is still pending"
 
 
+# Every collector the worker calls, stubbed. Leaving one out does not make the
+# test more realistic, it makes it reach the real docker binary and the real
+# network from a unit test -- which is how this test passed on Windows and
+# failed on CI, where a live subprocess polls with time.sleep and swallowed the
+# sentinel below.
+_COLLECTORS = {
+    "read_cli_version": lambda n: "5.3.0", "fetch_cli_latest": lambda: "5.3.0",
+    "read_sdk_version": lambda: "3.1.0", "fetch_sdk_latest": lambda: "3.1.0",
+    "flush_attestations": lambda: None,
+    "read_log_tail": lambda n: ["line"], "read_image_inventory": lambda: 2,
+    "read_blocked_reason": lambda n: None, "read_producer_unit": lambda: None,
+    "read_rebuild_timer": lambda: (None, None), "read_repo_head": lambda: "a" * 40,
+    "fetch_repo_upstream": lambda h: (None, None, None, None),
+    "fetch_standing": lambda n: (1.0, True, "XL1", "1", None, None),
+    "fetch_earnings": lambda n: (1.0, 1, 1.0, None, None),
+    "fetch_peers": lambda n: (4, 14.6, 1000),
+    "read_os_updates": lambda: (0, 0, 1.0, False),
+    "fetch_producer_stats": lambda n: None,
+    "fetch_minted_chunk": lambda n: None,
+}
+
+
+def _run_one_cycle(monkeypatch, **overrides):
+    """One full pass of the slow worker. Returns what it published."""
+    published = {}
+    monkeypatch.setattr(agent, "_slow_put", lambda k, v: published.__setitem__(k, v))
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    for name, value in {**_COLLECTORS, **overrides}.items():
+        monkeypatch.setattr(agent, name, value)
+    _break_loop_after_one_cycle(monkeypatch)
+    with pytest.raises(_StopLoop):
+        agent._slow_worker()
+    return published
+
+
+def test_a_worker_cycle_runs_to_completion(monkeypatch):
+    """Every collector reached, not just the first.
+
+    The existing worker test makes find_container raise, so it never gets past
+    the opening line -- which is how a _slow_put called with the wrong number of
+    arguments sat there passing. The worker catches everything and keeps
+    looping, so that failure would have been silent: the beat would carry no
+    cli_version, no log tail, no scan, forever, with nothing logged after the
+    first cycle.
+    """
+    published = _run_one_cycle(monkeypatch)
+    for expected in ("cli_version", "cli_latest", "log_tail", "image_inventory",
+                     "standing", "peers", "os_updates"):
+        assert expected in published, f"{expected} was never published"
+
+
+def test_one_broken_collector_does_not_starve_the_others(monkeypatch):
+    """A collector that raises must cost its own reading and nothing else.
+
+    The worker wrapped the whole cycle in one try, so the first collector to
+    throw skipped every collector after it -- and kept skipping them on every
+    cycle for as long as the cause lasted. The node would report ONLINE with a
+    current heartbeat while its peer count, OS updates and block scans sat
+    frozen at whatever they last held, which is precisely the silent staleness
+    the rest of this agent is built to avoid.
+
+    Found by CI, not by reading: standing published, peers did not.
+    """
+    def boom(_name):
+        raise RuntimeError("the earnings service fell over")
+
+    published = _run_one_cycle(monkeypatch, fetch_earnings=boom)
+
+    assert "earnings" not in published, "a failed collector must publish nothing"
+    for survivor in ("peers", "os_updates"):
+        assert survivor in published, (
+            f"{survivor} was skipped because an earlier collector failed")
+
+
+def test_a_collector_failure_says_which_one_and_why(monkeypatch, capsys):
+    """An empty stderr line is not a bug report.
+
+    The cycle used to log str(e) alone. The exception that actually broke CI
+    had an empty str(), so the log read "slow collector cycle failed: " and
+    stopped -- naming neither the collector nor the type.
+    """
+    class Silent(Exception):
+        pass
+
+    def boom(_name):
+        raise Silent()
+
+    _run_one_cycle(monkeypatch, fetch_peers=boom)
+    err = capsys.readouterr().err
+    assert "peers" in err, "the log must name the collector that failed"
+    assert "Silent" in err, "the log must name the exception type"
+
+
+# --- earnings ---------------------------------------------------------------
+#
+# The balance answers "what does this account hold". These fields answer "what
+# did producing pay", which is a different number the moment the operator has
+# funded the node or moved anything out. The two are not interchangeable, so
+# this reader has to be wrong in its own ways rather than the balance reader's.
+
+EARNINGS_OK = {"earned": 37950.0, "blocksRewarded": 759, "rewardPerBlock": 50.0,
+               "nonReward": 3.055006, "sdkAgrees": True}
+
+
+def _serve(monkeypatch, *bodies):
+    """Answer each call with the next body, the last one repeating.
+
+    Returns the call log, so a test can assert on how many requests were made
+    -- which is the only way to tell a cached answer from a repeated one.
+    """
+    calls = []
+
+    class _Resp:
+        status = 200
+        def __init__(self, body): self._body = body
+        def read(self): return json.dumps(self._body).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(url, timeout=0):
+        calls.append(url)
+        return _Resp(bodies[min(len(calls) - 1, len(bodies) - 1)])
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "0x" + "a" * 40)
+    agent._earnings_cache["value"] = None
+    agent._earnings_cache["at"] = 0.0
+    return calls
+
+
+def test_earnings_round_trip(monkeypatch):
+    _serve(monkeypatch, EARNINGS_OK)
+    assert agent.fetch_earnings("xl1-producer") == (37950.0, 759, 50.0, 3.055006, True)
+
+
+def test_earnings_needs_a_reward_address(monkeypatch):
+    """No address is not a failed read; there is nothing to read for."""
+    _serve(monkeypatch, EARNINGS_OK)
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "")
+    monkeypatch.setattr(agent, "find_container", lambda: None)
+    assert agent.fetch_earnings(None) is None
+
+
+def test_a_200_carrying_nulls_is_not_an_answer(monkeypatch):
+    """The service answers 200 with nulls when it cannot read the chain.
+
+    Reporting that as earnings would show a node that earned nothing, which is
+    a far more alarming claim than "this reader is degraded".
+    """
+    _serve(monkeypatch, {"earned": None, "rewardPerBlock": None})
+    assert agent.fetch_earnings("xl1-producer") is None
+
+
+def test_earnings_does_not_cache_a_failure(monkeypatch):
+    """A cached failure outlives the outage that caused it."""
+    calls = _serve(monkeypatch, {"earned": None}, EARNINGS_OK)
+    assert agent.fetch_earnings("xl1-producer") is None
+    assert agent.fetch_earnings("xl1-producer")[0] == 37950.0
+    assert len(calls) == 2, "the failure must not have been cached"
+
+
+def test_a_real_reading_is_cached(monkeypatch):
+    """Two RPC calls per interval behind the service, not per heartbeat."""
+    calls = _serve(monkeypatch, EARNINGS_OK)
+    assert agent.fetch_earnings("xl1-producer")[0] == 37950.0
+    assert agent.fetch_earnings("xl1-producer")[0] == 37950.0
+    assert len(calls) == 1, "a real answer should be cached for the interval"
+
+
+def test_sdk_disagreement_is_reported_not_suppressed(monkeypatch):
+    """The chain is what was paid, so a schedule mismatch is not a read failure.
+
+    It still has to reach the panel: the entire value of the cross-check is
+    that somebody sees it when it trips.
+    """
+    body = dict(EARNINGS_OK)
+    body["sdkAgrees"] = False
+    _serve(monkeypatch, body)
+    earned, _, _, _, sdk_ok = agent.fetch_earnings("xl1-producer")
+    assert earned == 37950.0
+    assert sdk_ok is False
+
+
+def test_an_older_service_without_the_cross_check_still_reports(monkeypatch):
+    """sdkAgrees arrived after earnings did. Its absence is not a failure."""
+    body = {k: v for k, v in EARNINGS_OK.items() if k != "sdkAgrees"}
+    _serve(monkeypatch, body)
+    earned, _, _, _, sdk_ok = agent.fetch_earnings("xl1-producer")
+    assert earned == 37950.0
+    assert sdk_ok is None
+
+
+def test_earnings_reaches_the_payload(monkeypatch):
+    """The fields the panel reads, end to end through collect()."""
+    monkeypatch.setattr(agent, "fetch_earnings",
+                        lambda name: (37950.0, 759, 50.0, 3.055006, True))
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    payload = agent.collect()
+    assert payload["producer_earned"] == 37950.0
+    assert payload["producer_blocks_rewarded"] == 759
+    assert payload["producer_reward_per_block"] == 50.0
+    assert payload["producer_non_reward"] == 3.055006
+    assert payload["producer_reward_sdk_ok"] is True
+
+
+# --- per-day mints ----------------------------------------------------------
+#
+# This map is ACCUMULATED by the backend into a running per-day total, which
+# makes it different from every other field the agent sends: nothing
+# re-derives it afterwards, so a bad value is permanent. That is why the
+# validator drops the whole map rather than the bad entry -- a partial day
+# still looks like a real number, and a wrong number nobody can spot is worse
+# than a missing one.
+
+
+def test_minted_by_day_passes_a_good_map():
+    out = agent.minted_by_day({"mintedByDay": {"2026-08-26": "7600000000000000000000",
+                                               "2026-08-27": "8050000000000000000000"}})
+    assert out == {"2026-08-26": "7600000000000000000000",
+                   "2026-08-27": "8050000000000000000000"}
+
+
+def test_absent_or_empty_is_not_an_error():
+    """A range where this address earned nothing is a normal range."""
+    assert agent.minted_by_day({}) is None
+    assert agent.minted_by_day({"mintedByDay": {}}) is None
+    assert agent.minted_by_day(None) is None
+
+
+def test_a_bad_date_drops_the_whole_map():
+    bad = {"2026-08-26": "7600000000000000000000", "not-a-date": "1"}
+    assert agent.minted_by_day({"mintedByDay": bad}) is None
+
+
+def test_a_bad_amount_drops_the_whole_map():
+    for amount in ["-5", "1.5", "abc", 12, None, "9" * 41]:
+        bad = {"2026-08-26": "7600000000000000000000", "2026-08-27": amount}
+        assert agent.minted_by_day({"mintedByDay": bad}) is None, amount
+
+
+def test_an_implausibly_long_map_is_refused():
+    """A 50000-block chunk spans about 35 days. 400 is a bug, not a big chunk."""
+    huge = {"2026-%02d-%02d" % (m, d): "1"
+            for m in range(1, 13) for d in range(1, 29)}
+    huge.update({"2025-%02d-%02d" % (m, d): "1"
+                 for m in range(1, 13) for d in range(1, 29)})
+    assert len(huge) > 400
+    assert agent.minted_by_day({"mintedByDay": huge}) is None
+
+
+def test_the_scan_and_the_mint_walk_both_carry_it(monkeypatch):
+    """Forward for today, the mint walk for everything before it.
+
+    Two separate paths on purpose: the block backfill finishes once and never
+    runs again, so a node that completed it before mints existed would never be
+    asked for a single chunk of history.
+    """
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: {
+        "fromBlock": 572000, "toBlock": 572100, "produced": 15,
+        "mintedByDay": {"2026-08-27": "750000000000000000000"},
+    })
+    monkeypatch.setattr(agent, "fetch_minted_chunk", lambda name: {
+        "fromBlock": 520000, "toBlock": 569999, "produced": 800,
+        "mintedByDay": {"2026-07-20": "40000000000000000000000"},
+    })
+    payload = agent.collect()
+    assert payload["scan_minted_by_day"] == {"2026-08-27": "750000000000000000000"}
+    assert payload["minted_by_day"] == {"2026-07-20": "40000000000000000000000"}
+    assert payload["minted_from_block"] == 520000
+    assert payload["minted_to_block"] == 569999
+
+
+def test_a_quiet_range_still_moves_the_cursor(monkeypatch):
+    """A stretch where this address earned nothing must still be reported.
+
+    Otherwise the cursor never passes it and the walk stalls forever on the
+    first quiet period -- which for a young node is most of the chain.
+    """
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: {
+        "fromBlock": 572000, "toBlock": 572100, "produced": 0,
+    })
+    monkeypatch.setattr(agent, "fetch_minted_chunk", lambda name: {
+        "fromBlock": 100000, "toBlock": 149999, "produced": 0, "mintedByDay": {},
+    })
+    payload = agent.collect()
+    assert payload["minted_from_block"] == 100000
+    assert payload["minted_to_block"] == 149999
+    assert "minted_by_day" not in payload, "nothing earned, nothing to add"
+
+
+def test_the_mint_walk_does_not_wait_for_a_production_scan(monkeypatch):
+    """It has its own cursor, and waiting capped it at one chunk per cycle.
+
+    The producer scan runs every fifteen minutes. Riding on it meant the whole
+    history could advance four times an hour at best -- and while it sat behind
+    a range too large to fetch, not at all.
+    """
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
+    monkeypatch.setattr(agent, "fetch_minted_chunk", lambda name: {
+        "fromBlock": 100000, "toBlock": 104999, "produced": 3,
+        "mintedByDay": {"2026-07-04": "150000000000000000000"},
+    })
+    payload = agent.collect()
+    assert payload["minted_from_block"] == 100000, "no scan ran; the walk still moved"
+    assert payload["minted_to_block"] == 104999
+    assert payload["minted_by_day"] == {"2026-07-04": "150000000000000000000"}
+
+
+def test_the_mint_walk_asks_for_a_smaller_range_than_the_block_backfill():
+    """Reading every payload costs far more than testing one field.
+
+    The larger range did not return inside the timeout, and a timed-out request
+    is indistinguishable from a walk that has finished: the cursor simply never
+    moves again.
+    """
+    assert agent.MINTED_CHUNK < agent.BACKFILL_CHUNK
+
+
+def test_the_mint_request_gets_longer_than_the_default_timeout(monkeypatch):
+    """Sized for the work, not for the forward scan of a dozen blocks."""
+    seen = {}
+
+    def fake_request(address, params, timeout=180):
+        seen["timeout"] = timeout
+        seen["span"] = params["to"] - params["from"] + 1
+        return None
+
+    monkeypatch.setattr(agent, "_producer_request", fake_request)
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" + "0" * 38)
+    monkeypatch.setitem(agent._producer_cursor, "minted", 500000)
+    monkeypatch.setitem(agent._producer_cursor, "minted_done", False)
+    agent.fetch_minted_chunk("xl1-producer")
+    assert seen["timeout"] > 180, "the default is sized for a dozen blocks"
+    assert seen["span"] == agent.MINTED_CHUNK
+
+
+def test_the_protocol_s_own_ineligibility_words_are_recognised(monkeypatch):
+    """producerIneligibility returns four reasons; the node logs what it is told.
+
+    Watching for them before staking is enforced is the whole point: the day it
+    is switched on, a node that stops producing should say why on the panel
+    rather than going quiet while every other tile stays green.
+    """
+    for line, expected in [
+        ("producer refused: no-intent", "no stake intent declared"),
+        ("producer refused: unseasoned-or-understaked", "stake too new or too small"),
+        ("producer refused: unseasoned", "stake not yet seasoned"),
+        ("producer refused: insufficient-self-bond", "self-bond below the minimum"),
+        ("Producer has insufficient stake for block", "insufficient stake"),
+        ("Producer abc has no balance.", "no balance"),
+    ]:
+        monkeypatch.setattr(agent, "run", lambda *a, **k: line)
+        assert agent.read_blocked_reason("xl1-producer") == expected, line
+
+
+def test_the_more_specific_reason_wins(monkeypatch):
+    """"unseasoned-or-understaked" contains "unseasoned".
+
+    Ordering decides which is reported, and the vaguer one would send an
+    operator looking at the wrong thing -- waiting for stake to age when it is
+    also too small.
+    """
+    monkeypatch.setattr(agent, "run", lambda *a, **k: "refused: unseasoned-or-understaked")
+    assert agent.read_blocked_reason("xl1-producer") == "stake too new or too small"
+
+
 # --- stderr is half the log ---------------------------------------------------
 #
 # A container's stderr arrives on the COMMAND's stderr, so reading stdout alone
@@ -880,94 +1753,300 @@ def test_the_log_tail_reads_both_streams(monkeypatch):
     assert any("insufficient stake" in ln for ln in tail), tail
 
 
-# --- the slow collector worker ----------------------------------------------
+def _stub_urlopen(monkeypatch, by_url):
+    """Answer specific URLs with JSON, and refuse anything else.
+
+    Refusing the unexpected matters: a stub that answers every URL would let a
+    test pass while the code fetched something entirely different.
+    """
+    import json as _json
+
+    class _Resp:
+        def __init__(self, payload):
+            self.status = 200
+            self._payload = payload
+        def read(self):
+            return _json.dumps(self._payload).encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(url, timeout=0):
+        target = url if isinstance(url, str) else getattr(url, "full_url", "")
+        if target not in by_url:
+            raise AssertionError("unexpected fetch: %s" % target)
+        return _Resp(by_url[target])
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_urlopen)
+
+
+
+# --- SDK version of the companion service -------------------------------------
 #
-# The worker runs the expensive readers on their own cadence. It must never
-# die, so it catches everything -- which is exactly what made the bug below
-# invisible until CI on the private build tripped over it.
+# The node container's CLI version was already reported. This is the SDK the
+# service reads the chain WITH, which is the more consequential of the two: it
+# decodes blocks and mint transfers, so a library too old for a protocol change
+# returns a plausible wrong number rather than an error.
+
+def test_sdk_version_comes_from_the_service(monkeypatch):
+    agent._sdk_cache.update({"installed": None, "installed_at": 0.0})
+    _stub_urlopen(monkeypatch, {
+        agent.VERSIONS_URL: {"packages": {"@xyo-network/xl1-sdk": "5.3.3"}, "node": "24.17.0"},
+    })
+    assert agent.read_sdk_version() == "5.3.3"
 
 
-class _StopLoop(Exception):
-    """Sentinel for breaking the worker's infinite loop after one pass."""
+def test_a_service_that_is_down_costs_nothing(monkeypatch):
+    """Reported by other fields already; it must not also break the beat."""
+    agent._sdk_cache.update({"installed": None, "installed_at": 0.0})
+    def boom(*_a, **_k):
+        raise OSError("connection refused")
+    monkeypatch.setattr(agent.urllib.request, "urlopen", boom)
+    assert agent.read_sdk_version() is None
 
 
-def _break_loop_after_one_cycle(monkeypatch):
-    def stop(_seconds):
-        raise _StopLoop
-    monkeypatch.setattr(agent.time, "sleep", stop)
+def test_a_missing_sdk_entry_is_not_a_version(monkeypatch):
+    """The service answered, but not about the package we asked for."""
+    agent._sdk_cache.update({"installed": None, "installed_at": 0.0})
+    _stub_urlopen(monkeypatch, {
+        agent.VERSIONS_URL: {"packages": {"@xyo-network/payload-model": "5.3.30"}},
+    })
+    assert agent.read_sdk_version() is None
 
 
-# Every collector the worker calls, stubbed. Leaving one out does not make the
-# test more realistic, it makes it reach the real docker binary and the real
-# network from a unit test -- and note this patches time.sleep process-wide,
-# so a live subprocess (which polls with time.sleep on POSIX, though not on
-# Windows) would raise the sentinel from inside a collector.
-_COLLECTORS = {
-    "read_cli_version": lambda n: "5.3.0", "fetch_cli_latest": lambda: "5.3.0",
-    "read_log_tail": lambda n: ["line"], "read_image_inventory": lambda: 2,
-    "read_blocked_reason": lambda n: None, "read_producer_unit": lambda: None,
-    "read_rebuild_timer": lambda: (None, None),
-    "read_os_updates": lambda: (0, 0, 1.0, False),
-    "fetch_producer_stats": lambda n: None,
-    "fetch_backfill_chunk": lambda n: None,
-}
+def test_sdk_latest_comes_from_the_registry(monkeypatch):
+    agent._sdk_cache.update({"latest": None, "latest_at": 0.0})
+    _stub_urlopen(monkeypatch, {agent.SDK_REGISTRY: {"version": "5.4.1"}})
+    assert agent.fetch_sdk_latest() == "5.4.1"
 
 
-def _run_one_cycle(monkeypatch, **overrides):
-    """One full pass of the slow worker. Returns what it published."""
-    published = {}
-    monkeypatch.setattr(agent, "_slow_put", lambda k, v: published.__setitem__(k, v))
-    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
-    for name, value in {**_COLLECTORS, **overrides}.items():
-        monkeypatch.setattr(agent, name, value)
-    _break_loop_after_one_cycle(monkeypatch)
-    with pytest.raises(_StopLoop):
-        agent._slow_worker()
-    return published
+def test_the_sdk_check_can_be_switched_off(monkeypatch):
+    """Both halves: a local version with nothing to compare it to is not useful."""
+    monkeypatch.setattr(agent, "VERSIONS_URL", "")
+    monkeypatch.setattr(agent, "SDK_REGISTRY", "")
+    assert agent.read_sdk_version() is None
+    assert agent.fetch_sdk_latest() is None
 
 
-def test_a_worker_cycle_runs_to_completion(monkeypatch):
-    """Every collector reached, not just the first."""
-    published = _run_one_cycle(monkeypatch)
-    for expected in ("cli_version", "cli_latest", "log_tail", "image_inventory",
-                     "blocked_reason", "os_updates"):
-        assert expected in published, f"{expected} was never published"
+# --- attestation --------------------------------------------------------------
+#
+# The ordering these cover is the whole point: the chain stores a hash and will
+# not serve the payload back, so between anchoring and the backend knowing, the
+# spool file is the only copy of what that transaction committed to.
+
+def test_attestation_is_off_unless_configured(monkeypatch):
+    """Deploying the agent must not start spending gas by itself."""
+    monkeypatch.setattr(agent, "ATTEST_URL", "")
+    called = []
+    monkeypatch.setattr(agent.urllib.request, "urlopen",
+                        lambda *a, **k: called.append(1))
+    agent.attest("xl1-producer", {})
+    assert called == []
 
 
-def test_one_broken_collector_does_not_starve_the_others(monkeypatch):
-    """A collector that raises must cost its own reading and nothing else.
+def test_an_anchored_attestation_is_spooled_before_it_is_sent(tmp_path, monkeypatch):
+    order = []
 
-    The worker wrapped the whole cycle in one try, so the first collector to
-    throw skipped every collector after it -- and kept skipping them on every
-    cycle for as long as the cause lasted. The node would report ONLINE with a
-    current heartbeat while its OS updates and block scans sat frozen at
-    whatever they last held, which is precisely the silent staleness the rest
-    of this agent is built to avoid.
-    """
-    def boom(_name):
-        raise RuntimeError("this reader fell over")
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "ATTEST_SPOOL", str(tmp_path))
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" * 20)
+    agent._attest_cache["at"] = None
 
-    published = _run_one_cycle(monkeypatch, read_blocked_reason=boom)
+    _stub_urlopen(monkeypatch, {"http://svc/attest": {
+        "anchored": True, "network": "sequence",
+        "contentHash": "c" * 64, "txHash": "d" * 64,
+        "attestedBy": "e" * 40,
+        "payload": {"schema": "network.xyo.id", "salt": "{}"},
+        "record": {"observedAt": "2026-08-29T00:00:00.000Z"},
+    }})
 
-    assert "blocked_reason" not in published, "a failed collector publishes nothing"
-    assert "os_updates" in published, (
-        "os_updates was skipped because an earlier collector failed")
+    real_spool = agent.spool_attestation
+    def spy_spool(record):
+        order.append("spool")
+        return real_spool(record)
+    monkeypatch.setattr(agent, "spool_attestation", spy_spool)
+    monkeypatch.setattr(agent, "post_attestation",
+                        lambda record: order.append("post") or True)
+
+    agent.attest("xl1-producer", {})
+    assert order == ["spool", "post"], order
 
 
-def test_a_collector_failure_says_which_one_and_why(monkeypatch, capsys):
-    """An empty stderr line is not a bug report.
+def test_a_backend_that_is_down_leaves_the_payload_on_disk(tmp_path, monkeypatch):
+    """The failure this exists for. Losing the payload leaves a transaction
+    proving a hash was anchored and nothing able to say what it was a hash of."""
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "ATTEST_SPOOL", str(tmp_path))
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" * 20)
+    agent._attest_cache["at"] = None
+    _stub_urlopen(monkeypatch, {"http://svc/attest": {
+        "anchored": True, "network": "sequence",
+        "contentHash": "f" * 64, "txHash": "0" * 64,
+        "payload": {"schema": "network.xyo.id", "salt": "{}"},
+    }})
+    monkeypatch.setattr(agent, "post_attestation", lambda record: False)
 
-    The cycle used to log str(e) alone, so an exception whose str() is empty
-    produced "slow collector cycle failed: " and stopped -- naming neither the
-    collector nor the type.
-    """
-    class Silent(Exception):
-        pass
+    agent.attest("xl1-producer", {})
+    kept = list(tmp_path.glob("*.json"))
+    assert len(kept) == 1, kept
+    assert json.loads(kept[0].read_text())["content_hash"] == "f" * 64
 
-    def boom():
-        raise Silent()
 
-    _run_one_cycle(monkeypatch, read_os_updates=boom)
+def test_a_spooled_attestation_is_retried_and_then_removed(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent, "ATTEST_SPOOL", str(tmp_path))
+    (tmp_path / "abc.json").write_text(json.dumps({"content_hash": "a" * 64}))
+    monkeypatch.setattr(agent, "post_attestation", lambda record: True)
+    agent.flush_attestations()
+    assert list(tmp_path.glob("*.json")) == []
+
+
+def test_a_failed_retry_keeps_the_file_for_next_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent, "ATTEST_SPOOL", str(tmp_path))
+    (tmp_path / "abc.json").write_text(json.dumps({"content_hash": "a" * 64}))
+    monkeypatch.setattr(agent, "post_attestation", lambda record: False)
+    agent.flush_attestations()
+    assert len(list(tmp_path.glob("*.json"))) == 1
+
+
+def test_a_service_with_no_key_anchors_nothing_and_stores_nothing(tmp_path, monkeypatch):
+    """anchored: false is the normal answer before a key is configured, not an
+    error -- and nothing should be recorded for an anchoring that did not happen."""
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "ATTEST_SPOOL", str(tmp_path))
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" * 20)
+    agent._attest_cache["at"] = None
+    _stub_urlopen(monkeypatch, {"http://svc/attest": {
+        "anchored": False, "reason": "no signing key configured",
+        "contentHash": "a" * 64,
+        "payload": {"schema": "network.xyo.id", "salt": "{}"},
+    }})
+    agent.attest("xl1-producer", {})
+    assert list(tmp_path.glob("*.json")) == []
+
+
+def test_attest_sends_the_anchor_token(monkeypatch):
+    """The service refuses an unauthenticated caller, correctly. An agent that
+    does not present the token gets a 401 and, before this, said nothing."""
+    seen = {}
+
+    class _Resp:
+        status = 200
+        def read(self):
+            return json.dumps({"anchored": False}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=0):
+        seen["headers"] = dict(getattr(req, "headers", {}))
+        return _Resp()
+
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "ATTEST_TOKEN", "s3cret")
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" * 20)
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_urlopen)
+    agent._attest_cache["at"] = None
+
+    agent.attest("xl1-producer", {})
+    # urllib title-cases header names.
+    assert seen["headers"].get("X-anchor-token") == "s3cret", seen["headers"]
+
+
+def test_a_refused_attest_is_reported_not_swallowed(monkeypatch, capsys):
+    """A 401 looked exactly like attestation being switched off, which is how a
+    misconfigured agent went an hour looking perfectly healthy."""
+    def raise_401(req, timeout=0):
+        raise agent.urllib.error.HTTPError("http://svc/attest", 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" * 20)
+    monkeypatch.setattr(agent.urllib.request, "urlopen", raise_401)
+    agent._attest_cache["at"] = None
+    agent._warned.clear()
+
+    agent.attest("xl1-producer", {})
     err = capsys.readouterr().err
-    assert "os_updates" in err, "the log must name the collector that failed"
-    assert "Silent" in err, "the log must name the exception type"
+    assert "401" in err, err
+    assert "XL1_ANCHOR_TOKEN" in err, err
+
+
+def test_chain_values_survive_a_beat_that_carried_no_scan(monkeypatch):
+    """A producer scan runs about once in thirty beats, so the beat that
+    triggers an anchor usually carries none. The first anchored reading
+    reported no last produced block for exactly this reason."""
+    sent = {}
+
+    class _Resp:
+        status = 200
+        def read(self): return json.dumps({"anchored": False}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=0):
+        sent.update(json.loads(req.data.decode()))
+        return _Resp()
+
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" * 20)
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_urlopen)
+    agent._attest_cache.clear()
+    agent._attest_cache["at"] = None
+
+    # A beat that did carry a scan, too soon to anchor.
+    agent._attest_cache["at"] = agent.time.monotonic()
+    agent.attest("xl1-producer", {"last_produced_block": 574115, "block_height": 574200})
+    assert sent == {}, "should not have anchored yet"
+
+    # A later beat with no scan at all still attests the remembered values.
+    agent._attest_cache["at"] = None
+    agent.attest("xl1-producer", {})
+    assert sent["lastProducedBlock"] == 574115
+    assert sent["height"] == 574200
+
+
+def test_the_node_does_not_attest_a_total_it_never_computes(monkeypatch):
+    """produced_total is the backend accumulating scans over time. A node
+    attesting it would be vouching for arithmetic done somewhere else."""
+    sent = {}
+
+    class _Resp:
+        status = 200
+        def read(self): return json.dumps({"anchored": False}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" * 20)
+    monkeypatch.setattr(agent.urllib.request, "urlopen",
+                        lambda req, timeout=0: (sent.update(json.loads(req.data.decode())), _Resp())[1])
+    agent._attest_cache.clear()
+    agent._attest_cache["at"] = None
+    agent.attest("xl1-producer", {"produced_total": 1010})
+    assert "producedTotal" not in sent, sent
+
+
+def test_the_first_anchor_does_not_wait_for_the_host_to_be_an_hour_old(monkeypatch):
+    """time.monotonic() counts from boot, so a zero sentinel means "an hour has
+    passed" only on a machine that has been up an hour.
+
+    This failed on CI and passed here for exactly that reason: the runner had
+    been alive for twenty seconds. A freshly rebooted node would have delayed
+    its first anchor by up to ATTEST_INTERVAL for the same arithmetic.
+    """
+    calls = []
+
+    class _Resp:
+        status = 200
+        def read(self): return json.dumps({"anchored": False}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(agent.time, "monotonic", lambda: 20.0)
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" * 20)
+    monkeypatch.setattr(agent.urllib.request, "urlopen",
+                        lambda req, timeout=0: (calls.append(1), _Resp())[1])
+    agent._attest_cache["at"] = None
+
+    agent.attest("xl1-producer", {})
+    assert calls, "a node that just booted must still attest"

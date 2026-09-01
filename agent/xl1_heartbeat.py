@@ -28,7 +28,22 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-AGENT_VERSION = "1.8.0"
+# Shown on the operator panel as the "Agent" tile, which exists to answer one
+# question: which agent is on the Pi right now. A constant answers it wrongly --
+# this sat at 1.0.0 through twelve commits and several deploys, so the tile said
+# the same thing before and after every one of them.
+#
+# Semantic versioning against the heartbeat payload, which is the agent's only
+# interface:
+#
+#   MAJOR  a field is removed or changes meaning. Nothing has, and the receiver
+#          ignores fields it does not know, so this is genuinely rare.
+#   MINOR  a new field is reported, or a new thing is measured.
+#   PATCH  a fix that changes no field.
+#
+# test_reported_fields_are_pinned_to_the_version() fails when the payload gains
+# a field, so this cannot quietly freeze again.
+AGENT_VERSION = "1.22.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -45,7 +60,80 @@ COMMAND_HINT = os.environ.get("XL1_COMMAND_HINT", "/opt/xl1/")
 HEALTH_PORT = os.environ.get("XL1_HEALTH_PORT", "9099")
 HEALTH_URL = os.environ.get("XL1_HEALTH_URL", "")      # set only if port is published
 
-# What the node says when it cannot produce, mapped to a short reason.
+# Local xl1-service (read-only gateway) for chain height. Empty disables it.
+HEIGHT_URL = os.environ.get("XL1_HEIGHT_URL", "http://127.0.0.1:8090/block-height")
+# Networks to report heights for. The site shows mainnet even though this node
+# runs on sequence, so both are fetched by default.
+HEIGHT_NETWORKS = [n.strip() for n in
+                   os.environ.get("XL1_HEIGHT_NETWORKS", "sequence,mainnet").split(",")
+                   if n.strip()]
+
+# Producer activity. Costs one RPC call per block inspected, so it runs on a
+# much slower cycle than the heartbeat.
+PRODUCER_URL = os.environ.get("XL1_PRODUCER_URL", "http://127.0.0.1:8090/producer")
+# Whether the producer is *able* to produce, as distinct from whether it is.
+# The node gates redeclaring its intent on having a balance above zero: at zero
+# it stops redeclaring, stops being scheduled, and produces nothing -- while the
+# container stays up and healthy throughout. Watching blocks alone cannot tell
+# that apart from a quiet slot, which is the gap this closes. Empty disables.
+STANDING_URL = os.environ.get("XL1_STANDING_URL", "http://127.0.0.1:8090/standing")
+STANDING_INTERVAL = int(os.environ.get("XL1_STANDING_INTERVAL", "900"))
+# What an anchor costs, measured on the chain from this wallet's own recent
+# transfers. Separate from the standing call rather than folded into it: if
+# this endpoint is missing or fails, the balance tile must keep working and
+# simply lose its runway estimate.
+ANCHOR_COST_URL = os.environ.get(
+    "XL1_ANCHOR_COST_URL", "http://127.0.0.1:8090/anchor-cost")
+# Whether an anchor this node recorded is actually on the chain. Same service,
+# and this node is the only party that can ask: the gateway SDK lives there, on
+# loopback, and neither the backend nor a browser can reach a chain client.
+TX_CHECK_URL = os.environ.get("XL1_TX_CHECK_URL", "http://127.0.0.1:8090/transaction")
+# How many to check per slow cycle. Small on purpose: there is no deadline,
+# an unchecked anchor is not an alarm, and this shares a Pi with a producer.
+TX_CHECK_BATCH = int(os.environ.get("XL1_TX_CHECK_BATCH", "5"))
+# What the node EARNED by producing, as distinct from what it holds. The
+# balance moves for reasons that are not earnings -- funding sent in to
+# start the producer, anything transferred out -- so a panel deriving
+# earnings from it counts that money as income. Same cadence as standing:
+# two RPC calls behind the service, answering a slowly-changing question.
+EARNINGS_URL = os.environ.get("XL1_EARNINGS_URL", "http://127.0.0.1:8090/earnings")
+EARNINGS_INTERVAL = int(os.environ.get("XL1_EARNINGS_INTERVAL", "900"))
+# Minutes of container log to search for the node's own eligibility verdict.
+ELIGIBILITY_WINDOW = os.environ.get("XL1_ELIGIBILITY_WINDOW", "20m")
+# Lines of container log to ship with each heartbeat, so the operator panel can
+# show what the node is saying without anyone reaching the machine. Set 0 to
+# send none.
+#
+# This is raw node output leaving the Pi. It is operator-only at the far end,
+# but it is worth knowing that is what it is: the node prints its derived
+# wallet ADDRESSES at startup -- public, they appear in every block it signs --
+# and never the mnemonic. Lines are capped so one enormous stack trace cannot
+# turn a heartbeat into a megabyte.
+LOG_TAIL_LINES = int(os.environ.get("XL1_LOG_TAIL_LINES", "20"))
+# Host package updates. Read on a slow cycle: this shells out to apt, the
+# answer changes daily at most, and a heartbeat must never wait on it. Set
+# XL1_OS_UPDATE_INTERVAL to 0 to switch the check off entirely.
+OS_UPDATE_INTERVAL = int(os.environ.get("XL1_OS_UPDATE_INTERVAL", "21600"))
+# How often to look again while something IS pending. The expensive case is
+# "nothing to report", which is nearly always, and six hours is right for it.
+# But the moment an operator is actually patching is the moment the panel
+# should keep up: at the slow cadence a patched host went on showing the old
+# count, and the all-clear email did not arrive, for up to six hours -- unless
+# you knew to restart the agent, which is a step this created and then asked
+# someone to remember.
+OS_PENDING_INTERVAL = int(os.environ.get("XL1_OS_PENDING_INTERVAL", "900"))
+# Peer context: how this node's block share compares with the rest of the
+# field. One scan of a wide window, so it runs far slower than the heartbeat.
+PEERS_URL = os.environ.get("XL1_PEERS_URL", "http://127.0.0.1:8090/peers")
+PEERS_WINDOW = int(os.environ.get("XL1_PEERS_WINDOW", "1000"))
+PEERS_INTERVAL = int(os.environ.get("XL1_PEERS_INTERVAL", "3600"))
+LOG_TAIL_MAX_CHARS = 300
+
+# What the node says when it refuses to declare itself a producer. Matched as
+# substrings of its own error lines:
+#
+#   `Producer ${address} has insufficient stake.`
+#   `Producer ${address} has no balance.`
 #
 # Taken from the node's log rather than recomputed. The stake figure is not
 # readable from the public gateway -- activeByStaked is not exposed there, and
@@ -70,44 +158,6 @@ BLOCKED_PATTERNS = (
     ("unseasoned", "stake not yet seasoned"),
     ("insufficient-self-bond", "self-bond below the minimum"),
 )
-
-# How far back to grep the container log for the node's own reason it cannot
-# produce. Long enough to survive a quiet period, short enough that a resolved
-# problem stops being reported.
-ELIGIBILITY_WINDOW = os.environ.get("XL1_ELIGIBILITY_WINDOW", "20m")
-# How many log lines to show. The agent over-fetches and trims, so blank lines
-# in the output do not shrink the count below this.
-LOG_TAIL_LINES = int(os.environ.get("XL1_LOG_TAIL_LINES", "20"))
-LOG_TAIL_MAX_CHARS = 300
-# Host package updates. Read on a slow cycle: this shells out to apt, the
-# answer changes daily at most, and a heartbeat must never wait on it. Set
-# XL1_OS_UPDATE_INTERVAL to 0 to switch the check off entirely.
-OS_UPDATE_INTERVAL = int(os.environ.get("XL1_OS_UPDATE_INTERVAL", "21600"))
-# How often to look again while something IS pending. The expensive case is
-# "nothing to report", which is nearly always, and six hours is right for it.
-# But the moment an operator is actually patching is the moment the panel
-# should keep up: at the slow cadence a patched host went on showing the old
-# count, and the all-clear email did not arrive, for up to six hours -- unless
-# you knew to restart the agent, which is a step this created and then asked
-# someone to remember.
-OS_PENDING_INTERVAL = int(os.environ.get("XL1_OS_PENDING_INTERVAL", "900"))
-# Optional systemd lookups. Both default to empty: not every host runs the
-# container under systemd, and guessing a unit name that does not exist would
-# report a failure where there is none.
-REBUILD_TIMER = os.environ.get("XL1_REBUILD_TIMER", "")
-PRODUCER_UNIT = os.environ.get("XL1_PRODUCER_UNIT", "")
-
-# Local xl1-service (read-only gateway) for chain height. Empty disables it.
-HEIGHT_URL = os.environ.get("XL1_HEIGHT_URL", "http://127.0.0.1:8090/block-height")
-# Networks to report heights for. The site shows mainnet even though this node
-# runs on sequence, so both are fetched by default.
-HEIGHT_NETWORKS = [n.strip() for n in
-                   os.environ.get("XL1_HEIGHT_NETWORKS", "sequence,mainnet").split(",")
-                   if n.strip()]
-
-# Producer activity. Costs one RPC call per block inspected, so it runs on a
-# much slower cycle than the heartbeat.
-PRODUCER_URL = os.environ.get("XL1_PRODUCER_URL", "http://127.0.0.1:8090/producer")
 PRODUCER_WINDOW = int(os.environ.get("XL1_PRODUCER_WINDOW", "200"))
 PRODUCER_INTERVAL = int(os.environ.get("XL1_PRODUCER_INTERVAL", "900"))
 REWARD_ADDRESS = os.environ.get("XL1_REWARD_ADDRESS", "")
@@ -116,24 +166,53 @@ REWARD_ADDRESS = os.environ.get("XL1_REWARD_ADDRESS", "")
 # and a 565k-block chain is fully counted in about 3 hours. Set to 0 to leave
 # history uncounted.
 BACKFILL_CHUNK = int(os.environ.get("XL1_BACKFILL_CHUNK", "50000"))
+# The mint walk reads every payload of every block rather than testing one
+# field, so the same range costs it far more. 50000 did not finish inside
+# the request timeout on a Pi, which does not read as slow -- the request
+# fails, the cursor never moves, and the walk reports 0% indefinitely.
+MINTED_CHUNK = int(os.environ.get("XL1_MINTED_CHUNK", "5000"))
 # Version checking. The image is built once and never patched unless someone
 # notices it has fallen behind, so the node reports what it runs and what is
 # current. Set XL1_CLI_REGISTRY empty to skip the outbound lookup entirely.
 CLI_REGISTRY = os.environ.get(
     "XL1_CLI_REGISTRY", "https://registry.npmjs.org/@xyo-network/xl1-cli/latest")
+# The CLI version above tracks what runs *inside* the image. It says nothing
+# about the repository the image is *built from* -- and a fix to the
+# Dockerfile, the entrypoint or a role preset changes neither the npm version
+# nor anything else the agent could otherwise notice. Without this, upstream
+# could ship a fix for a problem you reported and you would never hear about
+# it. Set XL1_IMAGES_REPO_API empty to switch the check off.
+IMAGES_REPO = os.environ.get("XL1_IMAGES_REPO", "/opt/xl1-docker-images")
+IMAGES_REPO_API = os.environ.get(
+    "XL1_IMAGES_REPO_API", "https://api.github.com/repos/XYOracleNetwork/xl1-docker-images")
+IMAGES_REPO_BRANCH = os.environ.get("XL1_IMAGES_REPO_BRANCH", "main")
+# The update email used to state flatly that a weekly timer builds the new
+# image. That is only true where the timer exists and is running, which the
+# email cannot know -- and an alert that claims an automated job is handling
+# something, when nothing is, is worse than one that says nothing at all. Ask
+# systemd instead of asserting. Set empty to skip.
+REBUILD_TIMER = os.environ.get("XL1_REBUILD_TIMER", "xl1-image-rebuild.timer")
+# Which systemd unit, if any, owns the producer container. The update runbook
+# has to name the right thing to restart: telling an operator running under
+# systemd to `docker stop` the container is worse than useless, because
+# Restart=always brings it straight back and the instruction reads as broken.
+PRODUCER_UNIT = os.environ.get("XL1_PRODUCER_UNIT", "xl1-producer.service")
 CLI_CHECK_INTERVAL = int(os.environ.get("XL1_CLI_CHECK_INTERVAL", "21600"))
-CLI_PACKAGE_PATH = "/usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json"
-# A version string reaches us from a public registry and from inside a
-# container. The backend caps these fields at 32 characters, so an unexpected
-# value would fail validation and take the WHOLE heartbeat with it -- the node
-# would read OFFLINE and raise an alert because of someone else's bad metadata.
-_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,3}(-[0-9A-Za-z.]+)?$")
-
-
-def _valid_version(value):
-    return (isinstance(value, str) and 0 < len(value) <= 32
-            and _VERSION_RE.match(value) is not None)
-
+# The CLI version above covers the node container. Nothing covered the SDK the
+# companion service reads the chain WITH, which is the more consequential of
+# the two: that service decodes blocks, payloads and mint transfers, so a
+# protocol change met by a library too old to understand it does not raise an
+# error -- it puts a plausible wrong number on an earnings panel.
+#
+# Asked over HTTP rather than by `docker exec`. The agent keeps exec down to a
+# single call because exec is what makes Docker socket access dangerous, and a
+# version string is not worth spending that on. The service is also the
+# authority on what it actually loaded, which is not always what its
+# package.json asked for. Set either URL empty to switch the check off.
+VERSIONS_URL = os.environ.get("XL1_VERSIONS_URL", "http://127.0.0.1:8090/versions")
+SDK_REGISTRY = os.environ.get(
+    "XL1_SDK_REGISTRY", "https://registry.npmjs.org/@xyo-network/xl1-sdk/latest")
+SDK_PACKAGE = "@xyo-network/xl1-sdk"
 # Attestation. The node anchors a hash of its own readings so a stranger can
 # tell they have not been edited since -- the hardware half of the panel is
 # otherwise just the machine describing itself.
@@ -195,17 +274,6 @@ try:
 except ValueError:
     STATED_RADIUS_KM = 25
 
-CLI_PACKAGE_PATH = "/usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json"
-# A version string reaches us from a public registry and from inside a
-# container. The backend caps these fields at 32 characters, so an unexpected
-# value would fail validation and take the WHOLE heartbeat with it -- the node
-# would read OFFLINE and raise an alert because of someone else's bad metadata.
-_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,3}(-[0-9A-Za-z.]+)?$")
-
-
-def _valid_version(value):
-    return (isinstance(value, str) and 0 < len(value) <= 32
-            and _VERSION_RE.match(value) is not None)
 CLI_PACKAGE_PATH = "/usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json"
 # A version string reaches us from a public registry and from inside a
 # container. The backend caps these fields at 32 characters, so an unexpected
@@ -511,10 +579,6 @@ _producer_cache = {"at": 0.0, "value": None}
 # scan would have to guess a range, and after a restart that guess overlaps
 # already-counted blocks and is rightly rejected -- burning a whole cycle.
 _producer_cursor = {"block": None, "backfill": None, "backfill_done": False,
-                    # Read but never walked here: the mint history needs the
-                    # companion service this build does not ship. Kept so send()
-                    # stays byte-identical to the private copy, which is the one
-                    # function drift in has actually caused bugs.
                     "minted": None, "minted_done": False,
                     "known": False, "last_produced": None}
 
@@ -596,6 +660,55 @@ def fetch_backfill_chunk(name):
     return _producer_request(address, {"from": start, "to": cursor})
 
 
+def minted_by_day(stats):
+    """{"YYYY-MM-DD": "<atto>"} from a scan result, or None.
+
+    Validated rather than forwarded, because this one is accumulated: the
+    backend adds it to a running per-day total, so a malformed key or a
+    negative value would corrupt a figure nobody re-derives afterwards. A
+    date that is not a date, or an amount that is not a non-negative integer
+    string, drops the whole map rather than a part of it -- a partial day is
+    worse than a missing one, because it looks like a real number.
+
+    Capped at 400 days. A 50000-block chunk spans about 35 days at a 60s
+    block time, so anything near the cap is a bug rather than a big chunk.
+    """
+    raw = (stats or {}).get("mintedByDay")
+    if not isinstance(raw, dict) or not raw:
+        return None
+    if len(raw) > 400:
+        return None
+    out = {}
+    for day, atto in raw.items():
+        if not isinstance(day, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            return None
+        if not isinstance(atto, str) or not re.fullmatch(r"[0-9]{1,40}", atto):
+            return None
+        out[day] = atto
+    return out
+
+
+def fetch_minted_chunk(name):
+    """One chunk of mint history, walking down toward genesis.
+
+    Separate from the block backfill because that one completes and stops. A
+    node that finished counting blocks before this existed still has its whole
+    mint history to collect, and would never be asked for it otherwise.
+    """
+    if not PRODUCER_URL or BACKFILL_CHUNK <= 0:
+        return None
+    if _producer_cursor["minted_done"]:
+        return None
+    cursor = _producer_cursor["minted"]
+    if cursor is None or cursor < 0:
+        return None
+    address = read_reward_address(name)
+    if not address:
+        return None
+    start = max(0, cursor - MINTED_CHUNK + 1)
+    return _producer_request(address, {"from": start, "to": cursor}, timeout=600)
+
+
 def explorer_block_url(block):
     """Explorer URL for one block, from the local service, or None.
 
@@ -661,6 +774,26 @@ def fetch_producer_stats(name):
     return stats
 
 
+def producer_scan_due():
+    """Whether a production scan should have run on this beat.
+
+    fetch_producer_stats returns None for two very different reasons: the scan
+    is not due (the overwhelmingly common case -- it runs once per
+    PRODUCER_INTERVAL, roughly one heartbeat in thirty), or it was due and
+    failed. Only the second is a fault.
+
+    Conflating them reported a perfectly healthy node as half-blind on 29 beats
+    out of 30, naming the most consequential reader it has. The rate limiter is
+    stamped only on success, so after a real failure this stays true and the
+    fault is still reported.
+    """
+    if not PRODUCER_URL or not _producer_cursor["known"]:
+        return False
+    if not _producer_cache["at"]:
+        return True
+    return (time.monotonic() - _producer_cache["at"]) >= PRODUCER_INTERVAL
+
+
 _cli_cache = {"installed_at": 0.0, "installed": None,
               "latest_at": 0.0, "latest": None}
 
@@ -697,6 +830,61 @@ def read_cli_version(name):
     return version
 
 
+_sdk_cache = {"installed_at": 0.0, "installed": None,
+              "latest_at": 0.0, "latest": None}
+
+
+def read_sdk_version():
+    """Version of the XL1 SDK the companion service actually loaded, or None.
+
+    Cached for an hour: it can only change when that service is redeployed,
+    and a heartbeat must never wait on it.
+    """
+    if not VERSIONS_URL:
+        return None
+    now = time.monotonic()
+    if _sdk_cache["installed"] and now - _sdk_cache["installed_at"] < 3600:
+        return _sdk_cache["installed"]
+    try:
+        with urllib.request.urlopen(VERSIONS_URL, timeout=10) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            packages = json.loads(resp.read().decode("utf-8")).get("packages") or {}
+    except (urllib.error.URLError, OSError, ValueError):
+        # The service being down is already reported by other fields; it must
+        # not also cost us the heartbeat.
+        return None
+    version = packages.get(SDK_PACKAGE)
+    if not _valid_version(version):
+        return None
+    _sdk_cache["installed"] = version
+    _sdk_cache["installed_at"] = now
+    return version
+
+
+def fetch_sdk_latest():
+    """Newest published XL1 SDK version, or None. Checked a few times a day."""
+    if not SDK_REGISTRY:
+        return None
+    now = time.monotonic()
+    if _sdk_cache["latest"] and now - _sdk_cache["latest_at"] < CLI_CHECK_INTERVAL:
+        return _sdk_cache["latest"]
+    try:
+        with urllib.request.urlopen(SDK_REGISTRY, timeout=20) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            version = json.loads(resp.read().decode("utf-8")).get("version")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    if not _valid_version(version):
+        _warn_once("sdk-version-format",
+                   "registry returned an implausible SDK version; ignoring it")
+        return None
+    _sdk_cache["latest"] = version
+    _sdk_cache["latest_at"] = now
+    return version
+
+
 def fetch_cli_latest():
     """Newest published CLI version, or None. Checked a few times a day."""
     if not CLI_REGISTRY:
@@ -720,6 +908,472 @@ def fetch_cli_latest():
         _cli_cache["latest"] = version
         _cli_cache["latest_at"] = now
     return version
+
+
+_repo_cache = {"upstream_at": 0.0, "upstream": None, "behind": None,
+               "local_tag": None, "upstream_tag": None}
+
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def read_repo_head():
+    """The commit the local images checkout sits on, or None.
+
+    Read straight out of .git rather than by running git. The repo belongs to
+    the operator and this agent runs as its own user, so git would refuse it as
+    "dubious ownership" -- the same refusal the rebuild script has to work
+    around. Reading the files sidesteps the question entirely, and needs no
+    subprocess.
+    """
+    try:
+        head_path = os.path.join(IMAGES_REPO, ".git", "HEAD")
+        with open(head_path, "r", encoding="utf-8") as fh:
+            head = fh.read().strip()
+    except OSError:
+        return None
+    if _SHA_RE.match(head):
+        return head  # detached HEAD
+    if not head.startswith("ref: "):
+        return None
+    ref = head[5:].strip()
+    try:
+        with open(os.path.join(IMAGES_REPO, ".git", ref), "r", encoding="utf-8") as fh:
+            sha = fh.read().strip()
+        return sha if _SHA_RE.match(sha) else None
+    except OSError:
+        pass
+    # Loose ref absent: it has been packed. packed-refs is "<sha> <refname>".
+    try:
+        with open(os.path.join(IMAGES_REPO, ".git", "packed-refs"), "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) == 2 and parts[1] == ref and _SHA_RE.match(parts[0]):
+                    return parts[0]
+    except OSError:
+        pass
+    return None
+
+
+def _github_json(url):
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "xl1-node-monitor",
+    })
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        if not (200 <= resp.status < 300):
+            return None
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def fetch_repo_upstream(local):
+    """(upstream_sha, commits_behind, local_tag, upstream_tag).
+
+    Checked a few times a day. Unauthenticated GitHub allows 60 requests an
+    hour per address; at the CLI check interval this uses three at most.
+
+    Tags are looked up because a release name is legible and a commit hash is
+    not: "v5.2.2" tells an operator where they stand, "e48317d" asks them to go
+    and find out. The API dereferences annotated tags to their commit for us,
+    which reading .git directly would not.
+    """
+    if not IMAGES_REPO_API:
+        return None, None, None, None
+    now = time.monotonic()
+    if _repo_cache["upstream"] and now - _repo_cache["upstream_at"] < CLI_CHECK_INTERVAL:
+        return (_repo_cache["upstream"], _repo_cache["behind"],
+                _repo_cache["local_tag"], _repo_cache["upstream_tag"])
+    try:
+        body = _github_json("%s/commits/%s" % (IMAGES_REPO_API, IMAGES_REPO_BRANCH))
+        upstream = (body or {}).get("sha")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None, None, None, None  # an API outage must never affect a heartbeat
+    if not upstream or not _SHA_RE.match(upstream):
+        return None, None, None, None
+
+    behind = None
+    if local and local != upstream:
+        try:
+            cmp_body = _github_json("%s/compare/%s...%s" % (IMAGES_REPO_API, local, upstream))
+            value = (cmp_body or {}).get("ahead_by")
+            if isinstance(value, int) and value >= 0:
+                behind = value
+        except (urllib.error.URLError, OSError, ValueError):
+            # A local commit upstream has never seen gives a 404 here. The
+            # checkout still differs; we just cannot say by how much.
+            behind = None
+
+    # A commit with no tag is normal -- upstream commits between releases --
+    # so both of these are frequently absent and the panel falls back to the
+    # short sha.
+    tags = {}
+    try:
+        for tag in (_github_json("%s/tags?per_page=100" % IMAGES_REPO_API) or []):
+            sha = (tag.get("commit") or {}).get("sha")
+            name = tag.get("name")
+            if sha and name and sha not in tags:
+                tags[sha] = name[:32]
+    except (urllib.error.URLError, OSError, ValueError, AttributeError):
+        pass
+
+    _repo_cache["upstream"] = upstream
+    _repo_cache["behind"] = behind
+    _repo_cache["local_tag"] = tags.get(local) if local else None
+    _repo_cache["upstream_tag"] = tags.get(upstream)
+    _repo_cache["upstream_at"] = now
+    return (upstream, behind,
+            _repo_cache["local_tag"], _repo_cache["upstream_tag"])
+
+
+def read_rebuild_timer():
+    """(active, next_run) for the image rebuild timer, or (None, None).
+
+    `systemctl show` needs no privilege for this, and reports the timer's own
+    view rather than ours. A host with no such timer reports nothing and the
+    email falls back to manual instructions, which is the honest answer.
+    """
+    if not REBUILD_TIMER:
+        return None, None
+    out = run(["systemctl", "show", REBUILD_TIMER,
+               "-p", "ActiveState", "-p", "NextElapseUSecRealtime"])
+    if not out:
+        return None, None
+    fields = {}
+    for line in out.splitlines():
+        key, _, value = line.partition("=")
+        fields[key.strip()] = value.strip()
+    state = fields.get("ActiveState")
+    if not state or state == "":
+        return None, None
+    active = state == "active"
+    raw = fields.get("NextElapseUSecRealtime", "")
+    nxt = None
+    if raw and raw not in ("0", "n/a", "infinity"):
+        if raw.isdigit():
+            # Older systemd reports microseconds since the epoch; newer ones
+            # already give a human timestamp. Accept either.
+            try:
+                nxt = time.strftime("%a %d %b %H:%M UTC",
+                                    time.gmtime(int(raw) / 1_000_000))
+            except (ValueError, OSError, OverflowError):
+                nxt = None
+        else:
+            nxt = raw[:64]
+    return active, nxt
+
+
+_standing_cache = {"at": 0.0, "value": None}
+
+
+def fetch_standing(name):
+    """(balance, funded, symbol, raw, stake_raw, stake_min_raw), or all None.
+
+    The stake pair is read by the service from the chain's BACKING EVM -- it is
+    not on XL1 -- and is absent unless that service has an EVM endpoint
+    configured. Absent and zero are different answers and are kept different:
+    zero stake is the thing that stops a producer being scheduled, so an
+    unconfigured or unreachable read must never arrive looking like it.
+
+    Same cadence as the production scan: this is one RPC call, but it answers a
+    question that changes slowly, and a heartbeat must never wait on it.
+
+    The symbol comes from the service rather than being assumed here, so the
+    panel cannot end up labelling a number with a ticker nothing verified. The
+    raw, undivided value is carried because the displayed float is rounded: a
+    balance of a few wei shows as 0.00 beside a tile saying "funded to
+    produce", and only the raw resolves which is true.
+    """
+    if not STANDING_URL:
+        return NO_STANDING
+    address = read_reward_address(name)
+    if not address:
+        return NO_STANDING
+    now = time.monotonic()
+    cached = _standing_cache["value"]
+    if cached is not None and now - _standing_cache["at"] < STANDING_INTERVAL:
+        return cached
+    try:
+        url = STANDING_URL + "?" + urllib.parse.urlencode(
+            {"address": address, "network": NODE_NETWORK})
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            if not (200 <= resp.status < 300):
+                return NO_STANDING
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return NO_STANDING
+    balance = body.get("balance")
+    funded = body.get("fundedForProduction")
+    symbol = body.get("symbol")
+    raw = body.get("balanceRaw")
+    if not isinstance(balance, (int, float)):
+        balance = None
+    if not isinstance(funded, bool):
+        funded = None
+    # An older service does not send these; the panel falls back rather than
+    # inventing a ticker.
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Za-z0-9]{1,12}", symbol):
+        symbol = None
+    if not isinstance(raw, str) or not re.fullmatch(r"[0-9]{1,40}", raw):
+        raw = None
+    # An older service, or one with no EVM endpoint, sends no stake at all.
+    stake = body.get("stake")
+    stake_raw = stake.get("activeRaw") if isinstance(stake, dict) else None
+    stake_min_raw = stake.get("minStakeRaw") if isinstance(stake, dict) else None
+    if not isinstance(stake_raw, str) or not re.fullmatch(r"[0-9]{1,40}", stake_raw):
+        stake_raw = None
+    if not isinstance(stake_min_raw, str) or not re.fullmatch(r"[0-9]{1,40}", stake_min_raw):
+        stake_min_raw = None
+    # Only cache an answer. A 200 carrying a null balance is a failure wearing
+    # a success's clothes -- the service returns one when it cannot read the
+    # chain, or when it was handed an address it will not accept. Caching that
+    # for the full interval pins the tile blank long after the cause is fixed,
+    # which is precisely what happened the first time this shipped.
+    if balance is None:
+        return NO_STANDING
+    _standing_cache["value"] = (balance, funded, symbol, raw, stake_raw, stake_min_raw)
+    _standing_cache["at"] = now
+    return _standing_cache["value"]
+
+
+NO_STANDING = (None, None, None, None, None, None)
+
+
+_peers_cache = {"at": 0.0, "value": None}
+
+
+# Beside the other interval caches rather than next to the function that
+# uses it. The reported-fields guard reads `"key":` literals inside
+# collect() as heartbeat fields, and a cache declared in that span is read
+# as one -- a false positive that costs more to explain than to avoid.
+# None, not 0.0, because time.monotonic() counts from boot. Zero means "an
+# hour has passed" only on a machine that has been up an hour -- so a freshly
+# rebooted node would silently wait up to ATTEST_INTERVAL before its first
+# anchor, and the same arithmetic made six tests pass locally and fail on a CI
+# runner that had been alive for twenty seconds. None says "never run" without
+# depending on how long the host has been awake.
+_attest_cache = {"at": None, "signer": None}
+
+
+_earnings_cache = {"at": 0.0, "value": None}
+
+
+def fetch_earnings(name):
+    """What the reward address earned by producing, or None.
+
+    Returns (earned, blocks_rewarded, reward_per_block, non_reward, sdk_ok).
+
+    Why this is not derived from the balance. A balance rises when a block is
+    produced and also when someone sends XL1 in, and falls when any is sent
+    out. The service splits them: block rewards are minted, so a balance built
+    only from rewards is an exact multiple of the per-block reward, and the
+    remainder is everything that cannot be reward money.
+
+    It is a lifetime figure. The balance carries the whole history, so this
+    does not begin the day monitoring did -- which the day-over-day figure
+    does, and which is why the two will not agree.
+
+    sdk_ok carries the service's cross-check against the SDK reward schedule.
+    False is not a reason to drop the reading: the chain is what was actually
+    paid. It is a reason for the panel to say so.
+    """
+    if not EARNINGS_URL:
+        return None
+    address = read_reward_address(name)
+    if not address:
+        return None
+    now = time.monotonic()
+    cached = _earnings_cache["value"]
+    if cached is not None and now - _earnings_cache["at"] < EARNINGS_INTERVAL:
+        return cached
+    try:
+        url = EARNINGS_URL + "?" + urllib.parse.urlencode(
+            {"address": address, "network": NODE_NETWORK})
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    earned = body.get("earned")
+    blocks = body.get("blocksRewarded")
+    reward = body.get("rewardPerBlock")
+    non_reward = body.get("nonReward")
+    sdk_ok = body.get("sdkAgrees")
+    # A 200 carrying nulls is the service saying it could not read, which is a
+    # failure wearing a success code. Do not cache it, and do not report it.
+    if not isinstance(earned, (int, float)) or not isinstance(reward, (int, float)):
+        return None
+    if not isinstance(blocks, int):
+        return None
+    if not isinstance(non_reward, (int, float)):
+        non_reward = None
+    if not isinstance(sdk_ok, bool):
+        sdk_ok = None
+    _earnings_cache["value"] = (earned, blocks, reward, non_reward, sdk_ok)
+    _earnings_cache["at"] = now
+    return _earnings_cache["value"]
+
+
+def fetch_peers(name):
+    """(peer_count, our_share_percent, window) for the producing field.
+
+    A block count on its own says nothing: the same number is healthy against
+    three other producers and alarming against ten. The share, and whether the
+    share moved, is what makes a quiet day readable.
+
+    Only aggregates are sent. The other producers' addresses stay on this
+    machine for the same reason ours does -- they are public on the chain, but
+    a dashboard has no need to hold a list of them, and not collecting is
+    simpler than deciding later who may read it.
+
+    No predicted share is computed. Blocks are not handed out in proportion to
+    balance -- measured over 1000 blocks, a 10x balance spread produced a 2x
+    block spread -- so any "expected" figure would be a model invented here
+    rather than anything the chain does.
+    """
+    if not PEERS_URL:
+        return None, None, None
+    address = read_reward_address(name)
+    if not address:
+        return None, None, None
+    now = time.monotonic()
+    cached = _peers_cache["value"]
+    if cached is not None and now - _peers_cache["at"] < PEERS_INTERVAL:
+        return cached
+    try:
+        url = PEERS_URL + "?" + urllib.parse.urlencode(
+            {"network": NODE_NETWORK, "window": PEERS_WINDOW})
+        with urllib.request.urlopen(url, timeout=120) as resp:
+            if not (200 <= resp.status < 300):
+                return None, None, None
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None, None, None
+
+    producers = body.get("producers")
+    total = body.get("totalBlocks")
+    if not isinstance(producers, list) or not isinstance(total, int) or total <= 0:
+        return None, None, None
+
+    # NOT lstrip("0x") -- that strips every leading 0 and x, so 0x0a65... loses
+    # its leading zero, never matches, and the node silently reports a 0% share
+    # of its own blocks. The same class of quiet wrongness as the prefix bug
+    # that once made a working balance look unreadable.
+    target = re.sub(r"^0x", "", address.lower())
+    mine = 0
+    for p in producers:
+        if isinstance(p, dict) and str(p.get("address", "")).lower() == target:
+            mine = p.get("blocks") or 0
+            break
+    value = (len(producers), round(100.0 * mine / total, 2), body.get("window"))
+    # Cache only a real answer, for the same reason the balance does: a cached
+    # failure pins the tile blank long after the cause is gone.
+    _peers_cache["value"] = value
+    _peers_cache["at"] = now
+    return value
+
+
+_attestor_cache = {"at": None, "value": None}
+
+
+def fetch_attestor_balance():
+    """(address, balance, raw) for the wallet that pays for anchoring, or Nones.
+
+    Every hourly anchor costs gas from a throwaway key that controls nothing.
+    It was funded once by hand, and nothing watches it -- so the failure this
+    prevents is anchoring stopping quietly, months from now, because a wallet
+    nobody was looking at reached zero. The panel that proves the readings
+    have not been edited would simply stop having anything to prove.
+
+    The address is not configured anywhere: it arrives in the anchoring
+    response, which is the only place that knows it, and is remembered from
+    there. Before the first anchor of a run there is nothing to report, which
+    is correct -- an unconfigured anchoring service has no wallet to watch.
+
+    Same slow cadence as the producer's own standing. A balance that moves by
+    a ten-thousandth of a token per hour does not need a faster question.
+    """
+    signer = _attest_cache.get("signer")
+    if not STANDING_URL or not signer:
+        return None, None, None
+    now = time.monotonic()
+    cached = _attestor_cache["value"]
+    at = _attestor_cache["at"]
+    if cached is not None and at is not None and now - at < STANDING_INTERVAL:
+        return cached
+    try:
+        url = STANDING_URL + "?" + urllib.parse.urlencode(
+            {"address": signer, "network": NODE_NETWORK})
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            if not (200 <= resp.status < 300):
+                return None, None, None
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None, None, None
+    balance = body.get("balance")
+    raw = body.get("balanceRaw")
+    if not isinstance(balance, (int, float)):
+        balance = None
+    if not isinstance(raw, str) or not re.fullmatch(r"[0-9]{1,40}", raw):
+        raw = None
+    if balance is None:
+        # Same rule as the producer's standing: a 200 carrying no balance is a
+        # failure wearing a success's clothes, and caching it would pin the
+        # tile blank long after the cause was gone.
+        return None, None, None
+    value = (signer, balance, raw)
+    _attestor_cache["value"] = value
+    _attestor_cache["at"] = now
+    return value
+
+
+_anchor_cost_cache = {"at": None, "value": None}
+
+
+def fetch_anchor_cost():
+    """What one anchor costs this wallet, measured on the chain, or None.
+
+    The panels used to estimate this and both estimates were wrong in ways
+    that mattered. One carried a constant measured by hand months earlier; the
+    other derived it as (funded - balance) / anchors, which is arithmetic on an
+    assumed starting balance -- fine on the wallet it was written for, meaning
+    nothing on anyone else's, and actively broken after a top-up, where it
+    reports a negative spend and therefore an infinite runway. A wallet that
+    has just been funded is exactly when a runway must not read "forever".
+
+    So the number comes from the chain: every anchor leaves a transfer from
+    this wallet, and the service takes the median of the recent ones. None is
+    a perfectly good answer -- a wallet that has not anchored yet has no cost
+    to measure -- and the panel then shows a balance without a runway rather
+    than a runway without a basis.
+    """
+    signer = _attest_cache.get("signer")
+    if not ANCHOR_COST_URL or not signer:
+        return None
+    now = time.monotonic()
+    cached = _anchor_cost_cache["value"]
+    at = _anchor_cost_cache["at"]
+    if cached is not None and at is not None and now - at < STANDING_INTERVAL:
+        return cached
+    try:
+        url = ANCHOR_COST_URL + "?" + urllib.parse.urlencode(
+            {"address": signer, "network": NODE_NETWORK})
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    cost = body.get("costPerAnchor")
+    if not isinstance(cost, (int, float)) or cost <= 0:
+        # Not cached. An unmeasurable wallet becomes measurable the moment it
+        # anchors twice, and caching the null would hold the tile back for a
+        # quarter of an hour after the data arrived.
+        return None
+    _anchor_cost_cache["value"] = cost
+    _anchor_cost_cache["at"] = now
+    return cost
 
 
 WITNESS_URL = os.environ.get("XL1_WITNESS_URL", "")
@@ -923,94 +1577,24 @@ def read_producer_unit():
 # signal with a false one. Each entry below is guarded by the condition that
 # makes silence genuinely wrong: something was there to read, and reading it
 # did not work.
-
-
-def read_rebuild_timer():
-    """(active, next_run) for the image rebuild timer, or (None, None).
-
-    `systemctl show` needs no privilege for this, and reports the timer's own
-    view rather than ours. A host with no such timer reports nothing and the
-    email falls back to manual instructions, which is the honest answer.
-    """
-    if not REBUILD_TIMER:
-        return None, None
-    out = run(["systemctl", "show", REBUILD_TIMER,
-               "-p", "ActiveState", "-p", "NextElapseUSecRealtime"])
-    if not out:
-        return None, None
-    fields = {}
-    for line in out.splitlines():
-        key, _, value = line.partition("=")
-        fields[key.strip()] = value.strip()
-    state = fields.get("ActiveState")
-    if not state or state == "":
-        return None, None
-    active = state == "active"
-    raw = fields.get("NextElapseUSecRealtime", "")
-    nxt = None
-    if raw and raw not in ("0", "n/a", "infinity"):
-        if raw.isdigit():
-            # Older systemd reports microseconds since the epoch; newer ones
-            # already give a human timestamp. Accept either.
-            try:
-                nxt = time.strftime("%a %d %b %H:%M UTC",
-                                    time.gmtime(int(raw) / 1_000_000))
-            except (ValueError, OSError, OverflowError):
-                nxt = None
-        else:
-            nxt = raw[:64]
-    return active, nxt
-
-
-_standing_cache = {"at": 0.0, "value": None}
-
-
-# Every collector above returns None on failure rather than raising, so that a
-# failed `docker exec` or an unreachable service can never take down a
-# heartbeat. That is deliberate, and it has a cost: a blank field could mean
-# "not collected yet" or "collection is failing", and an agent can go
-# half-blind while still reporting with every sign of health.
-#
-# So the ones that failed say so. What this does NOT do is report every empty
-# collector: most are legitimately silent. No rebuild timer installed, no
-# systemd unit managing the container, no reason the node is blocked -- those
-# are answers, not failures, and listing them would replace a missing signal
-# with a false one.
 def _degraded_note(degraded, field, failed):
     if failed:
         degraded.append(field)
 
 
-def producer_scan_due():
-    """Whether a production scan should have run on this beat.
-
-    fetch_producer_stats returns None for two very different reasons: the scan
-    is not due (the overwhelmingly common case -- it runs once per
-    PRODUCER_INTERVAL, roughly one heartbeat in thirty), or it was due and
-    failed. Only the second is a fault.
-
-    Conflating them reported a perfectly healthy node as half-blind on 29 beats
-    out of 30, naming the most consequential reader it has. The rate limiter is
-    stamped only on success, so after a real failure this stays true and the
-    fault is still reported.
-    """
-    if not PRODUCER_URL or not _producer_cursor["known"]:
-        return False
-    if not _producer_cache["at"]:
-        return True
-    return (time.monotonic() - _producer_cache["at"]) >= PRODUCER_INTERVAL
-
-
 # --- keeping slow work off the heartbeat path --------------------------------
 #
-# Every collector used to run inline, so the beat waited on the slowest of
-# them. The production scan alone allows 180 seconds against the receiver's
-# 90-second staleness threshold, so one slow scan could delay the next
-# heartbeat past the point where a node that is producing perfectly well is
-# reported OFFLINE. The agent could make its own node look dead by doing its
-# job.
+# Every collector used to run inline, which meant the beat waited on the
+# slowest of them. The production scan alone allows 180 seconds and the peer
+# scan 120, against a 90-second staleness threshold at the backend -- so one
+# slow scan could push the next heartbeat past the point where a node that is
+# producing perfectly well is declared OFFLINE, and an alert goes out about it.
+# The agent could make its own node look dead by doing its job.
+#
+# These now run on a worker thread and publish their last result here. The beat
+# reads what is ready and never waits.
 
-_slow = {"lock": threading.Lock(), "data": {}, "on": False}
+_slow = {"lock": threading.Lock(), "data": {}, "degraded": set(), "on": False}
 SLOW_CYCLE = int(os.environ.get("XL1_SLOW_CYCLE", "60"))
 
 
@@ -1072,18 +1656,41 @@ def _slow_worker():
             name = _step("find_container", find_container)
             _step("cli_version", lambda: _slow_put("cli_version", read_cli_version(name)))
             _step("cli_latest", lambda: _slow_put("cli_latest", fetch_cli_latest()))
+            _step("sdk_version", lambda: _slow_put("sdk_version", read_sdk_version()))
+            # Anything anchored earlier that the backend has not yet
+            # acknowledged. Cheap when the spool is empty, which is the
+            # normal case.
+            _step("flush_attestations", flush_attestations)
+            # And then ask the chain whether the ones already sent are really
+            # there. A few per cycle; see check_anchors_on_chain for why the
+            # failing answer is the only one worth anything.
+            _step("check_anchors", check_anchors_on_chain)
+            _step("sdk_latest", lambda: _slow_put("sdk_latest", fetch_sdk_latest()))
             _step("log_tail", lambda: _slow_put("log_tail", read_log_tail(name)))
             _step("image_inventory", lambda: _slow_put("image_inventory", read_image_inventory()))
             _step("blocked_reason", lambda: _slow_put("blocked_reason", read_blocked_reason(name)))
             _step("producer_unit", lambda: _slow_put("producer_unit", read_producer_unit()))
             _step("rebuild_timer", lambda: _slow_put("rebuild_timer", read_rebuild_timer()))
+            _step("repo_head", lambda: _slow_put("repo_head", read_repo_head()))
+            _step("repo_upstream", lambda: _slow_put(
+                "repo_upstream", fetch_repo_upstream(_slow["data"].get("repo_head"))))
+            _step("standing", lambda: _slow_put("standing", fetch_standing(name)))
+            _step("earnings", lambda: _slow_put("earnings", fetch_earnings(name)))
+            _step("peers", lambda: _slow_put("peers", fetch_peers(name)))
             _step("os_updates", lambda: _slow_put("os_updates", read_os_updates()))
+            # Last, and only when the backend has told us where to resume.
             stats = _step("producer_stats", lambda: fetch_producer_stats(name))
             if stats:
                 _slow_put("producer_stats", stats)
                 chunk = _step("backfill_chunk", lambda: fetch_backfill_chunk(name))
                 if chunk:
                     _slow_put("backfill_chunk", chunk)
+            # Outside the `if stats:` above on purpose. The walk has its own
+            # cursor and never needed the production scan; waiting for it
+            # capped the whole history at one chunk per fifteen minutes.
+            mint_chunk = _step("minted_chunk", lambda: fetch_minted_chunk(name))
+            if mint_chunk:
+                _slow_put("minted_chunk", mint_chunk)
         except Exception as e:
             # Every collector is isolated above, so reaching here means the
             # loop's own scaffolding broke. Still caught: the worker must never
@@ -1132,18 +1739,130 @@ def collect():
     # CLI_REGISTRY empty means the lookup was switched off deliberately.
     _degraded_note(degraded, "cli_latest", bool(CLI_REGISTRY) and not latest)
 
+    # Same pair for the SDK the companion service reads the chain with.
+    sdk_installed = _slow_get("sdk_version", read_sdk_version)
+    if sdk_installed:
+        payload["sdk_version"] = sdk_installed
+    _degraded_note(degraded, "sdk_version", bool(VERSIONS_URL) and not sdk_installed)
+    sdk_latest = _slow_get("sdk_latest", fetch_sdk_latest)
+    if sdk_latest:
+        payload["sdk_latest"] = sdk_latest
+    _degraded_note(degraded, "sdk_latest", bool(SDK_REGISTRY) and not sdk_latest)
+
+    # Image recipe drift -- independent of the CLI version above.
+    repo_head = _slow_get("repo_head", read_repo_head)
+    if repo_head:
+        payload["repo_commit"] = repo_head
+    # A checkout that exists but cannot be read is broken; no checkout is fine.
+    _degraded_note(degraded, "repo_commit",
+                   os.path.isdir(os.path.join(IMAGES_REPO, ".git")) and not repo_head)
+    repo_upstream, repo_behind, repo_tag, repo_upstream_tag = (
+        _slow_get("repo_upstream", lambda: fetch_repo_upstream(repo_head))
+        or (None, None, None, None))
+    # Knowing the recipe is behind is the whole point of reading it.
+    # Keyed on the upstream commit, NOT on repo_behind. `behind` is left None
+    # whenever local and upstream match, because there is nothing to compare --
+    # so keying on it reported every up-to-date checkout as a broken reader,
+    # while the tile beside it read "up to date". Both on the same screen,
+    # contradicting each other.
+    _degraded_note(degraded, "repo_upstream",
+                   bool(repo_head) and bool(IMAGES_REPO_API) and repo_upstream is None)
+    if repo_upstream:
+        payload["repo_upstream"] = repo_upstream
+    if repo_behind is not None:
+        payload["repo_behind"] = repo_behind
+    if repo_tag:
+        payload["repo_tag"] = repo_tag
+    if repo_upstream_tag:
+        payload["repo_upstream_tag"] = repo_upstream_tag
+
+    balance, funded, symbol, raw, stake_raw, stake_min_raw = (
+        _slow_get("standing", lambda: fetch_standing(name)) or NO_STANDING)
+    if balance is not None:
+        payload["producer_balance"] = balance
+    if symbol:
+        payload["producer_balance_symbol"] = symbol
+    if raw:
+        payload["producer_balance_raw"] = raw
+    _degraded_note(degraded, "producer_balance",
+                   bool(STANDING_URL) and bool(name) and balance is None)
+
+    # Opt-in location. Absent unless configured, and named so that whatever
+    # renders it cannot mistake it for something measured.
+    if STATED_LOCATION:
+        payload["stated_location"] = STATED_LOCATION
+    if STATED_LAT is not None:
+        payload["stated_lat"] = STATED_LAT
+    if STATED_LON is not None:
+        payload["stated_lon"] = STATED_LON
+    # Only alongside a position -- a radius around nothing says nothing.
+    if STATED_LAT is not None and STATED_LON is not None:
+        payload["stated_radius_km"] = STATED_RADIUS_KM
+
+    # The anchoring wallet. Operator-only: see PUBLIC_NODE_FIELDS -- a balance
+    # has never been on the public panel and this one is no different.
+    attestor, attestor_balance, attestor_raw = fetch_attestor_balance()
+    if attestor:
+        payload["attestor_address"] = attestor
+    if attestor_balance is not None:
+        payload["attestor_balance"] = attestor_balance
+    if attestor_raw:
+        payload["attestor_balance_raw"] = attestor_raw
+    if attestor:
+        # The two halves of a runway, both measured rather than assumed: what
+        # an anchor costs, read off this wallet's own transfers, and how often
+        # this node anchors, which is not an estimate at all -- it is the
+        # interval this process is running on.
+        cost = fetch_anchor_cost()
+        if cost is not None:
+            payload["attestor_cost_per_anchor"] = cost
+        payload["attestor_anchor_interval_s"] = ATTEST_INTERVAL
+    if funded is not None:
+        payload["producer_funded"] = funded
+    # Raw only, and no verdict. Whether a given stake is ENOUGH depends on
+    # thresholds the network has not settled -- minStake reads as 1 against
+    # 18-decimal balances, so even its unit is unclear -- and a panel that
+    # asserts eligibility from numbers this unsettled would be inventing an
+    # answer. Report both figures and let a reader compare them.
+    if stake_raw is not None:
+        payload["producer_stake_raw"] = stake_raw
+    if stake_min_raw is not None:
+        payload["producer_stake_min_raw"] = stake_min_raw
+
+    earnings = _slow_get("earnings", lambda: fetch_earnings(name))
+    if earnings is not None:
+        earned, rewarded, reward_each, non_reward, sdk_ok = earnings
+        payload["producer_earned"] = earned
+        payload["producer_blocks_rewarded"] = rewarded
+        payload["producer_reward_per_block"] = reward_each
+        if non_reward is not None:
+            payload["producer_non_reward"] = non_reward
+        if sdk_ok is not None:
+            payload["producer_reward_sdk_ok"] = sdk_ok
+    # Degraded only when the service is configured and the address is known:
+    # a node with neither is not broken, it is unconfigured.
+    _degraded_note(degraded, "producer_earned",
+                   bool(EARNINGS_URL) and bool(name) and earnings is None)
+
     tail = _slow_get("log_tail", lambda: read_log_tail(name))
     if tail:
         payload["log_tail"] = tail
     _degraded_note(degraded, "log_tail", bool(name) and not tail)
 
-    # One image accumulates per CLI release at roughly half a gigabyte. A count
-    # that keeps climbing is worth seeing before the disk is full.
     images = _slow_get("image_inventory", read_image_inventory)
     if images is not None:
         payload["node_image_count"] = images
     # Docker is not optional for this agent, so this one is never "n/a".
     _degraded_note(degraded, "node_image_count", images is None)
+
+    peer_count, peer_share, peer_window = (
+        _slow_get("peers", lambda: fetch_peers(name)) or (None, None, None))
+    if peer_count is not None:
+        payload["peer_count"] = peer_count
+        payload["produced_share"] = peer_share
+        payload["peer_window"] = peer_window
+    _degraded_note(degraded, "peers",
+                   bool(PEERS_URL) and bool(name) and peer_count is None)
 
     updates = _slow_get("os_updates", read_os_updates)
     if updates is not None:
@@ -1157,7 +1876,6 @@ def collect():
                    bool(OS_UPDATE_INTERVAL) and updates is None
                    and os.path.exists("/usr/bin/apt"))
 
-    # Absence here is good news, so it is never a degraded reader.
     blocked = _slow_get("blocked_reason", lambda: read_blocked_reason(name))
     if blocked:
         payload["producer_blocked"] = blocked
@@ -1172,29 +1890,19 @@ def collect():
     if timer_next:
         payload["rebuild_timer_next"] = timer_next
 
-    # Opt-in location. Absent unless configured, and named so that whatever
-    # renders it cannot mistake it for something measured.
-    if STATED_LOCATION:
-        payload["stated_location"] = STATED_LOCATION
-    if STATED_LAT is not None:
-        payload["stated_lat"] = STATED_LAT
-    if STATED_LON is not None:
-        payload["stated_lon"] = STATED_LON
-    # Only alongside a position -- a radius around nothing says nothing.
-    if STATED_LAT is not None and STATED_LON is not None:
-        payload["stated_radius_km"] = STATED_RADIUS_KM
-
     # Surface duplicates rather than quietly monitoring one of them.
     node_containers = list_node_containers()
     if node_containers:
         payload["node_containers"] = node_containers
 
     stats = _slow_get("producer_stats", lambda: fetch_producer_stats(name), take=True)
-    # Checked AFTER the call and only when a scan was actually due. A scan that
-    # just succeeded stamps the rate limiter and is no longer due; one that
-    # failed leaves it due and is still reported. Without this the not-due case
-    # -- 29 beats out of 30 -- read as a failure, naming the most consequential
-    # reader this agent has, permanently, on a healthy node.
+    # The most consequential of these: production counting stops without it,
+    # and the panel would show a frozen total with no explanation.
+    #
+    # Checked AFTER the call, and only when a scan was actually due. A scan
+    # that just succeeded stamps the rate limiter and is no longer due; one
+    # that failed leaves it due and is still reported. Without this the
+    # not-due case -- 29 beats out of 30 -- read as a failure.
     _degraded_note(degraded, "producer_stats",
                    bool(name) and not stats and producer_scan_due())
     if stats:
@@ -1226,11 +1934,22 @@ def collect():
             if explorer.get("lastProducedBlock"):
                 payload["explorer_block_url"] = explorer["lastProducedBlock"]
 
+        # What the scanned range actually minted to this address, by day.
+        # Counted by RECIPIENT while `produced` above counts by SIGNER, so the
+        # two are independent readings of the same range rather than one
+        # number restated -- which is what makes them worth comparing.
+        scanned = minted_by_day(stats)
+        if scanned:
+            payload["scan_minted_by_day"] = scanned
+
         chunk = _slow_get("backfill_chunk", lambda: fetch_backfill_chunk(name), take=True)
         if chunk:
             payload["backfill_from_block"] = chunk.get("fromBlock")
             payload["backfill_to_block"] = chunk.get("toBlock")
             payload["backfill_produced"] = chunk.get("produced")
+            # The point of the whole exercise: this is where the history
+            # before monitoring started comes from.
+
             # A backfill chunk sees far more blocks than a forward scan, so it
             # is often the only source of a sighting for a low-share producer.
             # It walks backwards, so its sighting may be older than one already
@@ -1238,6 +1957,19 @@ def collect():
             if (payload.get("last_produced_block") is None
                     and chunk.get("lastProducedBlock") is not None):
                 payload["last_produced_block"] = chunk["lastProducedBlock"]
+
+
+    # Outside the producer-scan branch, like the fetch that feeds it.
+    mint_chunk = _slow_get("minted_chunk", lambda: fetch_minted_chunk(name), take=True)
+    if mint_chunk and mint_chunk.get("fromBlock") is not None:
+        payload["minted_from_block"] = mint_chunk.get("fromBlock")
+        payload["minted_to_block"] = mint_chunk.get("toBlock")
+        # A range where this address earned nothing still reports its bounds,
+        # or the cursor never passes it and the walk stalls on the first quiet
+        # stretch -- which for a young node is most of the chain.
+        walked = minted_by_day(mint_chunk)
+        if walked:
+            payload["minted_by_day"] = walked
 
     # A scan reports only blocks it saw, so a node that has stopped producing
     # would never supply a link for the block still on display. Fall back to
@@ -1248,7 +1980,7 @@ def collect():
             payload["explorer_block_url"] = link
 
     heights = fetch_block_heights()
-    _degraded_note(degraded, "chain_heights", bool(HEIGHT_URL) and not heights)
+    _degraded_note(degraded, "chain_heights", not heights)
     if heights:
         payload["chain_heights"] = heights
         # block_height stays this node's own network, for the node card.
@@ -1261,19 +1993,6 @@ def collect():
     # not report this at all.
     payload["agent_degraded"] = degraded
     return payload
-
-
-# Beside the other interval caches rather than next to the function that
-# uses it. The reported-fields guard reads `"key":` literals inside
-# collect() as heartbeat fields, and a cache declared in that span is read
-# as one -- a false positive that costs more to explain than to avoid.
-# None, not 0.0, because time.monotonic() counts from boot. Zero means "an
-# hour has passed" only on a machine that has been up an hour -- so a freshly
-# rebooted node would silently wait up to ATTEST_INTERVAL before its first
-# anchor, and the same arithmetic made six tests pass locally and fail on a CI
-# runner that had been alive for twenty seconds. None says "never run" without
-# depending on how long the host has been awake.
-_attest_cache = {"at": None, "signer": None}
 
 
 def _spool_path(content_hash):
@@ -1347,6 +2066,112 @@ def flush_attestations():
                 os.remove(path)
             except OSError:
                 pass
+
+
+def check_one_transaction(tx_hash):
+    """Ask the chain whether this transaction exists. (found, block, sender).
+
+    None means the question could not be asked -- a service that is down, a
+    gateway having a bad minute -- and is deliberately different from False,
+    which means the chain answered and does not have it. Reporting the first
+    as the second would put a permanent red mark on a perfectly good anchor.
+    """
+    if not TX_CHECK_URL or not tx_hash:
+        return None
+    try:
+        url = TX_CHECK_URL + "?" + urllib.parse.urlencode(
+            {"hash": tx_hash, "network": NODE_NETWORK})
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    if not isinstance(body.get("found"), bool):
+        return None
+    block = body.get("block")
+    sender = body.get("from")
+    return (body["found"],
+            block if isinstance(block, int) else None,
+            sender if isinstance(sender, str) else None)
+
+
+def post_transaction_check(content_hash, found, block, sender):
+    """Tell the backend what the chain said about one of our anchors."""
+    if not BACKEND_URL or not NODE_TOKEN:
+        return False
+    body = {"node_id": NODE_ID, "content_hash": content_hash, "found": found}
+    if block is not None:
+        body["block"] = block
+    if sender:
+        body["tx_from"] = sender
+    req = urllib.request.Request(
+        BACKEND_URL + "/api/node/attestation/check",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "X-Node-Token": NODE_TOKEN,
+                 "User-Agent": "xl1-heartbeat/" + AGENT_VERSION},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def check_anchors_on_chain():
+    """Check a few of this node's own anchors against the chain.
+
+    The panels list anchors out of the site's records -- what this system says
+    it did. Those rows carry real transaction hashes and link to the explorer,
+    but until now nothing ever went and looked. The check worth having is the
+    failing one: an anchor recorded as done that never landed means the record
+    has quietly stopped meaning what it claims.
+
+    Only the unchecked, and only a few per cycle. There is no deadline here,
+    and a brand new anchor legitimately reads as absent for a while before it
+    is included -- so an unchecked or not-yet-found anchor is not an alarm, it
+    is a question that has not been answered yet.
+    """
+    if not BACKEND_URL or not TX_CHECK_URL:
+        return
+    try:
+        # Ask for the ones that still need checking rather than the newest
+        # fifty. Filtering locally meant anything older than the fifty most
+        # recent anchors was never even fetched, so a backlog older than that
+        # could not be worked through -- it just sat there.
+        url = (BACKEND_URL + "/api/node/attestations?"
+               + urllib.parse.urlencode({"node_id": NODE_ID, "unchecked": 1,
+                                         "limit": TX_CHECK_BATCH * 4}))
+        with urllib.request.urlopen(url, timeout=TIMEOUT) as resp:
+            if not (200 <= resp.status < 300):
+                return
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return
+
+    done = 0
+    for row in body.get("attestations") or []:
+        if done >= TX_CHECK_BATCH:
+            break
+        tx_hash = row.get("tx_hash")
+        content_hash = row.get("content_hash")
+        if not tx_hash or not content_hash:
+            continue
+        # The server filtered these, but an older backend does not know the
+        # parameter and answers with everything -- in which case this is what
+        # stops a confirmed row being checked again. Re-checking one buys
+        # nothing: a transaction on the chain does not leave it.
+        if row.get("chain_found") is True:
+            continue
+        result = check_one_transaction(tx_hash)
+        if result is None:
+            # Could not ask. Not an answer, so nothing is recorded.
+            continue
+        found, block, sender = result
+        post_transaction_check(content_hash, found, block, sender)
+        done += 1
 
 
 def attest(name, payload):

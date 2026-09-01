@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.22.1"
+AGENT_VERSION = "1.22.2"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -2091,12 +2091,14 @@ def check_one_transaction(tx_hash):
         return None
     block = body.get("block")
     sender = body.get("from")
+    fees = body.get("fees")
     return (body["found"],
             block if isinstance(block, int) else None,
-            sender if isinstance(sender, str) else None)
+            sender if isinstance(sender, str) else None,
+            fees if isinstance(fees, dict) else None)
 
 
-def post_transaction_check(content_hash, found, block, sender):
+def post_transaction_check(content_hash, found, block, sender, fees=None):
     """Tell the backend what the chain said about one of our anchors."""
     if not BACKEND_URL or not NODE_TOKEN:
         return False
@@ -2105,6 +2107,8 @@ def post_transaction_check(content_hash, found, block, sender):
         body["block"] = block
     if sender:
         body["tx_from"] = sender
+    if fees:
+        body["fees"] = fees
     req = urllib.request.Request(
         BACKEND_URL + "/api/node/attestation/check",
         data=json.dumps(body).encode("utf-8"),
@@ -2169,8 +2173,8 @@ def check_anchors_on_chain():
         if result is None:
             # Could not ask. Not an answer, so nothing is recorded.
             continue
-        found, block, sender = result
-        post_transaction_check(content_hash, found, block, sender)
+        found, block, sender, fees = result
+        post_transaction_check(content_hash, found, block, sender, fees)
         done += 1
 
 

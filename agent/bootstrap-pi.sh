@@ -105,6 +105,16 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   G=$'\033[32m'; R=$'\033[31m'; Y=$'\033[33m'; C=$'\033[36m'
   B=$'\033[1m'; D=$'\033[2m'; X=$'\033[0m'
 else G=""; R=""; Y=""; C=""; B=""; D=""; X=""; fi
+# Erase to end of line, for the spinner that redraws itself with \r.
+#
+# This used to blank a hard-coded 78 columns, which is shorter than the line
+# it clears once the attestation address is in it -- so "gas arrived" landed
+# on top of the old line and left its tail showing, reading like a corrupted
+# address at the exact moment somebody is being asked to fund one.
+#
+# Empty when stdout is not a terminal, where the redraw is meaningless and
+# the escape would only be noise in a log.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then EOL=$'\033[K'; else EOL=""; fi
 
 say()  { printf '  %s\n' "$1"; }
 ok()   { printf '  %sok%s    %s\n' "$G" "$X" "$1"; }
@@ -1593,20 +1603,45 @@ printf '\n'
 # It is also less to go wrong: no git on PATH, no ownership exception, no
 # default-branch assumption, and re-running simply overwrites.
 SVC="$MONITOR_REPO/service"
-if [ ! -f "$SVC/Dockerfile" ]; then
-  say "fetching the anchor service"
-  $SUDO mkdir -p "$MONITOR_REPO"
-  # Stated rather than inherited: the checks below run unprivileged and have to
-  # be able to read what lands here.
-  $SUDO chmod 755 "$MONITOR_REPO"
-  tarball="$(mktemp)"
-  curl -fsSL --max-time 120 "$MONITOR_TAR" -o "$tarball" \
-    || { rm -f "$tarball"; die "could not download the anchor service from $MONITOR_TAR"; }
+# Fetched EVERY run, not only when it is missing.
+#
+# This used to be wrapped in `if [ ! -f "$SVC/Dockerfile" ]`, which meant the
+# first run decided what the service would be forever. Re-running to pick up a
+# fix picked up nothing: the source was already on disk, so the download was
+# skipped, the image rebuilt from the same files, and every COPY layer came
+# back CACHED. A published fix could not reach a machine that had run this
+# before -- which is every machine that hit a problem, which is exactly the
+# population the fix was for.
+#
+# It cost a real evening. An older new-attestor.ts predating --from stayed on
+# a Pi through repeated runs; the wizard asked it to read an existing key, the
+# old copy did not know the flag, generated a new one instead, and failed
+# writing it to a path inside the image. The error pointed at permissions and
+# the cause was a file that was never replaced.
+#
+# A tarball over a slow link is a few seconds. Being unable to ship a fix is
+# not worth saving them.
+say "fetching the anchor service"
+$SUDO mkdir -p "$MONITOR_REPO"
+# Stated rather than inherited: the checks below run unprivileged and have to
+# be able to read what lands here.
+$SUDO chmod 755 "$MONITOR_REPO"
+tarball="$(mktemp)"
+if curl -fsSL --max-time 120 "$MONITOR_TAR" -o "$tarball"; then
   # --strip-components=1 drops the <repo>-<branch>/ wrapper the archive adds.
   $SUDO tar -xzf "$tarball" -C "$MONITOR_REPO" --strip-components=1 \
     || { rm -f "$tarball"; die "the anchor service archive would not unpack"; }
+elif [ -f "$SVC/Dockerfile" ]; then
+  # A network blip should not stop a re-run that has everything it needs, but
+  # it must say so: from here on this is whatever was downloaded last time,
+  # which is the situation the refetch above exists to prevent.
+  warn "could not reach $MONITOR_TAR" \
+       "continuing with the copy already in $MONITOR_REPO -- it may be older than this script"
+else
   rm -f "$tarball"
+  die "could not download the anchor service from $MONITOR_TAR"
 fi
+rm -f "$tarball"
 
 # Said with what is actually there. The previous version failed with only the
 # path it had looked at, which is the least useful half of the problem.
@@ -1792,12 +1827,12 @@ else
     # Hourly, in case the balance can never be read -- so a wait that will
     # never end says so rather than spinning until somebody gives up.
     if [ "$funded" != 1 ] && [ "$((waited % 3600))" -eq 0 ]; then
-      printf '\r%*s\r' 78 ''
+      printf '\r%s' "$EOL"
       warn "still nothing after $((waited / 3600))h" \
            "check the address is right, and that the service can reach the network: sudo docker logs xl1-service-anchor-1"
     fi
   done
-  printf '\r%*s\r' 78 ''
+  printf '\r%s' "$EOL"
   ok "gas arrived: $bal"
 fi
 

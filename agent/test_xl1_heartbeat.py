@@ -482,6 +482,11 @@ REPORTED_FIELDS = {
     # side; a balance has never been public and this one is not either.
     "attestor_address", "attestor_balance", "attestor_balance_raw",
     "attestor_cost_per_anchor", "attestor_anchor_interval_s",
+    # Host vitals. The Pi-only ones are absent elsewhere by design, not by
+    # failure: Windows has no load average and no vcgencmd.
+    "load_1", "load_5", "load_15", "cpu_cores",
+    "swap_used_mb", "swap_total_mb", "disk_free_gb",
+    "undervolted_now", "undervolted_ever", "throttled_now", "throttled_ever",
 }
 
 
@@ -496,12 +501,21 @@ def _fields_in_source():
     """
     import re
     src = (Path(__file__).parent / "xl1_heartbeat.py").read_text(encoding="utf-8")
-    keys = set(re.findall(r'payload\["([a-z_]+)"\]', src))
-    for fn in ("collect", "container_info", "container_stats", "host_metrics"):
+    # [a-z_0-9] and not [a-z_]. Without the digits this guard could not see
+    # load_1, load_5 or load_15 at all -- it reported them as fields that had
+    # STOPPED being sent while the agent was sending them perfectly well. A
+    # character class missing digits hid a different guard's subject once
+    # before; this is the same mistake in a different regex.
+    NAME = r"([a-z_0-9]+)"
+    keys = set(re.findall(r'payload\["%s"\]' % NAME, src))
+    # read_throttling returns a dict that host_metrics merges in, so its keys
+    # are heartbeat fields too and nothing else here would find them.
+    for fn in ("collect", "container_info", "container_stats", "host_metrics",
+               "read_throttling"):
         body = re.search(r"\ndef %s\(.*?(?=\ndef |\Z)" % fn, src, re.S)
         if body:
-            keys |= set(re.findall(r'"([a-z_]+)":', body.group(0)))
-            keys |= set(re.findall(r'(?:info|data|out)\["([a-z_]+)"\]', body.group(0)))
+            keys |= set(re.findall(r'"%s":' % NAME, body.group(0)))
+            keys |= set(re.findall(r'(?:info|data|out)\["%s"\]' % NAME, body.group(0)))
     return keys
 
 

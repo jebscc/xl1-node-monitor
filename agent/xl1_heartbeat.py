@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.22.2"
+AGENT_VERSION = "1.23.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -514,8 +514,82 @@ def fetch_block_heights():
     return out
 
 
+def _windows_memory():
+    """(total_mb, avail_mb, swap_total_mb, swap_avail_mb) on Windows, or Nones.
+
+    There is no /proc here, so the numbers come from GlobalMemoryStatusEx.
+    "Swap" is the page file, which is the honest analogue rather than the same
+    thing: Windows commits memory against RAM plus page file together, so the
+    page-file figures are what an operator would recognise as swap pressure.
+    """
+    try:
+        import ctypes
+
+        class _MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong),
+                        ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+        st = _MEMORYSTATUSEX()
+        st.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+            return (None, None, None, None)
+        mb = lambda b: round(b / 1048576.0, 1)
+        # TotalPageFile is RAM + page file on Windows, so the page file alone is
+        # the difference. Reported as swap because that is what it is used for.
+        swap_total = max(0, st.ullTotalPageFile - st.ullTotalPhys)
+        swap_avail = max(0, st.ullAvailPageFile - st.ullAvailPhys)
+        return (mb(st.ullTotalPhys), mb(st.ullAvailPhys),
+                mb(swap_total), mb(swap_avail))
+    except Exception:
+        return (None, None, None, None)
+
+
+def read_throttling():
+    """The Pi's own account of power and clock, or {} anywhere else.
+
+    `vcgencmd get_throttled` answers with a bit field. Four of its bits matter
+    and they come in pairs: what is happening now, and what has happened since
+    boot. The distinction is the useful part -- a board that undervolted once
+    during a cold start is a different machine from one browning out under load
+    right now, and collapsing them into "there was a problem" loses the half an
+    operator would act on.
+
+    Silent off a Pi, and silent when vcgencmd is not reachable. Neither is a
+    failure: it is a question this hardware cannot be asked.
+    """
+    out = run(["vcgencmd", "get_throttled"], timeout=5)
+    if not out or "=" not in out:
+        return {}
+    try:
+        bits = int(out.strip().split("=", 1)[1], 16)
+    except (ValueError, IndexError):
+        return {}
+    return {
+        "undervolted_now": bool(bits & 0x1),
+        "undervolted_ever": bool(bits & 0x10000),
+        "throttled_now": bool(bits & 0x4),
+        "throttled_ever": bool(bits & 0x40000),
+    }
+
+
 def host_metrics():
-    """Pi vitals: SoC temperature, root disk pressure, host uptime, RAM."""
+    """Pi vitals: SoC temperature, root disk pressure, host uptime, RAM, swap,
+    load and the board's own power and clock state.
+
+    Every reader is guarded and simply absent when it cannot answer. Some of
+    them cannot answer anywhere but a Pi -- SoC temperature and the throttling
+    bits have no equivalent elsewhere -- and some cannot answer on Windows at
+    all, load average being the obvious one: it is not a number that exists
+    there, and inventing something from CPU percentage would be a different
+    measurement wearing its name.
+    """
     data = {}
 
     try:
@@ -530,6 +604,15 @@ def host_metrics():
     except (OSError, ValueError, IndexError):
         pass
 
+    if "host_uptime_seconds" not in data:
+        # Windows keeps the same number behind a different door.
+        try:
+            import ctypes
+            ticks = ctypes.windll.kernel32.GetTickCount64()
+            data["host_uptime_seconds"] = int(ticks / 1000)
+        except Exception:
+            pass
+
     try:
         # statvfs is POSIX-only; guarded so the agent stays runnable off-Pi.
         st = os.statvfs("/")
@@ -537,23 +620,77 @@ def host_metrics():
         free = st.f_bavail * st.f_frsize
         if total:
             data["disk_used_percent"] = round((total - free) / total * 100, 1)
+            data["disk_free_gb"] = round(free / 1073741824.0, 1)
     except (OSError, AttributeError):
         pass
+
+    if "disk_used_percent" not in data:
+        # shutil answers everywhere, including Windows. Not the first choice on
+        # a Pi: statvfs distinguishes free from available-to-this-user, and on
+        # a filesystem with reserved blocks those differ by a few percent --
+        # which is exactly the range where a disk warning fires.
+        try:
+            import shutil
+            total, _, free = shutil.disk_usage(os.path.abspath(os.sep))
+            if total:
+                data["disk_used_percent"] = round((total - free) / total * 100, 1)
+                data["disk_free_gb"] = round(free / 1073741824.0, 1)
+        except Exception:
+            pass
 
     try:
         meminfo = {}
         with open("/proc/meminfo") as fh:
             for line in fh:
                 key, _, rest = line.partition(":")
-                if key in ("MemTotal", "MemAvailable"):
+                if key in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree"):
                     meminfo[key] = int(rest.split()[0])
         if "MemTotal" in meminfo:
             data["mem_total_mb"] = round(meminfo["MemTotal"] / 1024, 1)
             if "MemAvailable" in meminfo:
                 used = meminfo["MemTotal"] - meminfo["MemAvailable"]
                 data["host_mem_used_mb"] = round(used / 1024, 1)
+        # Swap sized as well as used. A percentage without the size behind it
+        # cannot tell 3% of 100 MB from 3% of 5 GB, and on a board with 1 GB of
+        # RAM that difference is the whole story.
+        if "SwapTotal" in meminfo:
+            data["swap_total_mb"] = round(meminfo["SwapTotal"] / 1024, 1)
+            if "SwapFree" in meminfo:
+                used = meminfo["SwapTotal"] - meminfo["SwapFree"]
+                data["swap_used_mb"] = round(used / 1024, 1)
     except (OSError, ValueError, IndexError):
         pass
+
+    # No /proc: ask Windows for the same four numbers.
+    if "mem_total_mb" not in data:
+        total, avail, swap_total, swap_avail = _windows_memory()
+        if total is not None:
+            data["mem_total_mb"] = total
+            if avail is not None:
+                data["host_mem_used_mb"] = round(total - avail, 1)
+        if swap_total:
+            data["swap_total_mb"] = swap_total
+            if swap_avail is not None:
+                data["swap_used_mb"] = round(swap_total - swap_avail, 1)
+
+    # Load, and the cores it is spread over. One without the other says very
+    # little: 4.0 is a busy single-core board and an idle quad.
+    try:
+        one, five, fifteen = os.getloadavg()
+        data["load_1"] = round(one, 2)
+        data["load_5"] = round(five, 2)
+        data["load_15"] = round(fifteen, 2)
+    except (OSError, AttributeError):
+        # Windows has no load average. Not a failure -- there is no such number
+        # to read, and deriving one from CPU percentage would be a different
+        # measurement borrowing the name.
+        pass
+
+    cores = os.cpu_count()
+    if cores:
+        data["cpu_cores"] = cores
+
+    data.update(read_throttling())
 
     return data
 

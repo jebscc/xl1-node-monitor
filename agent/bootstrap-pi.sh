@@ -1792,8 +1792,16 @@ wait_for_service() { # up to ~60s for /health to answer
 # already-configured device -- so starting read-only here would leave it
 # running without a signing key and quietly not anchoring, which is the exact
 # failure the whole step exists to prevent.
+# The env file existing IS the evidence that this device has a signing key.
+# Not DONE_ANCHOR: the state file lives in the invoking user's home, so it is
+# absent on any device set up before this wizard kept state, under a different
+# user, or under sudo -- while the key on disk is still perfectly real. Keying
+# this off the flag meant a device with a working key was restarted read-only
+# and stopped anchoring, and the machines it happened to were exactly the
+# oldest and most established ones.
 ANCHOR_ENV_ARG=""
-[ "${DONE_ANCHOR:-0}" = 1 ] && $SUDO test -s "$ANCHOR_ENV" && ANCHOR_ENV_ARG="$ANCHOR_ENV"
+$SUDO test -s "$ANCHOR_ENV" && ANCHOR_ENV_ARG="$ANCHOR_ENV"
+
 # Marked as anchoring, but the key file it would use is not there. Say so
 # rather than start read-only and move on: the one-time block below is skipped
 # on this device, so nothing further would notice, and it would sit healthy and

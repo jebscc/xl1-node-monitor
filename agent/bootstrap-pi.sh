@@ -1622,9 +1622,14 @@ head_ "11. Anchoring  (required)"
 #
 # The part that cannot be automated is putting gas in the throwaway key. The
 # wizard stops there and waits, and the wait survives closing the terminal.
-if [ "${DONE_ANCHOR:-0}" = 1 ]; then
-  ok "anchoring is already set up here"
-else
+# Re-running this is how a device is upgraded, so what follows has to happen
+# every time -- the source is re-fetched, the image rebuilt and the container
+# recreated. That is the only way a newer SDK reaches a Pi: it is pinned by
+# the lockfile inside the image, so nothing changes until the image does.
+#
+# What must NOT happen twice is below: generating a key, waiting for gas, and
+# putting a delegation on chain. Those cost money and are done once.
+if [ "${DONE_ANCHOR:-0}" != 1 ]; then
 
 note "Anchoring writes the hash of each reading to XL1, so anyone can check"
 note "later that the reading was not edited. Only the hash goes on chain --"
@@ -1633,6 +1638,8 @@ note ""
 note "It costs gas: about 0.0001186 XL1 per anchor, hourly, so roughly one"
 note "XL1 a year. That is measured on Sequence, not estimated."
 printf '\n'
+
+fi
 
 # --- the service source ------------------------------------------------------
 # Only the files are wanted here, never the history, so this is a tarball
@@ -1780,7 +1787,22 @@ wait_for_service() { # up to ~60s for /health to answer
   return 1
 }
 
-start_anchor_service \
+# With its key if this device already has one. A re-run rebuilds the image and
+# recreates the container, and the handoff further down is skipped on an
+# already-configured device -- so starting read-only here would leave it
+# running without a signing key and quietly not anchoring, which is the exact
+# failure the whole step exists to prevent.
+ANCHOR_ENV_ARG=""
+[ "${DONE_ANCHOR:-0}" = 1 ] && $SUDO test -s "$ANCHOR_ENV" && ANCHOR_ENV_ARG="$ANCHOR_ENV"
+# Marked as anchoring, but the key file it would use is not there. Say so
+# rather than start read-only and move on: the one-time block below is skipped
+# on this device, so nothing further would notice, and it would sit healthy and
+# quietly not anchoring until someone read the panel closely.
+if [ "${DONE_ANCHOR:-0}" = 1 ] && [ -z "$ANCHOR_ENV_ARG" ]; then
+  warn "marked as anchoring, but $ANCHOR_ENV is missing or empty" \
+       "it will come up read-only and stop anchoring. Restore that file, or remove DONE_ANCHOR=1 from $STATE to set anchoring up from scratch."
+fi
+start_anchor_service $ANCHOR_ENV_ARG \
   || die "the anchor service would not start. Check: sudo docker logs xl1-service-anchor-1"
 wait_for_service || {
   # The body, not just "no answer". This service starts cleanly and then
@@ -1790,7 +1812,18 @@ wait_for_service || {
   [ -n "$why" ] && printf '  the service replied: %s\n' "$why" >&2
   die "the anchor service started but is not answering on 127.0.0.1:8090. Check: sudo docker logs xl1-service-anchor-1"
 }
-ok "anchor service is up (read-only -- it holds no key yet)"
+if [ -n "$ANCHOR_ENV_ARG" ]; then
+  ok "anchor service rebuilt and holding its key"
+  sdk="$(curl -fsS --max-time 10 http://127.0.0.1:8090/versions 2>/dev/null \
+         | sed -n 's/.*"@xyo-network\/xl1-sdk":"\([^"]*\)".*/\1/p')"
+  [ -n "$sdk" ] && ok "service SDK $sdk"
+else
+  ok "anchor service is up (read-only -- it holds no key yet)"
+fi
+
+if [ "${DONE_ANCHOR:-0}" = 1 ]; then
+  ok "anchoring was already set up here -- nothing to sign again"
+else
 
 # --- the throwaway key -------------------------------------------------------
 if [ -z "${ATTESTOR_ADDRESS:-}" ] && $SUDO test -s "$KEYS_DIR/attestor.key"; then

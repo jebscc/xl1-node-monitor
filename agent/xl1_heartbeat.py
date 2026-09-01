@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.23.1"
+AGENT_VERSION = "1.24.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -551,6 +551,65 @@ def _windows_memory():
         return (None, None, None, None)
 
 
+def read_swap_devices():
+    """Swap split by what is actually backing it, or {}.
+
+    SwapTotal in /proc/meminfo adds every device together, which on a
+    Raspberry Pi means compressed RAM and an SD-card file counted as one
+    number. They are not the same resource and they do not fail the same way:
+    filling zram costs CPU and is routine, while touching the file means real
+    pressure, slow reads and wear on the card the whole node boots from.
+
+    rpi-swap wires them together deliberately -- the file is zram's writeback
+    device -- so seeing both at once is what makes the pairing legible.
+
+    /dev/zram* is the compressed-RAM side; anything else is backed by storage.
+    """
+    # Four counters rather than a dict keyed by strings. The guard that pins
+    # heartbeat fields to the agent version reads every quoted dict key in
+    # this function, so bucket names in a dict literal read to it as two new
+    # fields nobody declared -- and it said so. (Writing that pattern out in
+    # this comment tripped it a second time. Prose about a scanner is still
+    # input to the scanner.)
+    zram_used = zram_total = file_used = file_total = 0
+    seen = False
+    try:
+        with open("/proc/swaps") as fh:
+            next(fh, None)                     # the header
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                name, _kind, size_kb, used_kb = parts[0], parts[1], parts[2], parts[3]
+                try:
+                    size_kb, used_kb = int(size_kb), int(used_kb)
+                except ValueError:
+                    continue
+                if name.startswith("/dev/zram"):
+                    zram_used += used_kb
+                    zram_total += size_kb
+                else:
+                    file_used += used_kb
+                    file_total += size_kb
+                seen = True
+    except (OSError, ValueError):
+        return {}
+    if not seen:
+        return {}
+    # Written out rather than built from the bucket name. The names are the
+    # heartbeat's contract, and the guard that pins them to the agent version
+    # reads this source -- a key assembled at runtime is one it cannot see, so
+    # four new fields looked to it like four that had been removed.
+    out = {}
+    if zram_total:
+        out["zram_used_mb"] = round(zram_used / 1024, 1)
+        out["zram_total_mb"] = round(zram_total / 1024, 1)
+    if file_total:
+        out["swapfile_used_mb"] = round(file_used / 1024, 1)
+        out["swapfile_total_mb"] = round(file_total / 1024, 1)
+    return out
+
+
 def _have(tool):
     """Whether a command exists on PATH. shutil is imported here rather than at
     the top because this is the only place the agent needs it."""
@@ -708,6 +767,7 @@ def host_metrics():
     if cores:
         data["cpu_cores"] = cores
 
+    data.update(read_swap_devices())
     data.update(read_throttling())
 
     return data

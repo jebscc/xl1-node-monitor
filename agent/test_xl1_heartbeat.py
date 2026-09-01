@@ -486,6 +486,7 @@ REPORTED_FIELDS = {
     # failure: Windows has no load average and no vcgencmd.
     "load_1", "load_5", "load_15", "cpu_cores",
     "swap_used_mb", "swap_total_mb", "disk_free_gb",
+    "zram_used_mb", "zram_total_mb", "swapfile_used_mb", "swapfile_total_mb",
     "undervolted_now", "undervolted_ever", "throttled_now", "throttled_ever",
 }
 
@@ -511,7 +512,7 @@ def _fields_in_source():
     # read_throttling returns a dict that host_metrics merges in, so its keys
     # are heartbeat fields too and nothing else here would find them.
     for fn in ("collect", "container_info", "container_stats", "host_metrics",
-               "read_throttling"):
+               "read_throttling", "read_swap_devices"):
         body = re.search(r"\ndef %s\(.*?(?=\ndef |\Z)" % fn, src, re.S)
         if body:
             keys |= set(re.findall(r'"%s":' % NAME, body.group(0)))

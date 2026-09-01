@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 #
-# From a freshly flashed Raspberry Pi to a device on the Explorer Grid.
-#
-# It asks. Run it with no arguments and it walks through every decision --
-# what the device is called, whether it says where it is, whether it needs
-# Docker -- and shows what it will do before doing any of it.
+# From a freshly flashed Raspberry Pi to a device on the Explorer Grid, in
+# eleven steps. It asks before each one, and shows what it will do first.
 #
 #   curl -fsSL <this-url> | bash
 #
+# What it installs, all of it on this machine:
+#
+#   the heartbeat agent    reports how the Pi is doing, every 30 seconds
+#   an XL1 block producer  built here and run in Docker          (step 10)
+#   the anchoring service  writes a hash of each reading to XL1  (step 11)
+#
+# The last two are required, deliberately. A device that cannot anchor is a
+# machine making claims about itself that nobody can check afterwards, and
+# checkable claims are the whole argument the grid rests on.
+#
 # Every answer can also be given as a flag, and anything given is not asked
-# about. That is what makes it usable from a script as well as from a chair:
+# about -- which is what makes this usable from a script as well as a chair:
 #
 #   --node-id NAME     what the device is called on the grid
 #   --label TEXT       a human name for it
@@ -19,28 +26,23 @@
 #   --country CC       country for that lookup (default us)
 #   --radius KM        how wide the location claim is (default 25)
 #   --no-location      do not ask about location; report none
-#   --with-docker      install Docker (only if this Pi will run a node)
+#   --with-docker      install Docker without asking (the node needs it)
 #   --tailscale-key K  join the tailnet with an auth key instead of a browser
-#
-# Tailscale is required, not optional. Every device on the grid is reachable
-# over it, and there is no flag to skip it -- see step 5.
 #   --backend URL      the grid's backend
-#   --grid URL         where devices are registered
+#   --account URL      where an operator signs in to see their devices
+#   --grid URL         the older name for --account, still accepted
 #   --agent-from PATH  use a local xl1_heartbeat.py instead of downloading
-#   --yes              take the answers given and ask nothing
+#   --yes, -y          take the answers given and ask nothing
 #   --check            report what it found and stop, changing nothing
 #   --fresh            ignore a half-finished run and start from the top
 #
-# Piped into bash, stdin is this script -- so the questions are read from
-# /dev/tty instead. A plain `read` would swallow the rest of the file and the
-# run would end somewhere in the middle of a function. Where there is no
-# terminal at all (cron, CI), it says so and asks for flags rather than
-# hanging on a prompt nobody can answer.
+# Tailscale is required too, and has no flag to skip it -- see step 5.
 #
-# WHAT IT DOES NOT DO: install an XL1 node. That is a much larger thing and a
-# decision about what the machine is for, rather than a step in joining the
-# grid. A device that reports and anchors is a full member of a grid without
-# one -- corroboration is the point, and it does not require producing blocks.
+# Piped into bash, stdin is this script, so questions are read from /dev/tty
+# instead. A plain `read` would swallow the rest of the file and the run would
+# end somewhere in the middle of a function. With no terminal at all (cron,
+# CI) it says so and asks for flags rather than hanging on a prompt nobody can
+# answer.
 
 set -uo pipefail
 
@@ -97,7 +99,7 @@ AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
 STATED_RADIUS="25"; WITH_DOCKER=""; NO_LOCATION=0
-POSTCODE=""; COUNTRY_CC="us"; WANT_TS=""; TS_KEY=""; FRESH=0; REUSING_INSTALLED=0
+POSTCODE=""; COUNTRY_CC="us"; TS_KEY=""; FRESH=0; REUSING_INSTALLED=0
 DONE_PREREQS=0; DONE_TAILSCALE=0; DONE_AGENT=0
 AGENT_FROM=""; ASSUME_YES=0; CHECK_ONLY=0
 
@@ -116,11 +118,47 @@ else G=""; R=""; Y=""; C=""; B=""; D=""; X=""; fi
 # the escape would only be noise in a log.
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then EOL=$'\033[K'; else EOL=""; fi
 
+# Marks and rules, in two sets.
+#
+# A tick reads faster than the word "ok" and a heavy rule separates steps
+# better than a blank line -- but only where the terminal can draw them. This
+# runs over SSH from phones, from cron, and into log files, and a box-drawing
+# character that arrives as a question mark is worse than the plain word it
+# replaced.
+#
+# So the test is the same one the colours use, plus the locale actually saying
+# UTF-8. Anything short of that gets ASCII that has always worked.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && \
+   printf '%s' "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" | grep -qi 'utf-*8'; then
+  M_OK=$'\u2714'; M_WARN=$'\u25b2'; M_BAD=$'\u2718'
+  M_STEP=$'\u25b8'; RULE=$'\u2500'
+else
+  M_OK="ok"; M_WARN="!!"; M_BAD="xx"; M_STEP=">"; RULE="-"
+fi
+
+# A rule as wide as the terminal, capped so it stays readable on a wide one
+# and never wraps on a narrow one. tput is not always there; 62 is a sane
+# width for a phone-sized SSH window.
+rule() {
+  cols="$(tput cols 2>/dev/null || echo 62)"
+  [ "$cols" -gt 72 ] 2>/dev/null && cols=72
+  [ "$cols" -lt 24 ] 2>/dev/null && cols=24
+  i=0; line=""
+  while [ "$i" -lt "$cols" ]; do line="$line$RULE"; i=$((i + 1)); done
+  printf '%s%s%s\n' "$D" "$line" "$X"
+}
+
 say()  { printf '  %s\n' "$1"; }
-ok()   { printf '  %sok%s    %s\n' "$G" "$X" "$1"; }
-warn() { printf '  %swarn%s  %s\n' "$Y" "$X" "$1"; [ $# -gt 1 ] && printf '        %s%s%s\n' "$D" "$2" "$X"; return 0; }
-bad()  { printf '  %sstop%s  %s\n' "$R" "$X" "$1"; [ $# -gt 1 ] && printf '        %s%s%s\n' "$D" "$2" "$X"; return 0; }
-head_(){ printf '\n%s%s%s\n' "$B" "$1" "$X"; }
+ok()   { printf '  %s%s%s  %s\n' "$G" "$M_OK" "$X" "$1"; }
+warn() { printf '  %s%s%s  %s\n' "$Y" "$M_WARN" "$X" "$1"; [ $# -gt 1 ] && printf '     %s%s%s\n' "$D" "$2" "$X"; return 0; }
+bad()  { printf '  %s%s%s  %s\n' "$R" "$M_BAD" "$X" "$1"; [ $# -gt 1 ] && printf '     %s%s%s\n' "$D" "$2" "$X"; return 0; }
+# A step header: a rule, then the number in colour and the title in bold, so a
+# reader scrolling back can find where each step began.
+head_(){
+  printf '\n'
+  rule
+  printf '%s%s%s %s%s%s\n\n' "$C" "$M_STEP" "$X" "$B" "$1" "$X"
+}
 note() { printf '  %s%s%s\n' "$D" "$1" "$X"; }
 die()  { printf '%serror:%s %s\n' "$R" "$X" "$1" >&2; exit 2; }
 
@@ -351,8 +389,12 @@ note "30 seconds -- uptime, temperature, whether it is online. Optionally it"
 note "also commits those readings to XYO Layer One, so anyone can check they"
 note "were not edited afterwards."
 note ""
-note "It does NOT install an XL1 node, and it never asks for a wallet, a"
-note "seed phrase or a private key. Nothing here can spend anything."
+note "It also installs an XL1 block producer and the anchoring service"
+note "that commits those readings -- steps 10 and 11, both required."
+note ""
+note "It never asks for a wallet, a seed phrase or a private key, with one"
+note "exception it will explain when it gets there: binding the anchoring"
+note "key to your producer needs the producer phrase, once, typed by you."
 
 # =============================================================================
 head_ "1. What this machine is"
@@ -870,7 +912,6 @@ save_state
 # =============================================================================
 head_ "5. Joining your private network  (required)"
 # =============================================================================
-WANT_TS=1     # required: there is deliberately no way to answer no
 if have tailscale && tailscale status >/dev/null 2>&1; then
   ok "already on a tailnet as $(tailscale ip -4 2>/dev/null | head -1)"
   TS_DONE=1
@@ -880,7 +921,7 @@ else
   note "required rather than offered. Two concrete reasons:"
   note ""
   note "  Devices on different home networks cannot see each other. A device"
-  note "  on 192.168.4.x cannot reach one on 192.168.5.x, which is exactly"
+  note "  on 192.168.1.x cannot reach one on 192.168.2.x, which is exactly"
   note "  the case where one wants to anchor through another's service."
   note ""
   note "  A headless Pi in a cupboard is otherwise reachable only from its"

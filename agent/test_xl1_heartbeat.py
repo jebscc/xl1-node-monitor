@@ -442,6 +442,12 @@ REPORTED_FIELDS = {
     "stated_location", "stated_lat", "stated_lon", "stated_radius_km",
     # identity and liveness
     "node_id", "label", "role", "network", "live", "ready", "agent_version", "agent_degraded",
+    # How long the node takes to build a block. The budget travels with the
+    # figures because it is settable per device, and the sample count travels
+    # with them because the node chooses which builds to log -- an average
+    # over three is a different claim from one over three hundred.
+    "build_samples", "build_ms_avg", "build_ms_max", "build_over_budget",
+    "build_budget_ms",
     "os_updates", "os_security_updates", "os_apt_age_hours", "os_reboot_required",
     "producer_balance_symbol", "producer_balance_raw",
     # stake held against this producer on the backing EVM, and the minimum,
@@ -614,6 +620,116 @@ def test_a_real_balance_is_cached(monkeypatch):
     assert agent.fetch_standing("xl1-producer") == (1.5, True, None, None, None, None)
     assert agent.fetch_standing("xl1-producer") == (1.5, True, None, None, None, None)
     assert len(calls) == 1, "a real answer should be cached for the interval"
+
+
+# --- how long it takes to build a block ---------------------------------------
+#
+# The only leading indicator on the panel. Blocks produced and share of the
+# field both report a decline that has already happened; build time crosses
+# the block interval before races start being lost.
+
+BUILD_LOG = "\n".join([
+    "[BlockRunner [SimpleBlockRunner]] [Slow] Generated time payload in 190ms",
+    "[BlockRunner [SimpleBlockRunner]] Building block 580634",
+    "[BlockRunner [SimpleBlockRunner]] [Slow] Generated time payload in 250ms",
+    "[BlockRunner [SimpleBlockRunner]] Building block 580635",
+    "[BlockRunner [SimpleBlockRunner]] [Slow] Generated time payload in 1200ms",
+    "[BlockRunner [SimpleBlockRunner]] Building block 580636",
+])
+
+
+def test_build_times_are_read_from_the_log(monkeypatch):
+    _stub_run(monkeypatch, [("docker logs", BUILD_LOG)])
+    samples, avg_ms, max_ms, over = agent.read_build_times("xl1-producer")
+    assert samples == 3
+    assert avg_ms == round((190 + 250 + 1200) / 3)
+    assert max_ms == 1200
+    # One of the three is past the default 1s budget.
+    assert over == 1
+
+
+def test_the_untagged_line_counts_too(monkeypatch):
+    """The node tags these "[Slow]" by its own standard. Keying off the tag
+    would silently drop every build it considered fine, so the reading would
+    improve the moment the node got faster at deciding what to mention."""
+    _stub_run(monkeypatch, [
+        ("docker logs", "[BlockRunner] Generated time payload in 42ms"),
+    ])
+    assert agent.read_build_times("xl1-producer") == (1, 42, 42, 0)
+
+
+def test_a_stray_millisecond_figure_is_not_a_build(monkeypatch):
+    """The log is full of durations. Only this one measures a build, and a
+    looser match would average this node's boot time into its build time."""
+    _stub_run(monkeypatch, [
+        ("docker logs", "\n".join([
+            "[xl1] system ready (producer in 7982ms)",
+            "[BlockRunner] Building block 569649",
+            "connection retry after 500ms",
+        ])),
+    ])
+    assert agent.read_build_times("xl1-producer") is None
+
+
+def test_an_impossible_figure_is_dropped(monkeypatch):
+    """One malformed line must not drag the average somewhere impossible. The
+    average is the number an operator acts on; a single bad parse showing 40
+    minutes would send them looking for a fault that is not there."""
+    _stub_run(monkeypatch, [
+        ("docker logs", "\n".join([
+            "[BlockRunner] Generated time payload in 200ms",
+            "[BlockRunner] Generated time payload in 999999999ms",
+        ])),
+    ])
+    assert agent.read_build_times("xl1-producer") == (1, 200, 200, 0)
+
+
+def test_no_build_lines_is_not_a_reading(monkeypatch):
+    """A node that has built nothing in the window is a real state, not a
+    zero. Reporting 0ms would read as instant builds."""
+    _stub_run(monkeypatch, [("docker logs", "[BlockRunner] Building block 1")])
+    assert agent.read_build_times("xl1-producer") is None
+    _stub_run(monkeypatch, [])
+    assert agent.read_build_times(None) is None
+
+
+def test_the_build_window_is_bounded(monkeypatch):
+    """A slow build last Tuesday is not a current fault, for the same reason
+    the eligibility scan is windowed."""
+    seen = []
+
+    def fake_run(args, timeout=10, **_kw):
+        seen.append(args)
+        return ""
+
+    monkeypatch.setattr(agent, "run", fake_run)
+    agent.read_build_times("xl1-producer")
+    assert "--since" in seen[0], seen[0]
+    assert agent.BUILD_WINDOW in seen[0]
+
+
+def test_stderr_is_merged_for_build_lines(monkeypatch):
+    """The node splits its output across both streams. Reading one halves the
+    sample without saying so."""
+    seen = {}
+
+    def fake_run(args, timeout=10, merge_stderr=False, **_kw):
+        seen["merge"] = merge_stderr
+        return ""
+
+    monkeypatch.setattr(agent, "run", fake_run)
+    agent.read_build_times("xl1-producer")
+    assert seen["merge"] is True
+
+
+def test_the_budget_travels_with_the_figures(monkeypatch):
+    """The panel must not hard-code a budget of its own: it is settable per
+    device, and a fixed line at the far end would draw one node's builds
+    against another node's threshold."""
+    monkeypatch.setattr(agent, "BUILD_BUDGET_MS", 100)
+    _stub_run(monkeypatch, [("docker logs", BUILD_LOG)])
+    _samples, _avg, _max, over = agent.read_build_times("xl1-producer")
+    assert over == 3
 
 
 # --- the node's own eligibility verdict ---------------------------------------

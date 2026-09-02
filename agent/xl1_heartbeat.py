@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.24.0"
+AGENT_VERSION = "1.25.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -110,6 +110,19 @@ ELIGIBILITY_WINDOW = os.environ.get("XL1_ELIGIBILITY_WINDOW", "20m")
 # and never the mnemonic. Lines are capped so one enormous stack trace cannot
 # turn a heartbeat into a megabyte.
 LOG_TAIL_LINES = int(os.environ.get("XL1_LOG_TAIL_LINES", "20"))
+# How long the node takes to build a block, and what counts as too long.
+#
+# This is the only leading indicator the panel has. Blocks produced and share
+# of the field both report a decline that has already happened; build time
+# crosses the block interval BEFORE races start being lost, so it is the one
+# figure that gives any warning.
+#
+# The budget is not the block interval. It is well below it on purpose: the
+# useful moment to look is when builds are trending toward the interval, not
+# when they have already passed it and the node is losing.
+BUILD_WINDOW = os.environ.get("XL1_BUILD_WINDOW", "60m")
+BUILD_BUDGET_MS = int(os.environ.get("XL1_BUILD_BUDGET_MS", "1000"))
+BUILD_SAMPLES_MAX = int(os.environ.get("XL1_BUILD_SAMPLES_MAX", "500"))
 # Host package updates. Read on a slow cycle: this shells out to apt, the
 # answer changes daily at most, and a heartbeat must never wait on it. Set
 # XL1_OS_UPDATE_INTERVAL to 0 to switch the check off entirely.
@@ -1654,6 +1667,58 @@ def read_blocked_reason(name):
     return None
 
 
+_BUILD_MS = re.compile(r"generated\s+time\s+payload\s+in\s+(\d+(?:\.\d+)?)\s*ms",
+                       re.IGNORECASE)
+
+
+def read_build_times(name):
+    """How long the node took to build blocks, or None.
+
+    Returns (samples, avg_ms, max_ms, over_budget).
+
+    THE SAMPLE IS NOT EVERY ATTEMPT. The node decides which of these lines to
+    print -- on the machines seen so far it tags them "[Slow]" and prints them
+    when it judges the build slow by its own standard, which is far below the
+    budget here. So the average is the average of what was logged, not the
+    node's mean build time, and it is biased upward by exactly the builds the
+    node thought worth mentioning.
+
+    That is still worth reporting, because the question being asked is "are
+    the slow ones getting slower", and a trend in the logged figures answers
+    it. But the count travels with the numbers so the reader can see what they
+    are an average OF -- three samples in an hour is a different claim from
+    three hundred, and without the count both render as one confident figure.
+
+    Windowed rather than cumulative, for the same reason read_blocked_reason
+    is: a slow build last Tuesday is not a current fault.
+    """
+    if not name or not BUILD_WINDOW:
+        return None
+    # merge_stderr for the same reason as everywhere else here -- the node
+    # splits its output across both streams and reading one silently halves it.
+    out = run(["docker", "logs", "--since", BUILD_WINDOW, name],
+              timeout=30, merge_stderr=True)
+    if not out:
+        return None
+    vals = []
+    for match in _BUILD_MS.finditer(out):
+        try:
+            value = float(match.group(1))
+        except ValueError:
+            continue
+        # A build cannot take negative time, and an hour is a misparse rather
+        # than a very slow Pi. Bounded so one malformed line cannot drag the
+        # average somewhere impossible.
+        if 0 <= value <= 3_600_000:
+            vals.append(value)
+    if not vals:
+        return None
+    # Newest, if a busy hour produced more than we intend to weigh.
+    vals = vals[-BUILD_SAMPLES_MAX:]
+    over = sum(1 for v in vals if v > BUILD_BUDGET_MS)
+    return (len(vals), round(sum(vals) / len(vals)), round(max(vals)), over)
+
+
 def read_log_tail(name):
     """The last few lines the node printed, or None.
 
@@ -1884,6 +1949,7 @@ def _slow_worker():
             _step("log_tail", lambda: _slow_put("log_tail", read_log_tail(name)))
             _step("image_inventory", lambda: _slow_put("image_inventory", read_image_inventory()))
             _step("blocked_reason", lambda: _slow_put("blocked_reason", read_blocked_reason(name)))
+            _step("build_times", lambda: _slow_put("build_times", read_build_times(name)))
             _step("producer_unit", lambda: _slow_put("producer_unit", read_producer_unit()))
             _step("rebuild_timer", lambda: _slow_put("rebuild_timer", read_rebuild_timer()))
             _step("repo_head", lambda: _slow_put("repo_head", read_repo_head()))
@@ -2064,6 +2130,21 @@ def collect():
     if tail:
         payload["log_tail"] = tail
     _degraded_note(degraded, "log_tail", bool(name) and not tail)
+
+    build = _slow_get("build_times", lambda: read_build_times(name))
+    if build:
+        samples, avg_ms, max_ms, over = build
+        payload["build_samples"] = samples
+        payload["build_ms_avg"] = avg_ms
+        payload["build_ms_max"] = max_ms
+        payload["build_over_budget"] = over
+        # Sent rather than assumed at the far end: the budget is settable per
+        # device, and a panel that hard-codes its own would draw one node's
+        # figures against another node's line.
+        payload["build_budget_ms"] = BUILD_BUDGET_MS
+    # Not degraded when absent. A node that has logged no build lines in the
+    # window is a node that has not built anything, which is a real state and
+    # not a fault in the agent.
 
     images = _slow_get("image_inventory", read_image_inventory)
     if images is not None:

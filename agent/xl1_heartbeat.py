@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.25.1"
+AGENT_VERSION = "1.26.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -242,6 +242,16 @@ ATTEST_INTERVAL = int(os.environ.get("XL1_ATTEST_INTERVAL", "3600"))
 # a system.
 ATTEST_SPOOL = os.environ.get(
     "XL1_ATTEST_SPOOL", "/var/lib/xl1-heartbeat/attestations")
+# The address this node SIGNS with, once learned, kept beside the spool.
+#
+# Persisted rather than held in memory because the only place it appears in
+# plain text is the node's own eligibility complaint, and a node that gets
+# staked stops complaining. Learning it once and forgetting it on the next
+# restart would revert the count to the reward address months from now, which
+# is exactly the silent failure this exists to remove.
+PRODUCER_ADDR_FILE = os.environ.get(
+    "XL1_PRODUCER_ADDR_FILE",
+    os.path.join(os.path.dirname(ATTEST_SPOOL), "producer-address"))
 # The service refuses to sign for an unauthenticated caller, and it is right to:
 # a signing key behind an open endpoint is worse than no signing. So the agent
 # has to present the same token. Same name as the service reads, so one value
@@ -881,7 +891,9 @@ def fetch_backfill_chunk(name):
     cursor = _producer_cursor["backfill"]
     if cursor is None or cursor < 0:
         return None
-    address = read_reward_address(name)
+    # The signer, not the reward wallet: this counts blocks, and blocks carry
+    # the address that signed them.
+    address, _fallback = counting_address(name)
     if not address:
         return None
     start = max(0, cursor - BACKFILL_CHUNK + 1)
@@ -965,7 +977,7 @@ def explorer_block_url(block):
 
 
 def fetch_producer_stats(name):
-    """Block production counts for this node's reward address, or None.
+    """Block production counts for the address this node signs with, or None.
 
     Refreshed every PRODUCER_INTERVAL seconds rather than every heartbeat.
     The address is sent only to the service on this host's loopback; the
@@ -986,7 +998,7 @@ def fetch_producer_stats(name):
     if _producer_cache["at"] and now - _producer_cache["at"] < PRODUCER_INTERVAL:
         return None
 
-    address = read_reward_address(name)
+    address, _fallback = counting_address(name)
     if not address:
         return None
     params = {"address": address, "window": PRODUCER_WINDOW}
@@ -1734,6 +1746,79 @@ def read_build_times(name):
     return (len(vals), round(sum(vals) / len(vals)), round(max(vals)), over)
 
 
+_PRODUCER_ADDR = re.compile(r"\bproducer\s+((?:0x)?[0-9a-fA-F]{40})\b",
+                            re.IGNORECASE)
+_producer_addr_cache = {"value": None, "looked": False}
+
+
+def read_producer_address(name):
+    """The address this node signs blocks with, or None.
+
+    NOT the reward address. The wizard asks where rewards should be paid and
+    says "usually that wallet's own address" -- so pointing them at a separate
+    wallet is ordinary and supported. The two then differ, and only this one
+    appears in the blocks the node signs.
+
+    Counting production against the reward address in that case finds nothing,
+    for ever, and the panel reports it as "no blocks seen yet" across 100% of
+    chain history: scanned everything, looked for the wrong address, and said
+    so with complete confidence. Worse than not counting at all.
+
+    The node publishes this in its own eligibility line ("Producer <addr> has
+    insufficient stake"), the only place it appears in plain text on the host.
+    Cached on disk once found, because a staked node stops printing it.
+    """
+    if _producer_addr_cache["value"]:
+        return _producer_addr_cache["value"]
+    if not _producer_addr_cache["looked"]:
+        _producer_addr_cache["looked"] = True
+        try:
+            with open(PRODUCER_ADDR_FILE, "r") as fh:
+                stored = fh.read().strip().lower()
+            if re.fullmatch(r"[0-9a-f]{40}", stored):
+                _producer_addr_cache["value"] = stored
+                return stored
+        except OSError:
+            pass
+    if not name:
+        return None
+    out = run(["docker", "logs", "--since", BUILD_WINDOW, name],
+              timeout=30, merge_stderr=True)
+    if not out:
+        return None
+    match = _PRODUCER_ADDR.search(out)
+    if not match:
+        return None
+    addr = match.group(1).lower()
+    if addr.startswith("0x"):
+        addr = addr[2:]
+    _producer_addr_cache["value"] = addr
+    # Best effort. A read-only state directory is not a reason to stop
+    # counting correctly for the rest of this run.
+    try:
+        os.makedirs(os.path.dirname(PRODUCER_ADDR_FILE), exist_ok=True)
+        with open(PRODUCER_ADDR_FILE, "w") as fh:
+            fh.write(addr + "\n")
+    except OSError:
+        pass
+    return addr
+
+
+def counting_address(name):
+    """(address, is_fallback) -- what block production is counted against.
+
+    The signing address when known, because that is what appears in blocks.
+    The reward address otherwise: right on the common setup where the two are
+    the same, and the best guess available when they are not. The flag travels
+    so the panel can say which happened rather than presenting a possibly
+    wrong zero as fact.
+    """
+    signer = read_producer_address(name)
+    if signer:
+        return signer, False
+    return read_reward_address(name), True
+
+
 def read_log_tail(name):
     """The last few lines the node printed, or None.
 
@@ -2221,6 +2306,21 @@ def collect():
     # not-due case -- 29 beats out of 30 -- read as a failure.
     _degraded_note(degraded, "producer_stats",
                    bool(name) and not stats and producer_scan_due())
+    # WHICH address those counts were made against. Not the address itself --
+    # counts only, as below -- but whether the one used is the address this
+    # node actually signs with.
+    #
+    # True means the signing address could not be learned and the reward
+    # address was used instead. On a node whose operator pointed rewards at a
+    # separate wallet, that scan is looking for an address which never signs
+    # anything, so it finds nothing for ever and the panel says "no blocks
+    # seen yet" across the whole chain. Absent means the count is against the
+    # signer and can be read at face value.
+    if name:
+        _counted_against, _fallback = counting_address(name)
+        if _fallback and _counted_against:
+            payload["produced_counting_fallback"] = True
+
     if stats:
         # Counts only. The reward address stays on this machine.
         payload["produced_recent"] = stats.get("produced")

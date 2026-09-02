@@ -448,6 +448,10 @@ REPORTED_FIELDS = {
     # over three is a different claim from one over three hundred.
     "build_samples", "build_ms_avg", "build_ms_max", "build_over_budget",
     "build_budget_ms",
+    # Whether the block counts were made against the address this node signs
+    # with, or fell back to the reward address because the signer was not
+    # known. Never the address itself -- counts only.
+    "produced_counting_fallback",
     "os_updates", "os_security_updates", "os_apt_age_hours", "os_reboot_required",
     "producer_balance_symbol", "producer_balance_raw",
     # stake held against this producer on the backing EVM, and the minimum,
@@ -757,6 +761,121 @@ def test_the_budget_travels_with_the_figures(monkeypatch):
     _stub_run(monkeypatch, [("docker logs", BUILD_LOG)])
     _samples, _avg, _max, over = agent.read_build_times("xl1-producer")
     assert over == 3
+
+
+# --- which address production is counted against ------------------------------
+#
+# The wizard asks where rewards should be paid and says "usually that wallet's
+# own address", so pointing them at a separate wallet is ordinary. Blocks carry
+# the SIGNING address, and counting against the reward one then finds nothing
+# for ever -- reported as "no blocks seen yet" across 100% of chain history,
+# which is a confident wrong answer rather than a missing one.
+
+# Synthetic, like every other address in this file. The real one was
+# briefly here after being read off a live node, which is exactly how a
+# producer's address ends up in a public repository.
+SIGNER = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+REWARD = "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0"
+STAKE_LOG = "[xl1-producer] Producer %s has insufficient stake." % SIGNER
+
+
+def _forget_signer(monkeypatch, tmp_path):
+    """The cache is module state and the file outlives a test."""
+    monkeypatch.setattr(agent, "_producer_addr_cache",
+                        {"value": None, "looked": False})
+    monkeypatch.setattr(agent, "PRODUCER_ADDR_FILE",
+                        str(tmp_path / "producer-address"))
+
+
+def test_the_signing_address_is_read_from_the_nodes_own_log(monkeypatch, tmp_path):
+    _forget_signer(monkeypatch, tmp_path)
+    _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+
+def test_a_prefixed_address_is_normalised(monkeypatch, tmp_path):
+    """Some builds print it with 0x. The scan matches bare addresses, so one
+    stored with the prefix would never match a block and would look exactly
+    like a node that has produced nothing."""
+    _forget_signer(monkeypatch, tmp_path)
+    _stub_run(monkeypatch, [
+        ("docker logs", "Producer 0x%s has insufficient stake." % SIGNER.upper()),
+    ])
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+
+def test_a_duration_is_not_an_address(monkeypatch, tmp_path):
+    """"producer in 967ms" is on every start line. A looser match would store
+    nonsense as the address and count against it."""
+    _forget_signer(monkeypatch, tmp_path)
+    _stub_run(monkeypatch, [("docker logs", "[xl1] system ready (producer in 967ms)")])
+    assert agent.read_producer_address("xl1-producer") is None
+
+
+def test_the_address_survives_a_restart(monkeypatch, tmp_path):
+    """A staked node stops printing the eligibility line. Holding this only in
+    memory would revert counting to the reward address at the next restart --
+    months later, silently, on a node that had been counting correctly."""
+    _forget_signer(monkeypatch, tmp_path)
+    _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+    # Restart: cache cleared, and the log no longer carries the line.
+    monkeypatch.setattr(agent, "_producer_addr_cache",
+                        {"value": None, "looked": False})
+    _stub_run(monkeypatch, [("docker logs", "[BlockRunner] Building block 1")])
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+
+def test_counting_prefers_the_signer_over_the_reward_address(monkeypatch, tmp_path):
+    _forget_signer(monkeypatch, tmp_path)
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", REWARD)
+    _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])
+    address, fallback = agent.counting_address("xl1-producer")
+    assert address == SIGNER
+    assert fallback is False
+
+
+def test_counting_falls_back_and_says_so(monkeypatch, tmp_path):
+    """Without the signer the reward address is the best guess available -- and
+    right on the common setup where they are the same wallet. What must not
+    happen is reporting that count as though it were certain."""
+    _forget_signer(monkeypatch, tmp_path)
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", REWARD)
+    _stub_run(monkeypatch, [("docker logs", "[BlockRunner] Building block 1")])
+    address, fallback = agent.counting_address("xl1-producer")
+    assert address == REWARD
+    assert fallback is True
+
+
+def test_the_scan_is_sent_the_signing_address(monkeypatch, tmp_path):
+    """The one that matters.
+
+    Asserting counting_address alone would pass with fetch_producer_stats
+    still calling read_reward_address -- which is the bug being fixed. This
+    watches what the scan is actually asked for.
+    """
+    _forget_signer(monkeypatch, tmp_path)
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", REWARD)
+    monkeypatch.setattr(agent, "PRODUCER_URL", "http://127.0.0.1:8090/producer")
+    monkeypatch.setattr(agent, "_producer_cursor",
+                        {"known": True, "block": None, "backfill": None,
+                         "backfill_done": True})
+    monkeypatch.setattr(agent, "_producer_cache", {"at": 0, "value": None})
+    _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])
+
+    asked = {}
+
+    def fake_request(address, params):
+        asked["address"] = address
+        asked["params"] = params
+        return {"produced": 3, "window": 200}
+
+    monkeypatch.setattr(agent, "_producer_request", fake_request)
+    agent.fetch_producer_stats("xl1-producer")
+
+    assert asked["address"] == SIGNER, "the scan was sent the reward address"
+    assert asked["params"]["address"] == SIGNER
 
 
 # --- the node's own eligibility verdict ---------------------------------------

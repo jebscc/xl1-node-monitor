@@ -845,7 +845,12 @@ def test_a_new_wallet_phrase_replaces_the_remembered_address(monkeypatch, tmp_pa
 
     # The phrase is replaced. The node now announces a different identity, and
     # enough time has passed for the agent to ask again.
-    agent._producer_addr_cache["at"] = 0.0
+    # Far enough back to be due, measured against the same clock the code
+    # uses. Zero is not "long ago": time.monotonic() is uptime, so on a
+    # freshly booted machine -- a CI container, say -- zero is minutes ago
+    # and the value still counts as fresh. That passed here and failed there.
+    agent._producer_addr_cache["at"] = (
+        time.monotonic() - agent.PRODUCER_ADDR_RECHECK - 1)
     _stub_run(monkeypatch, [
         ("docker logs", "Producer %s has insufficient stake." % NEW_SIGNER),
     ])
@@ -879,7 +884,12 @@ def test_silence_does_not_erase_what_is_known(monkeypatch, tmp_path):
     _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])
     assert agent.read_producer_address("xl1-producer") == SIGNER
 
-    agent._producer_addr_cache["at"] = 0.0
+    # Far enough back to be due, measured against the same clock the code
+    # uses. Zero is not "long ago": time.monotonic() is uptime, so on a
+    # freshly booted machine -- a CI container, say -- zero is minutes ago
+    # and the value still counts as fresh. That passed here and failed there.
+    agent._producer_addr_cache["at"] = (
+        time.monotonic() - agent.PRODUCER_ADDR_RECHECK - 1)
     _stub_run(monkeypatch, [("docker logs", "[BlockRunner] Building block 1")])
     assert agent.read_producer_address("xl1-producer") == SIGNER
 

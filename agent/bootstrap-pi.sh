@@ -1528,29 +1528,45 @@ done
 # unless told otherwise, which is right for the usual case of one phrase and
 # one machine.
 #
-# It is wrong, silently, for the case that cost a long day: a second node given
-# the same phrase signs as the SAME producer. That is not two producers, it is
-# one identity on two machines, both proposing blocks for the same slot. The
-# node says nothing about it -- from its side it is simply producing.
+# It is wrong for two different people, and the question has to cover both.
 #
-# So it is asked rather than assumed, and only of people who say the phrase is
-# already in use. Everyone else keeps 0 without being made to think about
-# derivation paths.
+# The one that cost a long day: a second node given the same phrase signs as
+# the SAME producer. Not two producers -- one identity on two machines, both
+# proposing for the same slot, with the node saying nothing because from its
+# side it is simply producing.
+#
+# The other, quieter one: somebody with a single node who picked account 1 in
+# their wallet and expects this to use it. An earlier version of this asked
+# "is this phrase already used by another node?", which that person answers
+# NO, truthfully, and then gets account 0 with no way to say otherwise. A
+# question that only the person who already understands the problem can answer
+# correctly is not much of a safeguard.
+#
+# So it asks what it actually needs to know -- whether a specific account is
+# wanted -- and names both reasons. Everyone else keeps 0 without being made
+# to think about derivation paths.
 ACCOUNT_INDEX="${ACCOUNT_INDEX:-0}"
 printf '\n'
 note "One wallet phrase holds many addresses. A wallet extension shows them as"
-note "separate accounts; this node signs as the FIRST unless you say otherwise."
+note "separate accounts -- account 1, account 2 -- all from the same phrase."
 note ""
-note "That only matters if this phrase is already producing on another machine:"
-note "two nodes on the same account are one identity on two machines, both"
-note "building for the same slot, and nothing on either says so."
+note "This node uses the FIRST of them unless you say otherwise. Say otherwise"
+note "if either is true:"
+note ""
+note "  - you picked a particular account in your wallet for this node"
+note "  - this phrase is already producing on another machine"
+note ""
+note "The second matters most: two nodes on one account are not two producers,"
+note "they are one identity on two machines, both building for the same slot,"
+note "and nothing on either of them says so."
 printf '\n'
-if ask_yn "  Is this phrase already used by another node?" "n"; then
+if ask_yn "  Use a specific account from this wallet?" "n"; then
   tries=0
   while [ "$tries" -lt 5 ]; do
     tries=$((tries + 1))
-    note "The wallet's account number for THIS node. The first is 0, so a"
-    note "second machine on the same phrase usually wants 1."
+    note "The wallet's account number for THIS node, counting from 0. What a"
+    note "wallet calls \"Account 2\" is usually 1 here, and a second machine"
+    note "sharing a phrase wants anything but the number the first one uses."
     ACCOUNT_INDEX="$(ask "  Account number" "1")"
     case "$ACCOUNT_INDEX" in
       ''|*[!0-9]*) printf '  %sThat is not a number.%s\n' "$Y" "$X"; ACCOUNT_INDEX="" ;;

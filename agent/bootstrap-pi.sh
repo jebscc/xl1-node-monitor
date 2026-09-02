@@ -811,6 +811,37 @@ if [ -n "$POSTCODE" ] && [ -z "$STATED_LAT" ]; then
   fi
 fi
 
+# A location already on this machine, when this run has none of its own.
+#
+# Read from the agent's env for the same reason the credential is: the state
+# file lives in the invoking user's home and is missing on plenty of working
+# devices, so without this a re-run starts from nothing and asks again.
+#
+# Asking again was survivable. Answering FOR the operator was not: --yes takes
+# the default at every prompt, the default here is "no", and a device that had
+# been on the map came back off it with one line of output nobody was watching
+# for. A default may decline to switch something ON. It must not switch
+# something OFF that the operator chose.
+#
+# Only for the same device. Reading another device's location would place this
+# one where that one is, which is worse than placing it nowhere.
+_env_value() {  # _env_value <KEY> -- from the agent env, quotes stripped
+  { sudo -n sed -n "s/^$1=//p" "$AGENT_ENV" 2>/dev/null \
+    || sudo sed -n "s/^$1=//p" "$AGENT_ENV" 2>/dev/null; } \
+    | head -1 | sed 's/^"\(.*\)"$/\1/'
+}
+if [ "$NO_LOCATION" != 1 ] && [ -z "$STATED_LOCATION" ] && [ -z "$STATED_LAT" ] \
+   && [ -n "${INSTALLED_ID:-}" ] && [ "$NODE_ID" = "$INSTALLED_ID" ]; then
+  STATED_LOCATION="$(_env_value XL1_STATED_LOCATION)"
+  STATED_LAT="$(_env_value XL1_STATED_LAT)"
+  STATED_LON="$(_env_value XL1_STATED_LON)"
+  kept_radius="$(_env_value XL1_STATED_RADIUS_KM)"
+  [ -n "$kept_radius" ] && STATED_RADIUS="$kept_radius"
+  if [ -n "$STATED_LOCATION" ] || [ -n "$STATED_LAT" ]; then
+    ok "keeping the location already set on this device"
+  fi
+fi
+
 if [ "$NO_LOCATION" = 1 ]; then
   note "Skipped. The device will report no location and appear on no map."
 elif [ -n "$STATED_LOCATION" ] || [ -n "$STATED_LAT" ]; then

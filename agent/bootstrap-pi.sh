@@ -1225,9 +1225,28 @@ head_ "10. The XL1 block producer  (required)"
 # with, and `docker` would fail for a machine that is completely fine.
 SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
 
-if [ "${DONE_PRODUCER:-0}" = 1 ] && $SUDO docker ps --filter name=xl1-producer \
+# A running producer is the answer, on its own.
+#
+# This used to read `DONE_PRODUCER = 1 AND the container is running`, which
+# looks like belt and braces and is not: the flag lives in a state file in the
+# invoking user's home, so on any device set up before the wizard kept state,
+# under another user, or under sudo, it is absent -- and the live check could
+# not rescue it, because AND needs both. The else branch below does
+# `docker rm -f xl1-producer` and builds a fresh one, so a re-run on those
+# machines destroyed and recreated a block producer that was working, with
+# nothing on screen saying it was about to.
+#
+# The container being up IS the evidence that this step has been done. The
+# flag never added anything the check could not establish, and it subtracted
+# on exactly the machines that had been running longest.
+if $SUDO docker ps --filter name=xl1-producer \
      --format '{{.Names}}' 2>/dev/null | grep -q xl1-producer; then
   ok "the producer is already running here"
+  # Adopt it, so the state file agrees from now on.
+  if [ "${DONE_PRODUCER:-0}" != 1 ]; then
+    DONE_PRODUCER=1
+    save_state
+  fi
 else
 
 case "$ARCH" in

@@ -963,6 +963,13 @@ head_ "6. What will happen"
 NEED_APT=""
 have python3 || NEED_APT="$NEED_APT python3"
 have curl    || NEED_APT="$NEED_APT curl"
+# Installed rather than assumed. The firewall step used to configure ufw when
+# it happened to be present and otherwise print a note and carry on -- so an
+# image that ships without it produced a node with no firewall at all and a
+# line of advice that scrolls past during a long install. Declared here so it
+# appears in "what will happen" and the operator agrees to it like everything
+# else.
+have ufw     || NEED_APT="$NEED_APT ufw"
 [ "$WITH_DOCKER" = 1 ] && ! have docker && NEED_APT="$NEED_APT docker.io"
 
 printf '  %-14s %s\n' "device"  "$NODE_ID"
@@ -1003,6 +1010,54 @@ if [ -n "$NEED_APT" ]; then
 else
   ok "nothing to install"
 fi
+# --- somewhere to overflow to ------------------------------------------------
+# Raspberry Pi OS gives you zram: compressed RAM, fast, and sized from the RAM
+# it is compressing -- 955 MB of it on a 1 GB board. When zram fills there is
+# nowhere further to go, so the kernel starts killing processes, and the first
+# thing it kills on a node is usually the producer.
+#
+# A file on the card is the backstop. It sits at a lower priority than zram, so
+# it is untouched until zram is full -- which on a healthy node is never. It
+# costs card wear only when it is actually used, and a node using it was about
+# to lose a process instead.
+#
+# NOT the flat 4 GB of the published steps. That is fine on a Pi 4 with a big
+# card and wrong on a 1 GB Pi 3 with 6 GB free, where it would take two thirds
+# of what is left. Sized from RAM, capped, and skipped entirely when the disk
+# cannot spare it -- a node that runs out of card is worse off than one that
+# runs out of memory.
+# awk rather than grep: the question is "is there a swap device that is NOT
+# zram", which needs a negated field match. grep -E has no lookahead, and a
+# pattern written as though it did matches nothing and silently answers no.
+if [ -n "${RAM_MB:-}" ] \
+   && ! awk 'NR>1 && $1 !~ /^\/dev\/zram/ {found=1} END {exit !found}' /proc/swaps 2>/dev/null; then
+  SWAP_MB="$RAM_MB"
+  [ "$SWAP_MB" -lt 512 ] && SWAP_MB=512
+  [ "$SWAP_MB" -gt 2048 ] && SWAP_MB=2048
+  # Headroom the file does not eat into: images, logs and the anchor archive
+  # all grow on this card afterwards.
+  if [ -n "${DISK_MB:-}" ] && [ "$DISK_MB" -gt $((SWAP_MB + 3072)) ]; then
+    if sudo fallocate -l "${SWAP_MB}M" /swapfile 2>/dev/null \
+       && sudo chmod 600 /swapfile \
+       && sudo mkswap /swapfile >/dev/null 2>&1 \
+       && sudo swapon /swapfile 2>/dev/null; then
+      # Idempotent: the line is removed before it is added, so a re-run cannot
+      # leave two of them behind.
+      sudo sed -i '\#^/swapfile #d' /etc/fstab 2>/dev/null || true
+      printf '/swapfile none swap sw 0 0\n' | sudo tee -a /etc/fstab >/dev/null
+      ok "added a ${SWAP_MB}M swap file for zram to overflow into"
+    else
+      sudo swapoff /swapfile 2>/dev/null || true
+      sudo rm -f /swapfile 2>/dev/null || true
+      warn "could not create a swap file" \
+           "not fatal -- zram still works; the node has less room before the kernel starts killing processes"
+    fi
+  else
+    note "skipping the swap file: ${DISK_MB:-?} MB free is too little to spare"
+    note "${SWAP_MB} MB for one. zram still works; this was only a backstop."
+  fi
+fi
+
 DONE_PREREQS=1; save_state
 
 if [ "$WITH_DOCKER" = 1 ] && getent group docker >/dev/null 2>&1; then
@@ -1292,8 +1347,11 @@ if have ufw; then
     && ok "firewall on: ssh and tailscale in, everything else outbound only" \
     || warn "could not enable the firewall" "not fatal -- the node runs either way; see: sudo ufw status"
 else
-  note "ufw is not installed, so no firewall rules were set. The node runs"
-  note "either way; XYO's published steps use ufw if you want to add it later."
+  # Reached only when the install in step 7 failed, since ufw is on the apt
+  # list now. Still not fatal: a node with no firewall works, and stopping the
+  # run here would trade a working node for a missing rule.
+  warn "ufw could not be installed, so no firewall rules were set" \
+       "the node runs either way -- install it later with: sudo apt install ufw"
 fi
 # Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf
 # setting Storage=volatile, to spare the SD card. The effect is invisible until

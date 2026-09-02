@@ -452,6 +452,11 @@ REPORTED_FIELDS = {
     # with, or fell back to the reward address because the signer was not
     # known. Never the address itself -- counts only.
     "produced_counting_fallback",
+    # How often this node proposes a block, and over how many heights. The
+    # pair separates a producer with no slots -- proposing at every height and
+    # winning none -- from one having a quiet spell, which "blocks produced: 0"
+    # cannot.
+    "blocks_attempted", "blocks_attempted_span",
     "os_updates", "os_security_updates", "os_apt_age_hours", "os_reboot_required",
     "producer_balance_symbol", "producer_balance_raw",
     # stake held against this producer on the backing EVM, and the minimum,
@@ -624,6 +629,87 @@ def test_a_real_balance_is_cached(monkeypatch):
     assert agent.fetch_standing("xl1-producer") == (1.5, True, None, None, None, None)
     assert agent.fetch_standing("xl1-producer") == (1.5, True, None, None, None, None)
     assert len(calls) == 1, "a real answer should be cached for the interval"
+
+
+# --- how often it proposes, and over how many heights --------------------------
+#
+# The pair that separates "no slots" from "a quiet spell". A producer in the
+# rotation builds only for its assigned heights -- measured at ~6% on a node
+# taking 7.4% of blocks. One that is NOT in the rotation proposes at every
+# height and has every proposal discarded. Both look like "blocks produced: 0".
+
+IN_ROTATION = "\n".join([
+    "[BlockRunner] Building block 581640",
+    "[BlockRunner] [Slow] Generated time payload in 190ms",
+    "[BlockRunner] Building block 581648",
+    "[BlockRunner] Building block 581657",
+])
+
+NO_SLOTS = "\n".join(
+    "[BlockRunner] Building block %d" % n for n in range(581672, 581677))
+
+
+def test_a_node_with_slots_proposes_rarely(monkeypatch):
+    _stub_run(monkeypatch, [("docker logs", IN_ROTATION)])
+    attempts, span = agent.read_build_attempts("xl1-producer")
+    assert attempts == 3
+    assert span == 581657 - 581640 + 1          # 18 heights
+    # The ratio is the reading, and it is unit-free: no block time, no chain
+    # height, no clock.
+    assert attempts / span < 0.25
+
+
+def test_a_node_without_slots_proposes_at_every_height(monkeypatch):
+    """Five consecutive heights, five attempts. This is what the Pi 3 does,
+    and what no amount of 'blocks produced: 0' could ever have said."""
+    _stub_run(monkeypatch, [("docker logs", NO_SLOTS)])
+    attempts, span = agent.read_build_attempts("xl1-producer")
+    assert (attempts, span) == (5, 5)
+    assert attempts / span == 1.0
+
+
+def test_a_retry_is_still_an_attempt(monkeypatch):
+    """The node re-proposes the same height after a validation failure. That
+    is a real attempt and it is how a busy height actually looks."""
+    _stub_run(monkeypatch, [("docker logs", "\n".join([
+        "[BlockRunner] Building block 581672",
+        "[BlockRunner] Building block 581672 (retry 1)",
+    ]))])
+    assert agent.read_build_attempts("xl1-producer") == (2, 1)
+
+
+def test_a_boot_line_is_not_an_attempt(monkeypatch):
+    """"producer in 967ms" is on every start. Counting it would put a node
+    that has proposed nothing at one attempt over a span of nothing."""
+    _stub_run(monkeypatch, [("docker logs", "[xl1] system ready (producer in 967ms)")])
+    assert agent.read_build_attempts("xl1-producer") == (0, 0)
+
+
+def test_no_attempts_is_a_reading_not_a_silence(monkeypatch):
+    """Read the log, found no proposals: nought, reported. Distinct from a log
+    that could not be read, which stays None -- the same distinction the build
+    times draw, and for the same reason."""
+    _stub_run(monkeypatch, [("docker logs", "[BlockRunner] nothing of interest")])
+    assert agent.read_build_attempts("xl1-producer") == (0, 0)
+    _stub_run(monkeypatch, [])
+    assert agent.read_build_attempts("xl1-producer") is None
+    assert agent.read_build_attempts(None) is None
+
+
+def test_attempts_are_counted_from_proposals_not_from_timings(monkeypatch):
+    """Deliberately NOT counted from the build-time lines.
+
+    The node prints those only when it judges a build slow, so on a node that
+    proposes at every height and is quick about it they would report a handful
+    of attempts and hide the very thing this exists to show.
+    """
+    log = "\n".join(
+        ["[BlockRunner] Building block %d" % n for n in range(581672, 581682)]
+        + ["[BlockRunner] [Slow] Generated time payload in 190ms"])
+    _stub_run(monkeypatch, [("docker logs", log)])
+    attempts, span = agent.read_build_attempts("xl1-producer")
+    assert attempts == 10, "counted the timing lines instead of the proposals"
+    assert span == 10
 
 
 # --- how long it takes to build a block ---------------------------------------

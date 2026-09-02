@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.26.1"
+AGENT_VERSION = "1.27.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1845,6 +1845,57 @@ def counting_address(name):
     return read_reward_address(name), True
 
 
+_BUILDING = re.compile(r"\bbuilding block (\d+)", re.IGNORECASE)
+
+
+def read_build_attempts(name):
+    """(attempts, heights) -- how often this node proposes, or None.
+
+    The question this answers is the one that cost a night: is this node being
+    given slots, or is it shouting into the void?
+
+    A producer in the rotation builds only for the heights assigned to it --
+    measured at roughly 6% on a node taking 7.4% of blocks, which is to say it
+    wins nearly everything it builds. A node that is NOT in the rotation has no
+    assigned heights, so it proposes at every one of them and every proposal is
+    discarded by peers that do not recognise it. Build everything, win nothing.
+
+    Those two are indistinguishable from "blocks produced: 0", which is all the
+    panel could say before. Together with the produced count they are not
+    remotely alike: 0 wins from 6% of heights is a quiet spell, and 0 wins from
+    100% of heights is a node the network is ignoring.
+
+    Counted from "Building block N", which the node prints for every attempt --
+    NOT from the build-time samples, which it only prints when it judges a
+    build slow and which therefore undercount attempts badly.
+
+    heights is the span the attempts cover, so the ratio is self-contained:
+    attempts over span needs no block time, no chain height, and no clock.
+    """
+    if not name:
+        return None
+    # A second read of the same window that read_build_times takes. Left
+    # separate rather than folded together because they answer different
+    # questions and one is much older than the other; if a third reader ever
+    # wants this log, cache it once instead of adding another.
+    out = run(["docker", "logs", "--since", BUILD_WINDOW, name],
+              timeout=30, merge_stderr=True)
+    if out is None:
+        return None
+    heights = []
+    for match in _BUILDING.finditer(out):
+        try:
+            heights.append(int(match.group(1)))
+        except ValueError:
+            continue
+    if not heights:
+        # Read the log, found no attempts. A real state -- a node that has
+        # built nothing -- and reported as nought rather than as silence, for
+        # the same reason the build times are.
+        return (0, 0)
+    return (len(heights), max(heights) - min(heights) + 1)
+
+
 def read_log_tail(name):
     """The last few lines the node printed, or None.
 
@@ -2076,6 +2127,7 @@ def _slow_worker():
             _step("image_inventory", lambda: _slow_put("image_inventory", read_image_inventory()))
             _step("blocked_reason", lambda: _slow_put("blocked_reason", read_blocked_reason(name)))
             _step("build_times", lambda: _slow_put("build_times", read_build_times(name)))
+            _step("build_attempts", lambda: _slow_put("build_attempts", read_build_attempts(name)))
             _step("producer_unit", lambda: _slow_put("producer_unit", read_producer_unit()))
             _step("rebuild_timer", lambda: _slow_put("rebuild_timer", read_rebuild_timer()))
             _step("repo_head", lambda: _slow_put("repo_head", read_repo_head()))
@@ -2256,6 +2308,11 @@ def collect():
     if tail:
         payload["log_tail"] = tail
     _degraded_note(degraded, "log_tail", bool(name) and not tail)
+
+    attempts = _slow_get("build_attempts", lambda: read_build_attempts(name))
+    if attempts:
+        payload["blocks_attempted"] = attempts[0]
+        payload["blocks_attempted_span"] = attempts[1]
 
     build = _slow_get("build_times", lambda: read_build_times(name))
     if build:

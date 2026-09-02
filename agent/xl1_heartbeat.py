@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.26.0"
+AGENT_VERSION = "1.26.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -252,6 +252,11 @@ ATTEST_SPOOL = os.environ.get(
 PRODUCER_ADDR_FILE = os.environ.get(
     "XL1_PRODUCER_ADDR_FILE",
     os.path.join(os.path.dirname(ATTEST_SPOOL), "producer-address"))
+# How often the stored address is checked against what the node is actually
+# saying. Remembering it was the point; never questioning it again was a bug.
+# A node given a new wallet phrase becomes a different producer, and a file
+# written before that change would have gone on being believed for ever.
+PRODUCER_ADDR_RECHECK = int(os.environ.get("XL1_PRODUCER_ADDR_RECHECK", "3600"))
 # The service refuses to sign for an unauthenticated caller, and it is right to:
 # a signing key behind an open endpoint is worse than no signing. So the agent
 # has to present the same token. Same name as the service reads, so one value
@@ -1748,7 +1753,7 @@ def read_build_times(name):
 
 _PRODUCER_ADDR = re.compile(r"\bproducer\s+((?:0x)?[0-9a-fA-F]{40})\b",
                             re.IGNORECASE)
-_producer_addr_cache = {"value": None, "looked": False}
+_producer_addr_cache = {"value": None, "looked": False, "at": 0.0}
 
 
 def read_producer_address(name):
@@ -1766,32 +1771,53 @@ def read_producer_address(name):
 
     The node publishes this in its own eligibility line ("Producer <addr> has
     insufficient stake"), the only place it appears in plain text on the host.
-    Cached on disk once found, because a staked node stops printing it.
+    Cached on disk once found, because a staked node stops printing it -- and
+    re-checked against the node every PRODUCER_ADDR_RECHECK seconds, because a
+    remembered answer that is never questioned again survives being wrong. A
+    node handed a new wallet phrase is a different producer, and the file
+    written before that would otherwise be believed for ever.
     """
-    if _producer_addr_cache["value"]:
-        return _producer_addr_cache["value"]
-    if not _producer_addr_cache["looked"]:
+    known = _producer_addr_cache["value"]
+    if known is None and not _producer_addr_cache["looked"]:
         _producer_addr_cache["looked"] = True
         try:
             with open(PRODUCER_ADDR_FILE, "r") as fh:
                 stored = fh.read().strip().lower()
             if re.fullmatch(r"[0-9a-f]{40}", stored):
-                _producer_addr_cache["value"] = stored
-                return stored
+                known = _producer_addr_cache["value"] = stored
         except OSError:
             pass
-    if not name:
-        return None
+
+    # Re-ask the node periodically even when we have an answer. Remembering it
+    # was the point; never questioning it again was a bug -- a node given a new
+    # wallet phrase becomes a different producer, and the file written before
+    # that change would be believed for ever, counting blocks for an identity
+    # the machine no longer has.
+    now = time.monotonic()
+    fresh = (known is not None
+             and now - _producer_addr_cache["at"] < PRODUCER_ADDR_RECHECK)
+    if fresh or not name:
+        return known
+
+    _producer_addr_cache["at"] = now
     out = run(["docker", "logs", "--since", BUILD_WINDOW, name],
               timeout=30, merge_stderr=True)
-    if not out:
-        return None
-    match = _PRODUCER_ADDR.search(out)
+    match = _PRODUCER_ADDR.search(out) if out else None
     if not match:
-        return None
+        # Silence is not a contradiction. A staked node stops complaining, and
+        # forgetting on that basis would be worse than a stale answer.
+        return known
     addr = match.group(1).lower()
     if addr.startswith("0x"):
         addr = addr[2:]
+    if addr == known:
+        return known
+
+    if known is not None:
+        # Said out loud, because the counts before and after are about two
+        # different identities and a silent switch makes the total look wrong.
+        print("producer address changed: %s -> %s" % (known, addr),
+              file=sys.stderr, flush=True)
     _producer_addr_cache["value"] = addr
     # Best effort. A read-only state directory is not a reason to stop
     # counting correctly for the rest of this run.

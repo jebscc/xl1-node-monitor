@@ -782,7 +782,7 @@ STAKE_LOG = "[xl1-producer] Producer %s has insufficient stake." % SIGNER
 def _forget_signer(monkeypatch, tmp_path):
     """The cache is module state and the file outlives a test."""
     monkeypatch.setattr(agent, "_producer_addr_cache",
-                        {"value": None, "looked": False})
+                        {"value": None, "looked": False, "at": 0.0})
     monkeypatch.setattr(agent, "PRODUCER_ADDR_FILE",
                         str(tmp_path / "producer-address"))
 
@@ -822,7 +822,64 @@ def test_the_address_survives_a_restart(monkeypatch, tmp_path):
 
     # Restart: cache cleared, and the log no longer carries the line.
     monkeypatch.setattr(agent, "_producer_addr_cache",
-                        {"value": None, "looked": False})
+                        {"value": None, "looked": False, "at": 0.0})
+    _stub_run(monkeypatch, [("docker logs", "[BlockRunner] Building block 1")])
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+
+NEW_SIGNER = "0f1e2d3c4b5a69788796a5b4c3d2e1f009182736"
+
+
+def test_a_new_wallet_phrase_replaces_the_remembered_address(monkeypatch, tmp_path):
+    """The bug this closes, found on real hardware.
+
+    The address was remembered so it would survive a restart -- correct -- and
+    then never questioned again, which is not. A node handed a new wallet
+    phrase becomes a different producer, and the file written before that went
+    on being believed, counting blocks for an identity the machine no longer
+    had. It took deleting the file by hand to recover.
+    """
+    _forget_signer(monkeypatch, tmp_path)
+    _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+    # The phrase is replaced. The node now announces a different identity, and
+    # enough time has passed for the agent to ask again.
+    agent._producer_addr_cache["at"] = 0.0
+    _stub_run(monkeypatch, [
+        ("docker logs", "Producer %s has insufficient stake." % NEW_SIGNER),
+    ])
+    assert agent.read_producer_address("xl1-producer") == NEW_SIGNER
+    # And the file is corrected, or the next restart resurrects the old one.
+    with open(str(tmp_path / "producer-address")) as fh:
+        assert fh.read().strip() == NEW_SIGNER
+
+
+def test_the_node_is_not_re_asked_on_every_call(monkeypatch, tmp_path):
+    """Re-reading a container log is not free, and this is called on the
+    heartbeat path. The point is to notice a change eventually, not instantly."""
+    _forget_signer(monkeypatch, tmp_path)
+    calls = []
+
+    def counting_run(args, timeout=10, **_kw):
+        calls.append(args)
+        return STAKE_LOG
+
+    monkeypatch.setattr(agent, "run", counting_run)
+    for _ in range(5):
+        assert agent.read_producer_address("xl1-producer") == SIGNER
+    assert len(calls) == 1, "asked the node %d times for one answer" % len(calls)
+
+
+def test_silence_does_not_erase_what_is_known(monkeypatch, tmp_path):
+    """A staked node stops printing the eligibility line. Forgetting on that
+    basis would be worse than a stale answer: the count would fall back to the
+    reward address, which is the failure the whole thing exists to remove."""
+    _forget_signer(monkeypatch, tmp_path)
+    _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+    agent._producer_addr_cache["at"] = 0.0
     _stub_run(monkeypatch, [("docker logs", "[BlockRunner] Building block 1")])
     assert agent.read_producer_address("xl1-producer") == SIGNER
 

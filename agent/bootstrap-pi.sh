@@ -95,6 +95,11 @@ KEYS_DIR="${KEYS_DIR:-/opt/xl1-keys}"
 # fetches and merges in there. Compose reads it through --env-file rather
 # than by it sitting beside the compose file.
 ANCHOR_ENV="${ANCHOR_ENV:-/etc/xl1-anchor.env}"
+# Which producer the delegation on chain was made FOR. Written beside the key
+# it describes rather than into the state file, because the state file lives in
+# a home directory and is missing on plenty of working devices -- and a check
+# that cannot run is worse here than no check, since it would silently pass.
+ANCHOR_PRODUCER_FILE="${ANCHOR_PRODUCER_FILE:-/etc/xl1-anchor.producer}"
 AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
@@ -1656,9 +1661,42 @@ head_ "11. Anchoring  (required)"
 # key that was already delegated, which costs gas and buys nothing. Step 10 has
 # always paired its flag with a live docker ps for the same reason; this is
 # that, for anchoring.
+# The address the node currently signs as, from its own eligibility line.
+# Empty when the node has not said -- a staked one stops complaining -- and an
+# empty answer must never be read as "changed".
+current_producer() {
+  $SUDO docker logs --since 60m xl1-producer 2>&1 \
+    | grep -oiE 'producer +(0x)?[0-9a-f]{40}' \
+    | grep -oiE '[0-9a-f]{40}' | head -1 | tr 'A-Z' 'a-z'
+}
+
 anchor_configured() {
   $SUDO test -s "$ANCHOR_ENV" 2>/dev/null || return 1
-  $SUDO grep -q '^XL1_ANCHOR_TOKEN=.' "$AGENT_ENV" 2>/dev/null
+  $SUDO grep -q '^XL1_ANCHOR_TOKEN=.' "$AGENT_ENV" 2>/dev/null || return 1
+
+  # Both files are present. That says this ran before; it does not say the two
+  # still agree with each other.
+  #
+  # The delegation binds the attestation key to ONE producer address. Give the
+  # node a new wallet phrase and it becomes a different producer, while the
+  # delegation goes on naming the old one -- so readings are still signed and
+  # stored, and the link saying which node made the claim points at an identity
+  # that machine no longer has. Nothing fails, which is why it would sit like
+  # that indefinitely.
+  #
+  # Only when BOTH are known. A recorded address with no current one is a
+  # staked node that has stopped complaining, not a changed key, and treating
+  # silence as a mismatch would re-delegate -- for gas -- on every run.
+  delegated="$($SUDO cat "$ANCHOR_PRODUCER_FILE" 2>/dev/null | tr -d ' \r\n')"
+  if [ -n "$delegated" ]; then
+    running="$(current_producer)"
+    if [ -n "$running" ] && [ "$running" != "$delegated" ]; then
+      warn "this node signs as a different producer than the delegation names" \
+           "delegated for ...${delegated#"${delegated%??????}"}, now signing as ...${running#"${running%??????}"} -- anchoring will be set up again for the current key"
+      return 1
+    fi
+  fi
+  return 0
 }
 
 if [ "${DONE_ANCHOR:-0}" != 1 ] && anchor_configured; then
@@ -2047,6 +2085,14 @@ if ask_yn "  Put that on chain?" "y"; then
     | confirm_progress \
     || { PRODUCER_MNEMONIC=""; die "the delegation did not anchor. Nothing else was changed."; }
   ok "the delegation is on chain"
+  # Recorded so a later run can tell "already set up" from "set up for a
+  # producer this node no longer is". Public information -- it appears in every
+  # block the node signs -- so it is readable, unlike the key beside it.
+  delegated_for="$(current_producer)"
+  if [ -n "$delegated_for" ]; then
+    printf '%s\n' "$delegated_for" | $SUDO tee "$ANCHOR_PRODUCER_FILE" >/dev/null
+    $SUDO chmod 0644 "$ANCHOR_PRODUCER_FILE" 2>/dev/null || true
+  fi
 else
   PRODUCER_MNEMONIC=""
   die "stopped before delegating. Run this again when you are ready; nothing was changed."

@@ -660,7 +660,11 @@ def test_the_untagged_line_counts_too(monkeypatch):
 
 def test_a_stray_millisecond_figure_is_not_a_build(monkeypatch):
     """The log is full of durations. Only this one measures a build, and a
-    looser match would average this node's boot time into its build time."""
+    looser match would average this node's boot time into its build time.
+
+    The answer is a reading of nothing rather than no reading: the log was
+    read, and none of what it held was a build.
+    """
     _stub_run(monkeypatch, [
         ("docker logs", "\n".join([
             "[xl1] system ready (producer in 7982ms)",
@@ -668,7 +672,7 @@ def test_a_stray_millisecond_figure_is_not_a_build(monkeypatch):
             "connection retry after 500ms",
         ])),
     ])
-    assert agent.read_build_times("xl1-producer") is None
+    assert agent.read_build_times("xl1-producer") == (0, None, None, 0)
 
 
 def test_an_impossible_figure_is_dropped(monkeypatch):
@@ -684,13 +688,36 @@ def test_an_impossible_figure_is_dropped(monkeypatch):
     assert agent.read_build_times("xl1-producer") == (1, 200, 200, 0)
 
 
-def test_no_build_lines_is_not_a_reading(monkeypatch):
-    """A node that has built nothing in the window is a real state, not a
-    zero. Reporting 0ms would read as instant builds."""
+def test_no_builds_is_a_reading_of_none(monkeypatch):
+    """A node that has built nothing in the window is a real state.
+
+    Nought samples, and no average at all -- deliberately not 0ms, which would
+    render as instant builds, the opposite of what happened. A device that is
+    up but never selected to produce sits here indefinitely, so this is its
+    steady state rather than a gap waiting to fill.
+    """
     _stub_run(monkeypatch, [("docker logs", "[BlockRunner] Building block 1")])
+    assert agent.read_build_times("xl1-producer") == (0, None, None, 0)
+
+
+def test_a_log_we_could_not_read_is_not_a_reading(monkeypatch):
+    """And this is the case that must stay None.
+
+    run() answers None when the container is gone, docker refuses us, or the
+    call times out. Reporting nought builds there would state something about
+    the node on the strength of not having been able to ask it -- and it would
+    be indistinguishable from the honest zero above.
+    """
+    _stub_run(monkeypatch, [])            # nothing matches: run() -> None
     assert agent.read_build_times("xl1-producer") is None
-    _stub_run(monkeypatch, [])
     assert agent.read_build_times(None) is None
+
+
+def test_an_empty_log_is_a_reading(monkeypatch):
+    """Empty is not the same as unavailable. docker answering with an empty
+    log is an answer; only run() returning None is a failure to ask."""
+    _stub_run(monkeypatch, [("docker logs", "")])
+    assert agent.read_build_times("xl1-producer") == (0, None, None, 0)
 
 
 def test_the_build_window_is_bounded(monkeypatch):

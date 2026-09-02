@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.25.0"
+AGENT_VERSION = "1.25.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1674,7 +1674,16 @@ _BUILD_MS = re.compile(r"generated\s+time\s+payload\s+in\s+(\d+(?:\.\d+)?)\s*ms"
 def read_build_times(name):
     """How long the node took to build blocks, or None.
 
-    Returns (samples, avg_ms, max_ms, over_budget).
+    Returns (samples, avg_ms, max_ms, over_budget), or None if the log could
+    not be read at all.
+
+    samples of 0 -- with no average and no peak -- means the log WAS read and
+    held no build lines. That is a node which has built nothing, and it is a
+    different fact from a node we could not ask. Both used to come back as
+    None, so the panel said "not reported" about a node that was reporting
+    perfectly well and simply had nothing to time. On a device that is up but
+    never selected to produce, that is not a temporary gap; it is the steady
+    state, and it read as a broken reader for as long as it lasted.
 
     THE SAMPLE IS NOT EVERY ATTEMPT. The node decides which of these lines to
     print -- on the machines seen so far it tags them "[Slow]" and prints them
@@ -1698,7 +1707,10 @@ def read_build_times(name):
     # splits its output across both streams and reading one silently halves it.
     out = run(["docker", "logs", "--since", BUILD_WINDOW, name],
               timeout=30, merge_stderr=True)
-    if not out:
+    # None means run() could not get an answer -- the container is gone, docker
+    # refused us, the call timed out. An empty string means it answered with an
+    # empty log, which is a reading. Only the first is "we do not know".
+    if out is None:
         return None
     vals = []
     for match in _BUILD_MS.finditer(out):
@@ -1712,7 +1724,10 @@ def read_build_times(name):
         if 0 <= value <= 3_600_000:
             vals.append(value)
     if not vals:
-        return None
+        # Read it, found nothing to time. Deliberately not (0, 0, 0, 0): a zero
+        # average would render as instant builds, which is the opposite of what
+        # happened.
+        return (0, None, None, 0)
     # Newest, if a busy hour produced more than we intend to weigh.
     vals = vals[-BUILD_SAMPLES_MAX:]
     over = sum(1 for v in vals if v > BUILD_BUDGET_MS)
@@ -2135,9 +2150,13 @@ def collect():
     if build:
         samples, avg_ms, max_ms, over = build
         payload["build_samples"] = samples
-        payload["build_ms_avg"] = avg_ms
-        payload["build_ms_max"] = max_ms
         payload["build_over_budget"] = over
+        # Omitted rather than nulled when there were no builds. A null in a
+        # duration field reads like a duration the reader failed to get, and
+        # the count beside it already says there was nothing to measure.
+        if avg_ms is not None:
+            payload["build_ms_avg"] = avg_ms
+            payload["build_ms_max"] = max_ms
         # Sent rather than assumed at the far end: the budget is settable per
         # device, and a panel that hard-codes its own would draw one node's
         # figures against another node's line.

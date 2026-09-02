@@ -877,6 +877,62 @@ def _forget_signer(monkeypatch, tmp_path):
                         str(tmp_path / "producer-address"))
 
 
+# The wallet summary the node prints at startup. One phrase, many accounts --
+# and on a machine sharing that phrase with another node, the FIRST address
+# listed belongs to the other one.
+
+WALLET_SUMMARY = "\n".join([
+    "Wallet summary",
+    "Shared wallet accounts from m/44'/60'/0'/0:",
+    "[0] shared[0]",
+    "source: configured root mnemonic",
+    "path: m/44'/60'/0'/0/0",
+    "address: %s",
+    "[1] producer",
+    "source: configured root mnemonic",
+    "path: m/44'/60'/0'/0/1",
+    "address: %s",
+    "[2] shared[2]",
+    "source: configured root mnemonic",
+    "path: m/44'/60'/0'/0/2",
+    "address: 2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e",
+]) % ("0f1e2d3c4b5a69788796a5b4c3d2e1f009182736", SIGNER)
+
+
+def test_the_producers_account_is_read_not_the_first_one(monkeypatch, tmp_path):
+    """The test this whole mechanism exists for.
+
+    Taking the first address in the summary is the obvious implementation and
+    it is wrong in exactly the case that matters: a second node sharing a
+    phrase, where account 0 is the OTHER machine's producer. It would report a
+    working node's identity for a node that has none, count that node's blocks
+    as this one's, and look entirely reasonable doing it.
+    """
+    _forget_signer(monkeypatch, tmp_path)
+    _stub_run(monkeypatch, [("docker logs", WALLET_SUMMARY)])
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+
+def test_the_producer_at_account_zero_is_read_too(monkeypatch, tmp_path):
+    """The ordinary case, where the producer IS the first account. Keying on
+    the label rather than the position has to work here as well, or the fix
+    for the rare case breaks the common one."""
+    _forget_signer(monkeypatch, tmp_path)
+    swapped = (WALLET_SUMMARY.replace("[0] shared[0]", "[0] producer")
+                             .replace("[1] producer", "[1] shared[1]"))
+    _stub_run(monkeypatch, [("docker logs", swapped)])
+    assert agent.read_producer_address("xl1-producer") == "0f1e2d3c4b5a69788796a5b4c3d2e1f009182736"
+
+
+def test_the_eligibility_line_still_works_without_a_summary(monkeypatch, tmp_path):
+    """The summary is printed once at startup; the complaint repeats. A
+    long-running container whose startup has scrolled out of the window this
+    reads still has to be identifiable."""
+    _forget_signer(monkeypatch, tmp_path)
+    _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+
 def test_the_signing_address_is_read_from_the_nodes_own_log(monkeypatch, tmp_path):
     _forget_signer(monkeypatch, tmp_path)
     _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])

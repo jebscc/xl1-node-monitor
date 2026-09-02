@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.28.0"
+AGENT_VERSION = "1.28.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1751,6 +1751,28 @@ def read_build_times(name):
     return (len(vals), round(sum(vals) / len(vals)), round(max(vals)), over)
 
 
+# The node prints a wallet summary at startup naming each account of the
+# phrase and its address:
+#
+#     [1] producer
+#     source: configured root mnemonic
+#     path: m/44'/60'/0'/0/1
+#     address: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
+#
+# Read first, because it says which account IS the producer rather than
+# leaving it to be inferred. On a machine sharing a phrase with another
+# node the first address in that summary belongs to the other one, so
+# taking the first would be confidently wrong -- and would look right.
+#
+# Bounded to a few lines rather than a dot-all scan, so a format change
+# cannot quietly match an address from a later block.
+_WALLET_PRODUCER = re.compile(
+    r"\[\d+\]\s+producer\s*\n(?:[^\n]*\n){0,4}?\s*address:\s*((?:0x)?[0-9a-fA-F]{40})",
+    re.IGNORECASE)
+
+# The fallback: the eligibility complaint. It repeats every few minutes
+# where the summary is printed once at startup -- but it exists only while
+# a node is unstaked, so it disappears the day staking is enforced.
 _PRODUCER_ADDR = re.compile(r"\bproducer\s+((?:0x)?[0-9a-fA-F]{40})\b",
                             re.IGNORECASE)
 _producer_addr_cache = {"value": None, "looked": False, "at": 0.0}
@@ -1769,8 +1791,11 @@ def read_producer_address(name):
     chain history: scanned everything, looked for the wrong address, and said
     so with complete confidence. Worse than not counting at all.
 
-    The node publishes this in its own eligibility line ("Producer <addr> has
-    insufficient stake"), the only place it appears in plain text on the host.
+    Read from the wallet summary the node prints at startup, which names which
+    account of the phrase is the producer -- and on a machine sharing a phrase
+    that distinction is the whole point, since the first address listed belongs
+    to the other node. The eligibility line is the fallback: it repeats where
+    the summary is printed once, but exists only while a node is unstaked.
     Cached on disk once found, because a staked node stops printing it -- and
     re-checked against the node every PRODUCER_ADDR_RECHECK seconds, because a
     remembered answer that is never questioned again survives being wrong. A
@@ -1802,7 +1827,10 @@ def read_producer_address(name):
     _producer_addr_cache["at"] = now
     out = run(["docker", "logs", "--since", BUILD_WINDOW, name],
               timeout=30, merge_stderr=True)
-    match = _PRODUCER_ADDR.search(out) if out else None
+    # The summary first: it names the producer. The complaint second: the
+    # same answer on an ordinary node, and the only one still available
+    # once the summary has scrolled out of the window this reads.
+    match = (_WALLET_PRODUCER.search(out) or _PRODUCER_ADDR.search(out)) if out else None
     if not match:
         # Silence is not a contradiction. A staked node stops complaining, and
         # forgetting on that basis would be worse than a stale answer.

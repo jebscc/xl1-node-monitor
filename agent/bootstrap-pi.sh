@@ -100,6 +100,15 @@ ANCHOR_ENV="${ANCHOR_ENV:-/etc/xl1-anchor.env}"
 # a home directory and is missing on plenty of working devices -- and a check
 # that cannot run is worse here than no check, since it would silently pass.
 ANCHOR_PRODUCER_FILE="${ANCHOR_PRODUCER_FILE:-/etc/xl1-anchor.producer}"
+# A copy of the node image's presets, kept on the host so one line in it can be
+# changed: which account of the wallet phrase this node produces as.
+#
+# It has to be a file rather than an environment variable. The image reads
+# XL1_ACTORS__0__REWARD_ADDRESS, but that is a hardcoded alias for
+# XL1_REWARD_ADDRESS rather than a general nested-config pattern, and
+# accountPath appears nowhere in its entrypoint. Verified by setting
+# XL1_ACTORS__0__ACCOUNT_PATH=1 and watching the resolved config still say 0.
+PRESETS_DIR="${PRESETS_DIR:-/opt/xl1-presets}"
 AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
@@ -335,6 +344,7 @@ save_state() {
     printf 'DONE_AGENT=%q\n'      "${DONE_AGENT:-0}"
     printf 'DONE_PRODUCER=%q\n' "${DONE_PRODUCER:-0}"
     printf 'REWARD_ADDRESS=%q\n' "${REWARD_ADDRESS:-}"
+    printf 'ACCOUNT_INDEX=%q\n'  "${ACCOUNT_INDEX:-0}"
     printf 'DONE_ANCHOR=%q\n'   "${DONE_ANCHOR:-0}"
     # Public, and the wizard stops on it waiting for gas -- so it has to
     # survive the operator closing the terminal and coming back tomorrow.
@@ -1510,6 +1520,48 @@ while [ -z "$REWARD_ADDRESS" ] && [ "$tries" -lt 5 ]; do
   fi
 done
 [ -n "$REWARD_ADDRESS" ] || die "no reward address given. Nothing was changed."
+
+# Which account of that phrase this node produces as.
+#
+# One phrase holds many addresses -- a wallet extension shows them as separate
+# accounts, all from the same seed at m/44'/60'/0'/0/N. This node uses N=0
+# unless told otherwise, which is right for the usual case of one phrase and
+# one machine.
+#
+# It is wrong, silently, for the case that cost a long day: a second node given
+# the same phrase signs as the SAME producer. That is not two producers, it is
+# one identity on two machines, both proposing blocks for the same slot. The
+# node says nothing about it -- from its side it is simply producing.
+#
+# So it is asked rather than assumed, and only of people who say the phrase is
+# already in use. Everyone else keeps 0 without being made to think about
+# derivation paths.
+ACCOUNT_INDEX="${ACCOUNT_INDEX:-0}"
+printf '\n'
+note "One wallet phrase holds many addresses. A wallet extension shows them as"
+note "separate accounts; this node signs as the FIRST unless you say otherwise."
+note ""
+note "That only matters if this phrase is already producing on another machine:"
+note "two nodes on the same account are one identity on two machines, both"
+note "building for the same slot, and nothing on either says so."
+printf '\n'
+if ask_yn "  Is this phrase already used by another node?" "n"; then
+  tries=0
+  while [ "$tries" -lt 5 ]; do
+    tries=$((tries + 1))
+    note "The wallet's account number for THIS node. The first is 0, so a"
+    note "second machine on the same phrase usually wants 1."
+    ACCOUNT_INDEX="$(ask "  Account number" "1")"
+    case "$ACCOUNT_INDEX" in
+      ''|*[!0-9]*) printf '  %sThat is not a number.%s\n' "$Y" "$X"; ACCOUNT_INDEX="" ;;
+      *) [ "$ACCOUNT_INDEX" -le 99 ] && break
+         printf '  %s%s is beyond what any wallet shows.%s\n' "$Y" "$ACCOUNT_INDEX" "$X"
+         ACCOUNT_INDEX="" ;;
+    esac
+  done
+  [ -n "$ACCOUNT_INDEX" ] || die "no account number given. Nothing was changed."
+  ok "this node will produce as account $ACCOUNT_INDEX of that phrase"
+fi
 save_state
 
 # --- the images repo ---------------------------------------------------------
@@ -1666,9 +1718,41 @@ fi
 # block fills the card over months and then everything stops at once -- the
 # node, the agent and the anchor service -- with the logs that would explain it
 # being the thing that filled the disk.
+# The account this node produces as, when it is not the first.
+#
+# A copy of the image's own presets with one line changed. There is no
+# environment variable for this -- see PRESETS_DIR at the top for the evidence
+# -- so the file is the mechanism, and it has to survive on the host because
+# the container is recreated by this script.
+#
+# docker cp rather than mounting a directory and copying from inside: the image
+# runs as a non-root user and cannot write into a root-owned mount, which fails
+# as "permission denied" and reads like a Docker problem rather than a
+# permissions one.
+PRESET_ARGS=""
+if [ "${ACCOUNT_INDEX:-0}" != 0 ]; then
+  $SUDO rm -rf "$PRESETS_DIR"
+  $SUDO mkdir -p "$PRESETS_DIR"
+  cid="$($SUDO docker create xl1:local 2>/dev/null)"
+  [ -n "$cid" ] || die "could not read the node image's presets, so the account number cannot be set"
+  $SUDO docker cp "$cid:/opt/xl1/presets/." "$PRESETS_DIR/" >/dev/null 2>&1 \
+    || die "could not copy the node image's presets to $PRESETS_DIR"
+  $SUDO docker rm "$cid" >/dev/null 2>&1 || true
+  $SUDO sed -i "s/\"accountPath\": \"[0-9]*\"/\"accountPath\": \"$ACCOUNT_INDEX\"/" \
+    "$PRESETS_DIR/roles/producer.json"
+  # Checked rather than assumed: a preset that silently kept 0 would put this
+  # node on the same address as whatever else uses the phrase, which is the
+  # exact failure the question exists to prevent.
+  $SUDO grep -q "\"accountPath\": \"$ACCOUNT_INDEX\"" "$PRESETS_DIR/roles/producer.json" \
+    || die "could not set the account number in $PRESETS_DIR/roles/producer.json"
+  PRESET_ARGS="-e XL1_PRESETS_DIR=/presets -v $PRESETS_DIR:/presets"
+  ok "producing as account $ACCOUNT_INDEX of the phrase"
+fi
+
 $SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true
+# shellcheck disable=SC2086
 $SUDO docker run -d --name xl1-producer --restart unless-stopped \
-  -e NODE_OPTIONS="--max-old-space-size=$NODE_HEAP_MB" \
+  -e NODE_OPTIONS="--max-old-space-size=$NODE_HEAP_MB" $PRESET_ARGS \
   --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   --env-file "$PRODUCER_ENV" xl1:local >/dev/null \
   || die "the producer would not start. Check: sudo docker logs xl1-producer"
@@ -1681,6 +1765,33 @@ else
   printf '\n'
   $SUDO docker logs --tail 20 xl1-producer 2>&1 | sed 's/^/    /'
   die "the producer started and stopped again. The lines above say why -- a wrong phrase shows up here."
+fi
+
+# Which address it actually came back as, read from the node rather than
+# derived here.
+#
+# It prints a wallet summary at every startup naming each account and its
+# address, and a producer identity can only change at a restart -- so this is
+# both authoritative and available at exactly the moment it could have changed.
+#
+# Worth saying out loud even when nothing is wrong: a phrase typed one line
+# above decides this, and the only previous way to learn the answer was to grep
+# a container log an hour later.
+signing="$($SUDO docker logs xl1-producer 2>&1 \
+  | awk '/\[[0-9]+\] producer$/{f=1} f && /address:/{sub(/.*address: */, ""); print; exit}')"
+if [ -n "$signing" ]; then
+  ok "signing as $signing"
+  was="$($SUDO cat "$ANCHOR_PRODUCER_FILE" 2>/dev/null | tr -d ' \r\n')"
+  if [ -n "$was" ] && [ "$was" != "$signing" ]; then
+    warn "this device used to produce as a different address" \
+         "it was ...${was#"${was%??????}"} and is now ...${signing#"${signing%??????}"} -- anchoring is set up again below for the current key, and its block history belongs to the old one"
+  fi
+else
+  # Not fatal. The summary is cosmetic to the node, and a format change should
+  # not stop a working install -- but it is the one moment this is knowable, so
+  # say that it could not be read rather than nothing at all.
+  warn "could not read which address this node signs as" \
+       "not fatal -- the panel reports it once the agent has seen a full cycle"
 fi
 
 DONE_PRODUCER=1

@@ -457,6 +457,10 @@ REPORTED_FIELDS = {
     # winning none -- from one having a quiet spell, which "blocks produced: 0"
     # cannot.
     "blocks_attempted", "blocks_attempted_span",
+    # The address this node signs blocks with. Public by nature -- it is in
+    # every block it produces. The REWARD address is not here and should not
+    # be: that is the operator's choice of wallet, not a fact about the node.
+    "producer_address",
     "os_updates", "os_security_updates", "os_apt_age_hours", "os_reboot_required",
     "producer_balance_symbol", "producer_balance_raw",
     # stake held against this producer on the backing EVM, and the minimum,

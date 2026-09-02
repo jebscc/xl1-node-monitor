@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.27.0"
+AGENT_VERSION = "1.28.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -2403,6 +2403,21 @@ def collect():
         _counted_against, _fallback = counting_address(name)
         if _fallback and _counted_against:
             payload["produced_counting_fallback"] = True
+        # And WHICH address that is, when it is the signer.
+        #
+        # Public by nature: it appears in every block this node produces and in
+        # any listing of who is producing. Reported because the alternative is
+        # reading it out of the container's log by hand, which is how a night
+        # went -- and because an operator comparing their node against a
+        # working one needs to name the thing they are comparing.
+        #
+        # Still only the signer. The reward address stays on this machine: it
+        # is the operator's choice of wallet rather than a fact about the node,
+        # and putting it on a new surface as a side effect of a diagnostics
+        # change is how such things end up somewhere nobody chose.
+        _signer = read_producer_address(name)
+        if _signer:
+            payload["producer_address"] = _signer
 
     if stats:
         # Counts only. The reward address stays on this machine.

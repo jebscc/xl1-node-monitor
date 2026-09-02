@@ -507,6 +507,7 @@ REPORTED_FIELDS = {
     "swap_used_mb", "swap_total_mb", "disk_free_gb",
     "zram_used_mb", "zram_total_mb", "swapfile_used_mb", "swapfile_total_mb",
     "undervolted_now", "undervolted_ever", "throttled_now", "throttled_ever",
+    "freq_capped_now", "freq_capped_ever", "soft_temp_now", "soft_temp_ever",
 }
 
 
@@ -537,6 +538,67 @@ def _fields_in_source():
             keys |= set(re.findall(r'"%s":' % NAME, body.group(0)))
             keys |= set(re.findall(r'(?:info|data|out)\["%s"\]' % NAME, body.group(0)))
     return keys
+
+
+# --- what the board says about its own clock -----------------------------------
+#
+# read_throttling had no test at all, which is how it shipped reading four of
+# the eight bits that matter -- and the four it skipped were the ones that fire
+# first on a warm board.
+#
+# The Pi that prompted this turned out not to be throttled at all. The gap is
+# still worth closing; it just was not the bug anyone was hunting that night.
+
+def _throttled(monkeypatch, word):
+    monkeypatch.setattr(agent, "run", lambda *_a, **_k: "throttled=%s" % word)
+    return agent.read_throttling()
+
+
+def test_a_clean_board_reports_every_pair_false(monkeypatch):
+    got = _throttled(monkeypatch, "0x0")
+    assert got == {
+        "undervolted_now": False, "undervolted_ever": False,
+        "throttled_now": False, "throttled_ever": False,
+        "freq_capped_now": False, "freq_capped_ever": False,
+        "soft_temp_now": False, "soft_temp_ever": False,
+    }
+
+
+def test_a_hot_board_capped_below_the_hard_limit_does_not_read_as_clean(monkeypatch):
+    """The reading this was blind to, and the reason it matters.
+
+    A Pi 3 crosses the SOFT temperature limit around 60C: bit 3 sets, the ARM
+    clock is capped (bit 1), and the board runs slower. Bit 2 -- the hard
+    throttle, and the only "now" bit this used to read -- stays clear until
+    about 80C. So a device losing block races because heat had taken its clock
+    away reported "throttling: none" the whole time.
+    """
+    got = _throttled(monkeypatch, "0xa")   # bits 1 and 3
+    assert got["freq_capped_now"] is True
+    assert got["soft_temp_now"] is True
+    # Still true, and still worth saying: it is not HARD throttled.
+    assert got["throttled_now"] is False
+    assert got["undervolted_now"] is False
+
+
+def test_now_and_since_boot_stay_separate(monkeypatch):
+    """A board that was capped earlier is a different machine from one being
+    capped right now, and the pairs must not collapse into each other."""
+    got = _throttled(monkeypatch, "0xa0000")  # bits 17 and 19: the "ever" half
+    assert got["freq_capped_ever"] is True and got["soft_temp_ever"] is True
+    assert got["freq_capped_now"] is False and got["soft_temp_now"] is False
+
+
+def test_undervoltage_and_heat_are_told_apart(monkeypatch):
+    # Same symptom, entirely different fix: a better power supply, or a fan.
+    got = _throttled(monkeypatch, "0x1")
+    assert got["undervolted_now"] is True
+    assert got["soft_temp_now"] is False and got["freq_capped_now"] is False
+
+
+def test_a_machine_that_is_not_a_pi_is_not_a_failure(monkeypatch):
+    monkeypatch.setattr(agent, "run", lambda *_a, **_k: None)
+    assert agent.read_throttling() == {}
 
 
 def test_reported_fields_are_pinned_to_the_version():

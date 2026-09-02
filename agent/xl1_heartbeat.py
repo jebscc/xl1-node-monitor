@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.28.1"
+AGENT_VERSION = "1.29.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -654,12 +654,27 @@ _throttle_unreadable = False
 def read_throttling():
     """The Pi's own account of power and clock, or {} anywhere else.
 
-    `vcgencmd get_throttled` answers with a bit field. Four of its bits matter
+    `vcgencmd get_throttled` answers with a bit field. EIGHT of its bits matter
     and they come in pairs: what is happening now, and what has happened since
     boot. The distinction is the useful part -- a board that undervolted once
     during a cold start is a different machine from one browning out under load
     right now, and collapsing them into "there was a problem" loses the half an
     operator would act on.
+
+    This used to read four of the eight, and the four it skipped were the two
+    pairs that answer "is the heat costing me clock speed". Bit 2 is the HARD
+    throttle, which a Pi 3 reaches around 80C. Long before that, at 60C, the
+    soft temperature limit (bit 3) caps the ARM clock (bit 1) -- the board runs
+    slower and nothing in bit 2 says so. A device losing block races because it
+    was capped at 60C therefore reported "throttling: none" for as long as it
+    lasted, which is the reading an operator would most act on and the one that
+    was missing.
+
+    Found while investigating a Pi 3 that had stopped producing. It was NOT
+    throttled -- get_throttled returned 0x0, every bit clear, and the cause
+    turned out to be an outage on the chain itself. So this fixes a blind spot
+    that was real without having been the fault that exposed it, and no reading
+    from that machine is evidence for the bits below.
 
     Silent off a Pi, and silent when vcgencmd is not reachable. Neither is a
     failure: it is a question this hardware cannot be asked.
@@ -681,6 +696,12 @@ def read_throttling():
         "undervolted_ever": bool(bits & 0x10000),
         "throttled_now": bool(bits & 0x4),
         "throttled_ever": bool(bits & 0x40000),
+        # The clock is actually held back by either of these, and on a warm
+        # board they arrive first and alone.
+        "freq_capped_now": bool(bits & 0x2),
+        "freq_capped_ever": bool(bits & 0x20000),
+        "soft_temp_now": bool(bits & 0x8),
+        "soft_temp_ever": bool(bits & 0x80000),
     }
 
 

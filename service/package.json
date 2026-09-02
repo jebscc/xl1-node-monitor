@@ -17,12 +17,12 @@
     "@xyo-network/payload-builder": "5.3.30",
     "@xyo-network/payload-model": "5.3.30",
     "@xyo-network/sdk": "7.4.0",
-    "@xyo-network/xl1-protocol": "5.4.1",
-    "@xyo-network/xl1-sdk": "5.4.1",
+    "@xyo-network/xl1-protocol": "5.5.1",
+    "@xyo-network/xl1-sdk": "5.5.1",
     "ajv": "8.20.0",
     "dotenv": "^17.2.3",
     "express": "4.21.2",
-    "zod": "^4.4.2"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "22.10.5",

@@ -456,7 +456,7 @@ REPORTED_FIELDS = {
     # pair separates a producer with no slots -- proposing at every height and
     # winning none -- from one having a quiet spell, which "blocks produced: 0"
     # cannot.
-    "blocks_attempted", "blocks_attempted_span",
+    "blocks_attempted", "blocks_attempted_span", "blocks_rebuilt",
     # The address this node signs blocks with. Public by nature -- it is in
     # every block it produces. The REWARD address is not here and should not
     # be: that is the operator's choice of wallet, not a fact about the node.
@@ -717,7 +717,7 @@ NO_SLOTS = "\n".join(
 
 def test_a_node_with_slots_proposes_rarely(monkeypatch):
     _stub_run(monkeypatch, [("docker logs", IN_ROTATION)])
-    attempts, span = agent.read_build_attempts("xl1-producer")
+    attempts, span, _rebuilt = agent.read_build_attempts("xl1-producer")
     assert attempts == 3
     assert span == 581657 - 581640 + 1          # 18 heights
     # The ratio is the reading, and it is unit-free: no block time, no chain
@@ -729,26 +729,39 @@ def test_a_node_without_slots_proposes_at_every_height(monkeypatch):
     """Five consecutive heights, five attempts. This is what the Pi 3 does,
     and what no amount of 'blocks produced: 0' could ever have said."""
     _stub_run(monkeypatch, [("docker logs", NO_SLOTS)])
-    attempts, span = agent.read_build_attempts("xl1-producer")
+    attempts, span, _rebuilt = agent.read_build_attempts("xl1-producer")
     assert (attempts, span) == (5, 5)
     assert attempts / span == 1.0
 
 
-def test_a_retry_is_still_an_attempt(monkeypatch):
-    """The node re-proposes the same height after a validation failure. That
-    is a real attempt and it is how a busy height actually looks."""
+def test_a_retry_is_a_rebuild_not_another_height(monkeypatch):
+    """This used to assert (2, 1) -- a retry counted as a second height.
+
+    That is what put "proposed at 12 of 8 heights" on the panel: a count of log
+    lines over a span of heights is not a fraction, and it exceeds 1 exactly
+    when the node retries. A node losing races retries, so the figure broke on
+    the situation it was written to diagnose.
+
+    The retry is still worth reporting -- re-proposing a height means the first
+    attempt went nowhere, which is a different fault from never being given the
+    height at all -- so it travels beside the ratio instead of inside it.
+    """
     _stub_run(monkeypatch, [("docker logs", "\n".join([
         "[BlockRunner] Building block 581672",
         "[BlockRunner] Building block 581672 (retry 1)",
+        "[BlockRunner] Building block 581672 (retry 2)",
+        "[BlockRunner] Building block 581679",
     ]))])
-    assert agent.read_build_attempts("xl1-producer") == (2, 1)
+    attempts, span, rebuilt = agent.read_build_attempts("xl1-producer")
+    assert (attempts, span, rebuilt) == (2, 8, 2)
+    assert attempts <= span, "the ratio has to be a fraction, always"
 
 
 def test_a_boot_line_is_not_an_attempt(monkeypatch):
     """"producer in 967ms" is on every start. Counting it would put a node
     that has proposed nothing at one attempt over a span of nothing."""
     _stub_run(monkeypatch, [("docker logs", "[xl1] system ready (producer in 967ms)")])
-    assert agent.read_build_attempts("xl1-producer") == (0, 0)
+    assert agent.read_build_attempts("xl1-producer") == (0, 0, 0)
 
 
 def test_no_attempts_is_a_reading_not_a_silence(monkeypatch):
@@ -756,7 +769,7 @@ def test_no_attempts_is_a_reading_not_a_silence(monkeypatch):
     that could not be read, which stays None -- the same distinction the build
     times draw, and for the same reason."""
     _stub_run(monkeypatch, [("docker logs", "[BlockRunner] nothing of interest")])
-    assert agent.read_build_attempts("xl1-producer") == (0, 0)
+    assert agent.read_build_attempts("xl1-producer") == (0, 0, 0)
     _stub_run(monkeypatch, [])
     assert agent.read_build_attempts("xl1-producer") is None
     assert agent.read_build_attempts(None) is None
@@ -773,7 +786,7 @@ def test_attempts_are_counted_from_proposals_not_from_timings(monkeypatch):
         ["[BlockRunner] Building block %d" % n for n in range(581672, 581682)]
         + ["[BlockRunner] [Slow] Generated time payload in 190ms"])
     _stub_run(monkeypatch, [("docker logs", log)])
-    attempts, span = agent.read_build_attempts("xl1-producer")
+    attempts, span, _rebuilt = agent.read_build_attempts("xl1-producer")
     assert attempts == 10, "counted the timing lines instead of the proposals"
     assert span == 10
 

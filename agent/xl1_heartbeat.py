@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.29.0"
+AGENT_VERSION = "1.30.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1918,8 +1918,19 @@ def read_build_attempts(name):
     NOT from the build-time samples, which it only prints when it judges a
     build slow and which therefore undercount attempts badly.
 
+    DISTINCT heights, not lines. The first version returned len(heights), which
+    counts a retry as another height and made the ratio exceed 100% -- the
+    panel rendered "proposed at 12 of 8 heights", which is not a fraction and
+    not a fact. A node that loses a race rebuilds the same height, so the very
+    situation this was written to diagnose is the one that broke it.
+
+    The retries are worth keeping rather than collapsing, though: rebuilding a
+    height means the first attempt went nowhere, which is a different fault
+    from never being given the height at all. So both travel -- distinct
+    heights for the ratio, and the count of rebuilds beside it.
+
     heights is the span the attempts cover, so the ratio is self-contained:
-    attempts over span needs no block time, no chain height, and no clock.
+    heights proposed over span needs no block time, no chain height, no clock.
     """
     if not name:
         return None
@@ -1941,8 +1952,9 @@ def read_build_attempts(name):
         # Read the log, found no attempts. A real state -- a node that has
         # built nothing -- and reported as nought rather than as silence, for
         # the same reason the build times are.
-        return (0, 0)
-    return (len(heights), max(heights) - min(heights) + 1)
+        return (0, 0, 0)
+    distinct = len(set(heights))
+    return (distinct, max(heights) - min(heights) + 1, len(heights) - distinct)
 
 
 def read_log_tail(name):
@@ -2362,6 +2374,10 @@ def collect():
     if attempts:
         payload["blocks_attempted"] = attempts[0]
         payload["blocks_attempted_span"] = attempts[1]
+        # Rebuilds of a height already attempted. Zero is the healthy reading
+        # and is sent rather than withheld, so the panel can tell "no retries"
+        # from "an agent too old to count them".
+        payload["blocks_rebuilt"] = attempts[2]
 
     build = _slow_get("build_times", lambda: read_build_times(name))
     if build:

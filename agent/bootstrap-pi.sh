@@ -1925,9 +1925,58 @@ current_producer() {
     | grep -oiE '[0-9a-f]{40}' | head -1 | tr 'A-Z' 'a-z'
 }
 
+# Has a delegation for THIS producer actually been anchored?
+#
+# Asked of the published record rather than of a local file, because the local
+# file is written by this script and so cannot speak for a device it did not
+# set up. The attestations endpoint is public and returns the anchored
+# delegations; a match is one naming the producer this node signs as.
+#
+# Three answers, and the middle one matters: 0 means a delegation is on chain,
+# 1 means the record was readable and holds none, 2 means it could not be
+# asked. Only 1 is grounds to offer to anchor one; 2 must not be, or every
+# device behind a captive portal would be asked to pay gas for a delegation it
+# may already have.
+delegation_anchored() {
+  _dp="$(current_producer)"
+  [ -n "$_dp" ] || return 2
+  _dj="$(curl -fsSL --max-time 25 \
+        "$BACKEND_URL/api/node/attestations?kind=delegation&limit=50" 2>/dev/null)" || return 2
+  case "$_dj" in
+    *'"attestations"'*) ;;
+    *) return 2 ;;
+  esac
+  # The address appears inside the escaped salt, so a substring test is enough
+  # and needs no JSON parser on a machine that may have none.
+  case "$(printf '%s' "$_dj" | tr 'A-Z' 'a-z')" in
+    *"$_dp"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 anchor_configured() {
   $SUDO test -s "$ANCHOR_ENV" 2>/dev/null || return 1
   $SUDO grep -q '^XL1_ANCHOR_TOKEN=.' "$AGENT_ENV" 2>/dev/null || return 1
+
+  # ANCHORING IS WIRED UP IS NOT THE SAME AS DELEGATED, and this treated them
+  # as one. A node can anchor readings hourly for weeks with no delegation
+  # ever put on chain -- which is exactly what one of these two Pis was doing.
+  # It has an attestor env, a token, and a key signing its readings, so every
+  # test here passed and the wizard reported "anchoring is already set up" and
+  # skipped the one step that was missing. A re-run could never repair it.
+  #
+  # Only a definite "no delegation on the record" reopens the step. Unreadable
+  # leaves it closed: the cost of being wrong here is gas for a second
+  # delegation, and an unreachable backend is not evidence of anything.
+  # Status captured explicitly rather than read from $? after an if, where
+  # it is the condition's status only by a rule nobody should have to recall.
+  delegation_anchored
+  _dstatus=$?
+  if [ "$_dstatus" -eq 1 ]; then
+    warn "this node has no delegation on chain" \
+         "its readings are anchored but nothing yet says which producer they are for"
+    return 1
+  fi
 
   # Both files are present. That says this ran before; it does not say the two
   # still agree with each other.

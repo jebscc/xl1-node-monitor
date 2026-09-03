@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.33.0"
+AGENT_VERSION = "1.34.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1614,7 +1614,7 @@ def fetch_earnings(name):
 
 
 def fetch_peers(name):
-    """(peer_count, our_share_percent, window) for the producing field.
+    """(peer_count, our_share_percent, window, field_shape) for the field.
 
     A block count on its own says nothing: the same number is healthy against
     three other producers and alarming against ten. The share, and whether the
@@ -1629,12 +1629,23 @@ def fetch_peers(name):
     balance -- measured over 1000 blocks, a 10x balance spread produced a 2x
     block spread -- so any "expected" figure would be a model invented here
     rather than anything the chain does.
+
+    The field's SHAPE goes with the count, and it is what makes a share
+    readable. 10% is most of the chain in a field of thirty and half of what
+    the leader takes in a field of four, and the number alone cannot say
+    which. Leader, median and top-three are the three that answer it.
+
+    Still no addresses, and the reason is unchanged: they are public on the
+    chain, but a dashboard has no need to hold a list of them, and not
+    collecting is simpler than deciding later who may read it. Shape is not
+    identity -- none of these figures says WHO, and they are computed here and
+    sent as four numbers.
     """
     if not PEERS_URL:
-        return None, None, None
+        return None, None, None, None
     address = read_reward_address(name)
     if not address:
-        return None, None, None
+        return None, None, None, None
     now = time.monotonic()
     cached = _peers_cache["value"]
     if cached is not None and now - _peers_cache["at"] < PEERS_INTERVAL:
@@ -1644,15 +1655,21 @@ def fetch_peers(name):
             {"network": NODE_NETWORK, "window": PEERS_WINDOW})
         with urllib.request.urlopen(url, timeout=120) as resp:
             if not (200 <= resp.status < 300):
-                return None, None, None
+                return None, None, None, None
             body = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError):
-        return None, None, None
+        return None, None, None, None
 
     producers = body.get("producers")
     total = body.get("totalBlocks")
     if not isinstance(producers, list) or not isinstance(total, int) or total <= 0:
-        return None, None, None
+        return None, None, None, None
+    # An empty field over a window that produced blocks is a contradiction --
+    # they came from somewhere. Reporting 0 producers and a 0% share of it
+    # would be a confident statement about a chain nobody produced on, so the
+    # whole answer is refused rather than the shape alone.
+    if not producers:
+        return None, None, None, None
 
     # NOT lstrip("0x") -- that strips every leading 0 and x, so 0x0a65... loses
     # its leading zero, never matches, and the node silently reports a 0% share
@@ -1664,7 +1681,25 @@ def fetch_peers(name):
         if isinstance(p, dict) and str(p.get("address", "")).lower() == target:
             mine = p.get("blocks") or 0
             break
-    value = (len(producers), round(100.0 * mine / total, 2), body.get("window"))
+    # Sorted shares, biggest first. Percentages of the same window our own
+    # share is measured against, so the four numbers can be read side by side.
+    shares = sorted(
+        (100.0 * (p.get("blocks") or 0) / total
+         for p in producers if isinstance(p, dict)),
+        reverse=True)
+    shape = None
+    if shares:
+        mid = len(shares) // 2
+        shape = {
+            "leader": round(shares[0], 2),
+            # The middle producer, not the mean: one node taking a quarter of
+            # a chain drags an average up and makes the typical member of the
+            # field look busier than any of them are.
+            "median": round(
+                shares[mid] if len(shares) % 2 else (shares[mid - 1] + shares[mid]) / 2, 2),
+            "top3": round(sum(shares[:3]), 2),
+        }
+    value = (len(producers), round(100.0 * mine / total, 2), body.get("window"), shape)
     # Cache only a real answer, for the same reason the balance does: a cached
     # failure pins the tile blank long after the cause is gone.
     _peers_cache["value"] = value
@@ -2642,12 +2677,19 @@ def collect():
     # Docker is not optional for this agent, so this one is never "n/a".
     _degraded_note(degraded, "node_image_count", images is None)
 
-    peer_count, peer_share, peer_window = (
-        _slow_get("peers", lambda: fetch_peers(name)) or (None, None, None))
+    peer_count, peer_share, peer_window, peer_field = (
+        _slow_get("peers", lambda: fetch_peers(name)) or (None, None, None, None))
     if peer_count is not None:
         payload["peer_count"] = peer_count
         payload["produced_share"] = peer_share
         payload["peer_window"] = peer_window
+    # Written longhand, like every other reported key, so the pinned-fields
+    # guard can see it -- it greps for the literal and a computed name is
+    # invisible to it.
+    if peer_field:
+        payload["field_leader_share"] = peer_field.get("leader")
+        payload["field_median_share"] = peer_field.get("median")
+        payload["field_top3_share"] = peer_field.get("top3")
     _degraded_note(degraded, "peers",
                    bool(PEERS_URL) and bool(name) and peer_count is None)
 

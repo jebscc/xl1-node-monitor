@@ -478,6 +478,11 @@ REPORTED_FIELDS = {
     # SDK the companion service reads the chain with, and what npm publishes
     "sdk_version", "sdk_latest",
     "peer_count", "produced_share", "peer_window",
+    # The field's shape, and no addresses. Leader, middle and top three
+    # as percentages of the same window our own share is measured
+    # against: 10% is most of a chain in a field of thirty and half the
+    # leader's take in a field of four, and a share alone cannot say which.
+    "field_leader_share", "field_median_share", "field_top3_share",
     # container
     "container_status", "container_started_at", "container_error", "exit_code",
     "exited_at", "health_status", "image", "restart_count", "running",
@@ -1599,7 +1604,7 @@ def _blind_agent(monkeypatch, tmp_path):
     monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: None)
     monkeypatch.setattr(agent, "fetch_cli_latest", lambda: None)
     monkeypatch.setattr(agent, "fetch_standing", lambda name: agent.NO_STANDING)
-    monkeypatch.setattr(agent, "fetch_peers", lambda name: (None, None, None))
+    monkeypatch.setattr(agent, "fetch_peers", lambda name: (None, None, None, None))
     monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
 
 
@@ -1794,7 +1799,7 @@ def test_a_healthy_steady_state_agent_reports_nothing_failing(monkeypatch):
     monkeypatch.setattr(agent, "fetch_standing",
                         lambda name: (12.5, True, "XL1", "12500000000000000000", "0", "1"))
     monkeypatch.setattr(agent, "fetch_earnings", lambda name: (37950.0, 759, 50.0, 3.055, True))
-    monkeypatch.setattr(agent, "fetch_peers", lambda name: (4, 14.7, 1000))
+    monkeypatch.setattr(agent, "fetch_peers", lambda name: (4, 14.7, 1000, None))
     monkeypatch.setattr(agent, "read_blocked_reason", lambda name: None)
     monkeypatch.setattr(agent, "read_producer_unit", lambda: None)
     monkeypatch.setattr(agent, "read_rebuild_timer", lambda: (None, None))
@@ -1912,10 +1917,76 @@ def _stub_peers(monkeypatch, body, status=200, reward="0xd1e2f3a4b5c6d7e8f9a0b1c
 
 def test_our_share_is_found_among_the_peers(monkeypatch):
     _stub_peers(monkeypatch, PEERS_BODY)
-    count, share, window = agent.fetch_peers("xl1-producer")
+    count, share, window, field = agent.fetch_peers("xl1-producer")
     assert count == 2
     assert share == 14.7, f"147 of 1000 blocks is 14.7%, got {share}"
     assert window == 1000
+
+
+def _peers_body(*blocks):
+    """A /peers answer with one producer per block count given."""
+    return {
+        "totalBlocks": sum(blocks),
+        "window": 1000,
+        "producers": [{"address": "0x%040x" % (i + 1), "blocks": b}
+                      for i, b in enumerate(blocks)],
+    }
+
+
+def test_the_field_shape_says_what_a_share_is_worth(monkeypatch):
+    """Ten percent is a different fact in a field of three and a field of thirty.
+
+    The share alone cannot say which, so leader, middle and top-three go with
+    it. All three are percentages of the same window.
+    """
+    _stub_peers(monkeypatch, _peers_body(50, 25, 15, 10))
+    _, share, _, field = agent.fetch_peers("xl1-producer")
+    assert field["leader"] == 50.0
+    assert field["top3"] == 90.0
+    # Four producers: the middle is the mean of the two in the middle.
+    assert field["median"] == 20.0
+
+
+def test_the_middle_producer_is_not_the_average_one(monkeypatch):
+    """One node taking most of a chain drags a mean up.
+
+    The median says what a typical member of the field actually gets; the mean
+    would make every one of the small producers look busier than they are.
+    """
+    _stub_peers(monkeypatch, _peers_body(90, 4, 3, 2, 1))
+    _, _, _, field = agent.fetch_peers("xl1-producer")
+    assert field["median"] == 3.0          # the middle of five
+    assert field["leader"] == 90.0
+    mean = 100.0 / 5
+    assert field["median"] < mean, "the median has been replaced by a mean"
+
+
+def test_the_shape_carries_no_addresses(monkeypatch):
+    """The reason has not changed: a dashboard has no need for a list of them.
+
+    Shape is not identity. None of these figures says WHO, and a change that
+    started sending one would fail here rather than on somebody's panel.
+    """
+    _stub_peers(monkeypatch, _peers_body(50, 25, 15, 10))
+    _, _, _, field = agent.fetch_peers("xl1-producer")
+    flat = json.dumps(field).lower()
+    assert "0x" not in flat and "address" not in flat, field
+    assert set(field) == {"leader", "median", "top3"}, field
+
+
+def test_a_field_smaller_than_three_still_has_a_top_three(monkeypatch):
+    # sum() of a short slice is the whole field, which is the right answer:
+    # the top three of two producers is both of them.
+    _stub_peers(monkeypatch, _peers_body(70, 30))
+    count, _, _, field = agent.fetch_peers("xl1-producer")
+    assert count == 2
+    assert field["top3"] == 100.0
+    assert field["leader"] == 70.0
+
+
+def test_no_field_is_reported_when_there_is_none(monkeypatch):
+    _stub_peers(monkeypatch, {"totalBlocks": 10, "window": 1000, "producers": []})
+    assert agent.fetch_peers("xl1-producer") == (None, None, None, None)
 
 
 def test_a_leading_zero_in_the_address_still_matches(monkeypatch):
@@ -1927,7 +1998,7 @@ def test_a_leading_zero_in_the_address_still_matches(monkeypatch):
     body = {"window": 100, "totalBlocks": 100,
             "producers": [{"address": addr, "blocks": 40, "balance": 1.0}]}
     _stub_peers(monkeypatch, body, reward="0x" + addr)
-    count, share, _ = agent.fetch_peers("xl1-producer")
+    count, share, _, _ = agent.fetch_peers("xl1-producer")
     assert share == 40.0, f"leading zero lost: got {share}"
 
 
@@ -1937,7 +2008,7 @@ def test_a_node_absent_from_the_window_reports_zero_not_nothing(monkeypatch):
     body = {"window": 1000, "totalBlocks": 1000,
             "producers": [{"address": "b" * 40, "blocks": 1000, "balance": 5.0}]}
     _stub_peers(monkeypatch, body)
-    count, share, _ = agent.fetch_peers("xl1-producer")
+    count, share, _, _ = agent.fetch_peers("xl1-producer")
     assert count == 1 and share == 0.0
 
 
@@ -1945,7 +2016,7 @@ def test_an_unreadable_answer_is_not_a_zero_share(monkeypatch):
     """The opposite trap: a failed lookup must never render as "produced
     nothing", which would send someone chasing a fault that is not there."""
     _stub_peers(monkeypatch, {"producers": None, "totalBlocks": 0})
-    assert agent.fetch_peers("xl1-producer") == (None, None, None)
+    assert agent.fetch_peers("xl1-producer") == (None, None, None, None)
 
 
 def test_peer_lookup_is_cached(monkeypatch):
@@ -2129,7 +2200,7 @@ _COLLECTORS = {
     "fetch_repo_upstream": lambda h: (None, None, None, None),
     "fetch_standing": lambda n: (1.0, True, "XL1", "1", None, None),
     "fetch_earnings": lambda n: (1.0, 1, 1.0, None, None),
-    "fetch_peers": lambda n: (4, 14.6, 1000),
+    "fetch_peers": lambda n: (4, 14.6, 1000, None),
     "read_os_updates": lambda: (0, 0, 1.0, False),
     "fetch_producer_stats": lambda n: None,
     "fetch_minted_chunk": lambda n: None,

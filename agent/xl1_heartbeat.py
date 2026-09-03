@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.32.0"
+AGENT_VERSION = "1.33.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -490,6 +490,108 @@ def _to_mb(value):
             except ValueError:
                 return None
     return None
+
+
+def _statz_number(node, *path):
+    """One number out of a nested statz object, or None.
+
+    Tolerant on purpose. This payload belongs to the node, not to this agent:
+    a stage can be renamed or a percentile dropped by an upgrade, and the
+    honest response to a missing figure is to omit it rather than to report a
+    zero, which on a latency panel reads as "instant".
+    """
+    cur = node
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+    if isinstance(cur, bool) or not isinstance(cur, (int, float)):
+        return None
+    return round(float(cur), 1)
+
+
+def read_statz(name):
+    """What the node says its own block production costs, or None.
+
+    THE NODE ALREADY MEASURES THIS. It times every stage and serves the
+    counters on its health port, so this is one request against in-memory
+    numbers -- no chain call, no work the node was not doing anyway. An agent
+    that timed the gateway itself would add load to the shared endpoint this
+    node is judged on, to answer a question the node had already answered.
+    (The endpoint, and that reasoning: LewSales, xl1-block-producer-pi, MIT.)
+
+    Read the same way as /livez and /readyz -- curl inside the container --
+    so no port has to be published. The health port carries no authentication
+    and this machine holds a producer phrase; the exec path keeps it off the
+    network entirely, and the file's own docstring already promised that.
+
+    headFetch is the honest signal: it runs on every check, so its MIN is the
+    wire floor to the gateway while its p50 includes the local work of parsing
+    and validating the reply. The two together separate "the network is slow"
+    from "this board is slow", which is the thing an operator is guessing at.
+
+    The stages do NOT sum to the cycle, and the panel must not pretend they do:
+    the node does not time every step, so the remainder is real work that is
+    simply unmeasured.
+    """
+    raw = None
+    url_path = "/statz"
+    if HEALTH_URL:
+        # HEALTH_URL points at /livez; /statz is its sibling. Stripped as a
+        # suffix, not replaced globally -- a host with "livez" in its name
+        # would otherwise be rewritten into something that does not resolve.
+        base = HEALTH_URL.rstrip("/")
+        if base.endswith("/livez"):
+            base = base[: -len("/livez")]
+        raw = _http_text(base + url_path)
+    elif name:
+        base = "http://127.0.0.1:" + HEALTH_PORT
+        raw = run(["docker", "exec", name, "curl", "-fsS", "-m", "5", base + url_path])
+    if not raw:
+        return None
+    try:
+        doc = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+
+    out = {}
+    for key, path in (
+        ("head_min_ms", ("headFetch", "minMs")),
+        ("head_p50_ms", ("headFetch", "p50Ms")),
+        ("head_p95_ms", ("headFetch", "p95Ms")),
+        ("samples", ("headFetch", "count")),
+        ("cycle_p50_ms", ("productionCycle", "p50Ms")),
+        ("cycle_p95_ms", ("productionCycle", "p95Ms")),
+        ("build_ms", ("blockProduction", "p50Ms")),
+        ("mempool_tx_ms", ("mempoolPendingTransactionsFetch", "p50Ms")),
+        ("mempool_blocks_ms", ("mempoolPendingBlocksFetch", "p50Ms")),
+        ("submit_ms", ("mempoolSubmitBlock", "p50Ms")),
+        ("checks_skipped", ("counts", "concurrentChecksSkipped")),
+        ("publishes_rejected", ("counts", "rejectedPublishes")),
+    ):
+        value = _statz_number(doc, *path)
+        if value is not None:
+            out[key] = value
+
+    # The percentile pair is what every reading here is anchored to. Without it
+    # the rest is a handful of stage timings with nothing to measure them
+    # against, and a panel would have to invent what their absence meant.
+    if "head_p50_ms" not in out:
+        return None
+    return out
+
+
+def _http_text(url):
+    """A short GET, or None. Used only when the health port is published."""
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            return resp.read(200000).decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
 
 
 def check_health(name):
@@ -2300,6 +2402,7 @@ def _slow_worker():
             _step("build_attempts", lambda: _slow_put("build_attempts", read_build_attempts(name)))
             _step("candidate_losses",
                   lambda: _slow_put("candidate_losses", read_candidate_losses(name)))
+            _step("statz", lambda: _slow_put("statz", read_statz(name)))
             _step("producer_unit", lambda: _slow_put("producer_unit", read_producer_unit()))
             _step("rebuild_timer", lambda: _slow_put("rebuild_timer", read_rebuild_timer()))
             _step("repo_head", lambda: _slow_put("repo_head", read_repo_head()))
@@ -2493,6 +2596,13 @@ def collect():
         payload["lost_tx_already_finalized"] = losses.get("tx_already_finalized", 0)
         payload["lost_behind_finalized_head"] = losses.get("behind_finalized_head", 0)
         payload["lost_block_number_mismatch"] = losses.get("block_number_mismatch", 0)
+
+    # Nested, like chain_heights: one coherent reading with a dozen parts, and
+    # a dozen flat fields would each need their own allow-list decision to say
+    # the same thing.
+    statz = _slow_get("statz", lambda: read_statz(name))
+    if statz:
+        payload["latency"] = statz
 
     scan_age, scan_every = producer_scan_clock()
     payload["produced_scan_age"] = scan_age

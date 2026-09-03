@@ -463,6 +463,7 @@ REPORTED_FIELDS = {
     # cannot.
     "blocks_attempted", "blocks_attempted_span", "blocks_rebuilt",
     "produced_scan_age", "produced_scan_every",
+    "latency",
     "lost_tx_already_finalized", "lost_behind_finalized_head",
     "lost_block_number_mismatch",
     # The address this node signs blocks with. Public by nature -- it is in
@@ -801,6 +802,111 @@ def test_attempts_are_counted_from_proposals_not_from_timings(monkeypatch):
     attempts, span, _rebuilt = agent.read_build_attempts("xl1-producer")
     assert attempts == 10, "counted the timing lines instead of the proposals"
     assert span == 10
+
+
+# --- what the node says its own work costs ------------------------------------
+#
+# The node times every stage of block production and serves the counters on its
+# health port. Reading them costs one request against numbers already in
+# memory; measuring the same thing by timing the gateway would add load to the
+# shared endpoint this node is judged on.
+
+STATZ = json.dumps({
+    "headFetch": {"minMs": 101, "p50Ms": 239.4, "p95Ms": 293, "count": 25701},
+    "productionCycle": {"p50Ms": 2072, "p95Ms": 4110},
+    "blockProduction": {"p50Ms": 262},
+    "mempoolPendingTransactionsFetch": {"p50Ms": 127},
+    "mempoolPendingBlocksFetch": {"p50Ms": 144},
+    "mempoolSubmitBlock": {"p50Ms": 199},
+    "counts": {"concurrentChecksSkipped": 3, "rejectedPublishes": 26},
+})
+
+
+def test_it_reads_the_stage_timings_the_node_already_keeps(monkeypatch):
+    _stub_run(monkeypatch, [("statz", STATZ)])
+    got = agent.read_statz("xl1-producer")
+    assert got["head_min_ms"] == 101      # the wire floor to the gateway
+    assert got["head_p50_ms"] == 239.4    # and the same call including local work
+    assert got["head_p95_ms"] == 293
+    assert got["samples"] == 25701
+    assert got["cycle_p50_ms"] == 2072
+    assert got["build_ms"] == 262
+    assert got["submit_ms"] == 199
+    assert got["publishes_rejected"] == 26
+
+
+def test_it_asks_the_container_rather_than_a_published_port(monkeypatch):
+    """No port has to be open for this.
+
+    The health port carries no authentication and this machine holds a producer
+    phrase. curl runs INSIDE the container, which is how /livez and /readyz are
+    already read, so nothing has to listen on the host at all.
+    """
+    seen = []
+
+    def fake_run(cmd, **_kw):
+        seen.append(cmd)
+        return STATZ if "statz" in " ".join(cmd) else None
+
+    monkeypatch.setattr(agent, "run", fake_run)
+    agent.read_statz("xl1-producer")
+    assert seen, "asked nothing at all"
+    cmd = " ".join(seen[0])
+    assert cmd.startswith("docker exec"), f"went around the container: {cmd}"
+    assert "127.0.0.1" in cmd, "reached for something other than loopback"
+
+
+def test_a_renamed_stage_is_omitted_rather_than_reported_as_zero(monkeypatch):
+    """This payload belongs to the node, not to this agent.
+
+    An upgrade can rename a stage or drop a percentile. Zero on a latency panel
+    reads as "instant", which is the one answer that is never true.
+    """
+    trimmed = json.dumps({"headFetch": {"p50Ms": 200, "p95Ms": 300, "count": 10}})
+    _stub_run(monkeypatch, [("statz", trimmed)])
+    got = agent.read_statz("xl1-producer")
+    assert got["head_p50_ms"] == 200
+    assert "build_ms" not in got
+    assert "head_min_ms" not in got
+
+
+def test_without_the_percentile_there_is_nothing_to_anchor_to(monkeypatch):
+    # Stage timings with no p50 beside them are numbers with nothing to measure
+    # against, and a panel would have to invent what their absence meant.
+    _stub_run(monkeypatch, [("statz", json.dumps({"blockProduction": {"p50Ms": 262}}))])
+    assert agent.read_statz("xl1-producer") is None
+
+
+def test_an_unreachable_or_broken_endpoint_is_not_a_reading(monkeypatch):
+    _stub_run(monkeypatch, [])
+    assert agent.read_statz("xl1-producer") is None
+    _stub_run(monkeypatch, [("statz", "<html>404</html>")])
+    assert agent.read_statz("xl1-producer") is None
+    _stub_run(monkeypatch, [("statz", "[1,2,3]")])
+    assert agent.read_statz("xl1-producer") is None
+    assert agent.read_statz(None) is None
+
+
+def test_the_sibling_url_is_derived_without_rewriting_the_host(monkeypatch):
+    """/statz sits beside /livez, and only the suffix may be stripped.
+
+    A global replace ate the host of anything named for the endpoint it
+    served: "http://livez.example.com/livez" became "http:/.example.com".
+    """
+    seen = []
+    monkeypatch.setattr(agent, "HEALTH_URL", "http://livez.example.com/livez")
+    monkeypatch.setattr(agent, "_http_text", lambda url: seen.append(url))
+    agent.read_statz("xl1-producer")
+    assert seen == ["http://livez.example.com/statz"], seen
+
+
+def test_a_string_where_a_number_belongs_is_ignored(monkeypatch):
+    # Booleans too: True is an int in Python, and "p50: true" would otherwise
+    # render as a one-millisecond fetch.
+    odd = json.dumps({"headFetch": {"p50Ms": 200, "minMs": "fast", "count": True}})
+    _stub_run(monkeypatch, [("statz", odd)])
+    got = agent.read_statz("xl1-producer")
+    assert got == {"head_p50_ms": 200}
 
 
 # --- why the candidates were thrown away -------------------------------------

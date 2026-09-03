@@ -2328,15 +2328,44 @@ confirm_progress() {
   done
 }
 
+# Name the producer this is supposed to be for, so a mismatch is refused
+# rather than anchored.
+#
+# delegate-attestor derives the producer from the phrase and, given --producer,
+# refuses when the two disagree. Its own comment says why: "anchoring a
+# delegation from the wrong key produces a statement that looks right, verifies
+# as internally consistent, and binds nothing -- and it costs gas to discover."
+# The wizard had that check available and did not use it.
+#
+# It cost exactly what the comment predicted. On a machine whose producer
+# container predates this script -- started by hand from a different env file,
+# and skipped by step 10 because it was already running -- the phrase in
+# $PRODUCER_ENV was not the phrase the producer signs with. The delegation
+# derived a producer that was not the one making blocks, said that address may
+# attest for itself, and went on chain. Nothing looked wrong at any point.
+#
+# current_producer reads the address out of the RUNNING container, so it is
+# what the chain actually sees. Empty means the log did not say -- a young
+# container, or one that has rotated its logs -- and that is not grounds to
+# refuse; it is grounds to say the check could not be made.
+RUNNING_PRODUCER="$(current_producer)"
+DELEGATE_ARGS="--attestor $ATTESTOR_ADDRESS"
+if [ -n "$RUNNING_PRODUCER" ]; then
+  DELEGATE_ARGS="$DELEGATE_ARGS --producer $RUNNING_PRODUCER"
+else
+  warn "could not read the producer's address from its log" \
+       "the delegation cannot be checked against the running producer"
+fi
+
 # Dry run first, printed in full, so what is about to go on chain is seen
 # before it goes there.
 printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
-  node_modules/.bin/tsx delegate-attestor.ts --attestor "$ATTESTOR_ADDRESS" 2>&1 | sed 's/^/    /'
+  node_modules/.bin/tsx delegate-attestor.ts $DELEGATE_ARGS 2>&1 | sed 's/^/    /'
 
 printf '\n'
 if ask_yn "  Put that on chain?" "y"; then
   printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
-    node_modules/.bin/tsx delegate-attestor.ts --attestor "$ATTESTOR_ADDRESS" --anchor 2>&1 \
+    node_modules/.bin/tsx delegate-attestor.ts $DELEGATE_ARGS --anchor 2>&1 \
     | confirm_progress \
     || { PRODUCER_MNEMONIC=""; die "the delegation did not anchor. Nothing else was changed."; }
   ok "the delegation is on chain"

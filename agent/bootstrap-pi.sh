@@ -2350,6 +2350,25 @@ confirm_progress() {
 # refuse; it is grounds to say the check could not be made.
 RUNNING_PRODUCER="$(current_producer)"
 DELEGATE_ARGS="--attestor $ATTESTOR_ADDRESS"
+
+# WHICH ACCOUNT of the phrase this node produces as.
+#
+# One phrase derives many addresses, and a second machine sharing a phrase is
+# given a different one so the two are not the same producer. The delegate tool
+# assumed the first, so on a node using account 1 it derived an address that
+# machine does not sign with -- and then refused, reporting that the phrase was
+# wrong when the phrase was right and the INDEX was not.
+#
+# Read from the preset the container is actually mounted with, not from the
+# answer given during setup: the file is what the node runs on, and a state
+# file can be missing or stale on a device set up before it existed.
+producer_account() {
+  $SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
+    "$PRESETS_DIR/roles/producer.json" 2>/dev/null | head -1
+}
+ACCOUNT_FOR_DELEGATION="$(producer_account)"
+[ -n "$ACCOUNT_FOR_DELEGATION" ] || ACCOUNT_FOR_DELEGATION="${ACCOUNT_INDEX:-0}"
+DELEGATE_ARGS="$DELEGATE_ARGS --account $ACCOUNT_FOR_DELEGATION"
 if [ -n "$RUNNING_PRODUCER" ]; then
   DELEGATE_ARGS="$DELEGATE_ARGS --producer $RUNNING_PRODUCER"
 else

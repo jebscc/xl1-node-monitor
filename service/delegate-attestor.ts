@@ -20,10 +20,13 @@
  * Run it on the Pi, where the key already lives:
  *
  *   # see exactly what would be anchored, spending nothing
- *   npx tsx delegate-attestor.ts --attestor <address>
+ *   npx tsx delegate-attestor.ts --attestor <address> [--account <n>]
  *
  *   # actually anchor it
  *   npx tsx delegate-attestor.ts --attestor <address> --anchor
+ *
+ * --account is which address of the phrase this node produces as. It defaults
+ * to the first, and a node whose role preset names another must say so.
  *
  * The phrase is read from stdin or XL1_PRODUCER_MNEMONIC. Never from an
  * argument: anything on a command line is visible in `ps` and lands in shell
@@ -95,9 +98,25 @@ const main = async () => {
   } catch {
     die('that phrase could not be read as a mnemonic (24 words, space separated)')
   }
+  // WHICH ACCOUNT OF THE PHRASE, and it is not always the first.
+  //
+  // One phrase derives many addresses. A node's role preset carries an
+  // accountPath, and a second machine sharing a phrase is given a different
+  // one so the two do not produce as the same identity. This derived index 0
+  // unconditionally, so on any node NOT using account 0 it computed an address
+  // that machine does not sign with -- and then either anchored a delegation
+  // naming it, or (once --producer arrived) refused to anchor at all.
+  //
+  // Seen on a Pi running account 1: the phrase was right, the index was not,
+  // and the message said the phrase derived the wrong address -- which reads
+  // as "wrong wallet" and is not what happened.
+  const index = arg('account') ?? ADDRESS_INDEX.XYO
+  if (!/^\d{1,3}$/.test(index)) {
+    die(`--account must be a whole number, not ${JSON.stringify(index)}`)
+  }
   // Awaited: derivePath returns a promise. getSignerAccount.ts appears not to
   // await it only because its async wrapper flattens the return value.
-  const account = await wallet.derivePath(ADDRESS_INDEX.XYO)
+  const account = await wallet.derivePath(index)
   const producer = account.address.toLowerCase()
 
   // The check worth having. Anchoring a delegation from the wrong key produces
@@ -105,7 +124,10 @@ const main = async () => {
   // nothing -- and it costs gas to discover. If the operator says which
   // producer this should be, refuse to proceed when the phrase disagrees.
   if (expected && producer !== expected) {
-    die(`phrase derives ${producer}, not the ${expected} you named -- refusing`)
+    die(`account ${index} of that phrase derives ${producer}, not the ${expected} `
+      + `you named -- refusing.\n`
+      + `      If this node produces as a different account of the same phrase, `
+      + `pass --account <n>.`)
   }
   if (!expected) {
     console.log('  NOTE: no --producer given, so nothing checked the phrase is the')
@@ -127,7 +149,7 @@ const main = async () => {
   const payload = { schema: asSchema('network.xyo.id', true), salt: JSON.stringify(record) }
   const contentHash = await PayloadBuilder.hash(payload)
 
-  console.log('  producer (derived) :', producer)
+  console.log('  producer (derived) :', producer, `(account ${index})`)
   console.log('  attestor           :', attestor)
   console.log('  network            :', network)
   console.log('  content hash       :', contentHash)

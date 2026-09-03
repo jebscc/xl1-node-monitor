@@ -457,6 +457,7 @@ REPORTED_FIELDS = {
     # winning none -- from one having a quiet spell, which "blocks produced: 0"
     # cannot.
     "blocks_attempted", "blocks_attempted_span", "blocks_rebuilt",
+    "produced_scan_age", "produced_scan_every",
     # The address this node signs blocks with. Public by nature -- it is in
     # every block it produces. The REWARD address is not here and should not
     # be: that is the operator's choice of wallet, not a fact about the node.

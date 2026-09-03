@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.30.0"
+AGENT_VERSION = "1.31.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1038,6 +1038,32 @@ def fetch_producer_stats(name):
     _producer_cache["at"] = now
     _producer_cache["value"] = stats
     return stats
+
+
+def producer_scan_clock():
+    """(seconds since the last successful scan, the interval between them).
+
+    Block production is counted by scanning the chain, which is expensive on a
+    Pi, so it runs once per PRODUCER_INTERVAL rather than once per heartbeat --
+    roughly one beat in thirty. Everything else on the panel refreshes in
+    seconds, so the produced figures sit still for up to fifteen minutes while
+    their neighbours tick, and nothing anywhere said why.
+
+    Not hypothetical: a node signed a block, the chain showed it within a
+    minute, the panel did not, and the operator read the stillness as a fault
+    -- at the end of an evening in which a great many things really were
+    faults. A figure that is deliberately stale has to say so.
+
+    The AGE travels rather than a countdown, because a countdown computed here
+    is already wrong by however long the heartbeat took to arrive. The panel
+    adds the heartbeat age to it and gets the true remainder.
+
+    None means nothing has scanned yet, which is a different state from "a scan
+    ran and found nothing" and must not render as zero.
+    """
+    if not _producer_cache["at"]:
+        return (None, PRODUCER_INTERVAL)
+    return (int(time.monotonic() - _producer_cache["at"]), PRODUCER_INTERVAL)
 
 
 def producer_scan_due():
@@ -2369,6 +2395,10 @@ def collect():
     if tail:
         payload["log_tail"] = tail
     _degraded_note(degraded, "log_tail", bool(name) and not tail)
+
+    scan_age, scan_every = producer_scan_clock()
+    payload["produced_scan_age"] = scan_age
+    payload["produced_scan_every"] = scan_every
 
     attempts = _slow_get("build_attempts", lambda: read_build_attempts(name))
     if attempts:

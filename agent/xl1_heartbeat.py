@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.31.0"
+AGENT_VERSION = "1.32.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -121,6 +121,10 @@ LOG_TAIL_LINES = int(os.environ.get("XL1_LOG_TAIL_LINES", "20"))
 # useful moment to look is when builds are trending toward the interval, not
 # when they have already passed it and the node is losing.
 BUILD_WINDOW = os.environ.get("XL1_BUILD_WINDOW", "60m")
+# Long enough that every reader in one cycle shares a single `docker logs`,
+# short enough that the next cycle reads afresh. Below the heartbeat
+# interval by design.
+LOG_CACHE_TTL = int(os.environ.get("XL1_LOG_CACHE_TTL", "20"))
 BUILD_BUDGET_MS = int(os.environ.get("XL1_BUILD_BUDGET_MS", "1000"))
 BUILD_SAMPLES_MAX = int(os.environ.get("XL1_BUILD_SAMPLES_MAX", "500"))
 # Host package updates. Read on a slow cycle: this shells out to apt, the
@@ -1735,6 +1739,43 @@ _BUILD_MS = re.compile(r"generated\s+time\s+payload\s+in\s+(\d+(?:\.\d+)?)\s*ms"
                        re.IGNORECASE)
 
 
+_log_cache = {"key": None, "at": 0.0, "text": None}
+
+
+def container_log(name, window=None):
+    """The container's recent log, read once per cycle and shared.
+
+    Four readers want the same window -- build times, build attempts, the
+    producer's address and why candidates lost. Each used to call `docker logs`
+    itself, so a board already tight on CPU paid four times to read the same
+    sixty minutes, and the comment beside the second one said to cache it
+    before a fourth arrived. This is the fourth.
+
+    The TTL is shorter than the heartbeat interval on purpose: readers inside
+    one cycle share a single read, and the next cycle sees fresh output. A
+    longer cache would make "how often is it building" answer for a window that
+    had already closed.
+
+    None still means "could not read it" -- a gone container, a refusal, a
+    timeout -- and is cached as nothing so a failed read is retried rather than
+    remembered.
+    """
+    global _log_cache
+    if not name or not BUILD_WINDOW:
+        return None
+    key = (name, window or BUILD_WINDOW)
+    now = time.monotonic()
+    if _log_cache["key"] == key and (now - _log_cache["at"]) < LOG_CACHE_TTL:
+        return _log_cache["text"]
+    # merge_stderr for the same reason as everywhere else here -- the node
+    # splits its output across both streams and reading one silently halves it.
+    out = run(["docker", "logs", "--since", key[1], name],
+              timeout=30, merge_stderr=True)
+    if out is not None:
+        _log_cache = {"key": key, "at": now, "text": out}
+    return out
+
+
 def read_build_times(name):
     """How long the node took to build blocks, or None.
 
@@ -1769,8 +1810,7 @@ def read_build_times(name):
         return None
     # merge_stderr for the same reason as everywhere else here -- the node
     # splits its output across both streams and reading one silently halves it.
-    out = run(["docker", "logs", "--since", BUILD_WINDOW, name],
-              timeout=30, merge_stderr=True)
+    out = container_log(name)
     # None means run() could not get an answer -- the container is gone, docker
     # refused us, the call timed out. An empty string means it answered with an
     # empty log, which is a reading. Only the first is "we do not know".
@@ -1872,8 +1912,7 @@ def read_producer_address(name):
         return known
 
     _producer_addr_cache["at"] = now
-    out = run(["docker", "logs", "--since", BUILD_WINDOW, name],
-              timeout=30, merge_stderr=True)
+    out = container_log(name)
     # The summary first: it names the producer. The complaint second: the
     # same answer on an ordinary node, and the only one still available
     # once the summary has scrolled out of the window this reads.
@@ -1964,8 +2003,7 @@ def read_build_attempts(name):
     # separate rather than folded together because they answer different
     # questions and one is much older than the other; if a third reader ever
     # wants this log, cache it once instead of adding another.
-    out = run(["docker", "logs", "--since", BUILD_WINDOW, name],
-              timeout=30, merge_stderr=True)
+    out = container_log(name)
     if out is None:
         return None
     heights = []
@@ -1981,6 +2019,51 @@ def read_build_attempts(name):
         return (0, 0, 0)
     distinct = len(set(heights))
     return (distinct, max(heights) - min(heights) + 1, len(heights) - distinct)
+
+
+# The node's own words for why a candidate was thrown away.
+#
+# Counted from the ANCHOR line, not from the tag. behind-finalized-head and
+# block-number-mismatch are each logged twice -- once by the validation viewer
+# and once by the runner -- while tx-already-finalized is logged once, so
+# counting tags reports roughly double for two of the three and the ratios
+# between them come out wrong. "No candidate block can be appended" is emitted
+# exactly once per rejected candidate and carries the tag, so it is the only
+# honest thing to count. (Approach and the double-logging finding: LewSales,
+# xl1-block-producer-pi, MIT.)
+_LOSS_ANCHOR = "No candidate block can be appended"
+_LOSS_TAGS = (
+    ("tx_already_finalized", "tx-already-finalized"),
+    ("behind_finalized_head", "behind-finalized-head"),
+    ("block_number_mismatch", "block-number-mismatch"),
+)
+
+
+def read_candidate_losses(name):
+    """Why this node's candidates were rejected, or None.
+
+    A producer that builds and never wins looks identical to one that is never
+    given a height: both report zero blocks. These say which, and more than
+    that they say WHICH KIND of losing -- a node whose candidates are stale on
+    arrival is a different problem from one building on the wrong head, and the
+    two want different answers.
+
+    An empty dict is a reading: the log was there and held no rejections, which
+    is what a node winning its races looks like. None means the log could not
+    be read at all, which is not the same and must not render as "no losses".
+    """
+    out = container_log(name)
+    if out is None:
+        return None
+    counts = {}
+    for line in out.splitlines():
+        if _LOSS_ANCHOR not in line:
+            continue
+        for key, tag in _LOSS_TAGS:
+            if "[" + tag + "]" in line:
+                counts[key] = counts.get(key, 0) + 1
+                break
+    return counts
 
 
 def read_log_tail(name):
@@ -2215,6 +2298,8 @@ def _slow_worker():
             _step("blocked_reason", lambda: _slow_put("blocked_reason", read_blocked_reason(name)))
             _step("build_times", lambda: _slow_put("build_times", read_build_times(name)))
             _step("build_attempts", lambda: _slow_put("build_attempts", read_build_attempts(name)))
+            _step("candidate_losses",
+                  lambda: _slow_put("candidate_losses", read_candidate_losses(name)))
             _step("producer_unit", lambda: _slow_put("producer_unit", read_producer_unit()))
             _step("rebuild_timer", lambda: _slow_put("rebuild_timer", read_rebuild_timer()))
             _step("repo_head", lambda: _slow_put("repo_head", read_repo_head()))
@@ -2395,6 +2480,19 @@ def collect():
     if tail:
         payload["log_tail"] = tail
     _degraded_note(degraded, "log_tail", bool(name) and not tail)
+
+    losses = _slow_get("candidate_losses", lambda: read_candidate_losses(name))
+    if losses is not None:
+        # Written out one key at a time rather than built from _LOSS_TAGS in a
+        # loop. A computed key is invisible to grep, and the guard that pins
+        # the reported fields to the version reads the source for literal
+        # payload["..."] names -- so a loop here would have quietly dropped
+        # three fields out of the thing that exists to notice exactly that.
+        # Zeroes are sent: "none of this kind" is a reading, and a missing key
+        # is indistinguishable from an agent too old to count it.
+        payload["lost_tx_already_finalized"] = losses.get("tx_already_finalized", 0)
+        payload["lost_behind_finalized_head"] = losses.get("behind_finalized_head", 0)
+        payload["lost_block_number_mismatch"] = losses.get("block_number_mismatch", 0)
 
     scan_age, scan_every = producer_scan_clock()
     payload["produced_scan_age"] = scan_age

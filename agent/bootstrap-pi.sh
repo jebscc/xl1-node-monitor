@@ -109,6 +109,18 @@ ANCHOR_PRODUCER_FILE="${ANCHOR_PRODUCER_FILE:-/etc/xl1-anchor.producer}"
 # accountPath appears nowhere in its entrypoint. Verified by setting
 # XL1_ACTORS__0__ACCOUNT_PATH=1 and watching the resolved config still say 0.
 PRESETS_DIR="${PRESETS_DIR:-/opt/xl1-presets}"
+# The node's own health port. It serves /statz -- in-memory timings for every
+# stage of block production, which the node keeps anyway -- so the agent can
+# read where a cycle's time goes without touching the chain. Asking the gateway
+# instead would add load to the shared endpoint this node is judged on, to
+# answer a question the node has already answered.
+#
+# 127.0.0.1 ONLY. It is an unauthenticated status port on a machine holding a
+# producer phrase, and it has no business being reachable from the LAN.
+#
+# It reaches a container only when that container is recreated, so an existing
+# node gains it on its next rebuild rather than immediately.
+HEALTH_PORT="${XL1_HEALTH_CHECK_PORT:-9099}"
 AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
@@ -1839,6 +1851,7 @@ $SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true
 # shellcheck disable=SC2086
 $SUDO docker run -d --name xl1-producer --restart unless-stopped \
   -e NODE_OPTIONS="--max-old-space-size=$NODE_HEAP_MB" $PRESET_ARGS \
+  -p 127.0.0.1:$HEALTH_PORT:$HEALTH_PORT \
   --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   --env-file "$PRODUCER_ENV" xl1:local >/dev/null \
   || die "the producer would not start. Check: sudo docker logs xl1-producer"

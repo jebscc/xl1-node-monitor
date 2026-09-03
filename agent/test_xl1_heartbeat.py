@@ -58,6 +58,11 @@ def _defaults(monkeypatch):
     monkeypatch.setattr(agent, "CONTAINER", "")
     monkeypatch.setattr(agent, "CONTAINER_IMAGE", "xl1:local")
     monkeypatch.setattr(agent, "COMMAND_HINT", "/opt/xl1/")
+    # The container log is cached so one cycle reads it once. Left standing
+    # between tests it would serve the previous test's log to the next, which
+    # is a silent pass rather than a failure -- exactly the sort of thing this
+    # file exists to prevent.
+    monkeypatch.setattr(agent, "_log_cache", {"key": None, "at": 0.0, "text": None})
 
 
 def test_finds_container_by_image_tag(monkeypatch):
@@ -458,6 +463,8 @@ REPORTED_FIELDS = {
     # cannot.
     "blocks_attempted", "blocks_attempted_span", "blocks_rebuilt",
     "produced_scan_age", "produced_scan_every",
+    "lost_tx_already_finalized", "lost_behind_finalized_head",
+    "lost_block_number_mismatch",
     # The address this node signs blocks with. Public by nature -- it is in
     # every block it produces. The REWARD address is not here and should not
     # be: that is the operator's choice of wallet, not a fact about the node.
@@ -771,6 +778,10 @@ def test_no_attempts_is_a_reading_not_a_silence(monkeypatch):
     times draw, and for the same reason."""
     _stub_run(monkeypatch, [("docker logs", "[BlockRunner] nothing of interest")])
     assert agent.read_build_attempts("xl1-producer") == (0, 0, 0)
+    # A LATER CYCLE, so the shared log cache starts cold. Warm, it would
+    # hand this read the previous one's text and the assertion below would
+    # pass on stale output instead of on a failed read.
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
     _stub_run(monkeypatch, [])
     assert agent.read_build_attempts("xl1-producer") is None
     assert agent.read_build_attempts(None) is None
@@ -790,6 +801,104 @@ def test_attempts_are_counted_from_proposals_not_from_timings(monkeypatch):
     attempts, span, _rebuilt = agent.read_build_attempts("xl1-producer")
     assert attempts == 10, "counted the timing lines instead of the proposals"
     assert span == 10
+
+
+# --- why the candidates were thrown away -------------------------------------
+#
+# A node that builds and never wins reads identically to one never given a
+# height: both report zero. These say which kind of losing it is, which is the
+# difference between a fixable fault and a network decision.
+
+# Two of the three tags are logged TWICE -- once by the validation viewer and
+# once by the runner -- and the third once. Counting tags would report six
+# losses where three happened, and get the ratios between them wrong, which is
+# the number an operator would act on.
+DOUBLE_LOGGED = "\n".join([
+    "[BlockRunner] {A} [tx-already-finalized]",
+    "[Validation] candidate rejected [behind-finalized-head]",
+    "[BlockRunner] {A} [behind-finalized-head]",
+    "[Validation] candidate rejected [block-number-mismatch]",
+    "[BlockRunner] {A} [block-number-mismatch]",
+]).replace("{A}", "No candidate block can be appended")
+
+
+def test_a_rejection_is_counted_once_however_many_lines_it_prints(monkeypatch):
+    _stub_run(monkeypatch, [("docker logs", DOUBLE_LOGGED)])
+    assert agent.read_candidate_losses("xl1-producer") == {
+        "tx_already_finalized": 1,
+        "behind_finalized_head": 1,
+        "block_number_mismatch": 1,
+    }
+
+
+def test_it_counts_the_anchor_line_not_the_tag(monkeypatch):
+    """The same tag on a line that is not a rejection must not count.
+
+    The node prints these tags in more than one context; only the line saying
+    no candidate could be appended is one rejected candidate.
+    """
+    log = "\n".join([
+        "[Validation] checking [tx-already-finalized] threshold",
+        "[BlockRunner] No candidate block can be appended [tx-already-finalized]",
+    ])
+    _stub_run(monkeypatch, [("docker logs", log)])
+    assert agent.read_candidate_losses("xl1-producer") == {"tx_already_finalized": 1}
+
+
+def test_a_quiet_log_is_no_losses_not_no_answer(monkeypatch):
+    # A node winning its races logs none of these. That is an empty dict --
+    # a reading -- and must not be confused with a log that could not be read.
+    _stub_run(monkeypatch, [("docker logs", "[BlockRunner] Building block 581672")])
+    assert agent.read_candidate_losses("xl1-producer") == {}
+
+
+def test_an_unreadable_log_says_nothing_rather_than_zero(monkeypatch):
+    _stub_run(monkeypatch, [])
+    assert agent.read_candidate_losses("xl1-producer") is None
+    assert agent.read_candidate_losses(None) is None
+
+
+def test_the_dominant_reason_is_visible_in_the_counts(monkeypatch):
+    """The shape that mattered on real hardware: one reason at 77%.
+
+    A node losing almost everything to stale transactions is a different fault
+    from one losing to a moving head, and the counts have to be able to say so
+    rather than reporting a single total.
+    """
+    lines = ["[BlockRunner] No candidate block can be appended [tx-already-finalized]"] * 20
+    lines += ["[BlockRunner] No candidate block can be appended [behind-finalized-head]"] * 4
+    lines += ["[BlockRunner] No candidate block can be appended [block-number-mismatch]"] * 2
+    _stub_run(monkeypatch, [("docker logs", "\n".join(lines))])
+    got = agent.read_candidate_losses("xl1-producer")
+    assert got == {"tx_already_finalized": 20, "behind_finalized_head": 4,
+                   "block_number_mismatch": 2}
+    total = sum(got.values())
+    assert round(100 * got["tx_already_finalized"] / total) == 77
+
+
+def test_one_log_read_serves_every_collector(monkeypatch):
+    """Four readers wanted the same window and each ran `docker logs`.
+
+    On a Pi 3 that is four forks and four reads of an hour of output per cycle,
+    to answer four questions about the same text. The cache is the point of
+    this test: if it stops working the suite still passes everywhere else,
+    because every reader still gets the right answer -- just four times over.
+    """
+    calls = []
+    real_log = "[BlockRunner] Building block 581672"
+
+    def fake_run(cmd, **_kw):
+        if "logs" in cmd:
+            calls.append(cmd)
+            return real_log
+        return None
+
+    monkeypatch.setattr(agent, "run", fake_run)
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    agent.read_build_attempts("xl1-producer")
+    agent.read_build_times("xl1-producer")
+    agent.read_candidate_losses("xl1-producer")
+    assert len(calls) == 1, f"read the log {len(calls)} times for three collectors"
 
 
 # --- how long it takes to build a block ---------------------------------------
@@ -1064,6 +1173,10 @@ def test_a_new_wallet_phrase_replaces_the_remembered_address(monkeypatch, tmp_pa
     _forget_signer(monkeypatch, tmp_path)
     _stub_run(monkeypatch, [("docker logs", STAKE_LOG)])
     assert agent.read_producer_address("xl1-producer") == SIGNER
+    # An hour passes below. The log cache lives for seconds, so a real
+    # agent would re-read; clear it so this models that rather than the
+    # accident of both reads landing inside one cache window.
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
 
     # The phrase is replaced. The node now announces a different identity, and
     # enough time has passed for the agent to ask again.

@@ -1340,8 +1340,47 @@ SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
 # The container being up IS the evidence that this step has been done. The
 # flag never added anything the check could not establish, and it subtracted
 # on exactly the machines that had been running longest.
+#
+# BUT "running" is not the same as "current", and treating it as such made this
+# wizard unable to upgrade the one thing it exists to install. XYO changed the
+# gateway RPC schema on 2026-09-02; every producer older than xl1-cli 5.3.2
+# stopped being able to build a block. Re-running the wizard -- the documented
+# way to update a node -- did nothing at all, because the stale producer was
+# running, and reported success. A node was left broken by the tool sent to
+# fix it, quietly, which is worse than the tear-down this guard was added to
+# prevent.
+#
+# So the skip now has to earn itself: the version INSIDE the container is
+# compared with the newest published, and a match is what buys the skip. A
+# mismatch says so and offers the rebuild. Read from the container rather than
+# the image tag, for the same reason the agent does it that way -- a tag can be
+# moved without recreating anything, so it is not evidence of what is running.
+#
+# Unreadable either number means skip, unchanged: an npm outage or a container
+# that will not answer is not a reason to tear down a working producer.
+PRODUCER_SKIP=0
 if $SUDO docker ps --filter name=xl1-producer \
      --format '{{.Names}}' 2>/dev/null | grep -q xl1-producer; then
+  PRODUCER_SKIP=1
+  running_cli="$($SUDO docker exec xl1-producer cat \
+    /usr/local/lib/node_modules/@xyo-network/xl1-cli/package.json 2>/dev/null \
+    | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  newest_cli="$(curl -fsSL --max-time 30 "$CLI_REGISTRY" 2>/dev/null \
+    | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  if [ -n "$running_cli" ] && [ -n "$newest_cli" ] \
+     && [ "$running_cli" != "$newest_cli" ]; then
+    warn "the producer is running xl1-cli $running_cli" \
+         "$newest_cli is published, and a producer too old for the chain's"
+    note "current RPC schema builds blocks that every other node rejects."
+    if ask_yn "  Rebuild the image and restart the producer?" y; then
+      PRODUCER_SKIP=0
+    else
+      note "Left on $running_cli. Re-run this when you want the update."
+    fi
+  fi
+fi
+
+if [ "$PRODUCER_SKIP" = 1 ]; then
   ok "the producer is already running here"
   # Adopt it, so the state file agrees from now on.
   if [ "${DONE_PRODUCER:-0}" != 1 ]; then
@@ -2037,9 +2076,9 @@ start_anchor_service() { # start_anchor_service [env-file]
   $SUDO docker rm -f xl1-service-anchor-1 >/dev/null 2>&1 || true
   # Deliberately not `docker compose`. The wizard installs docker.io from apt,
   # which does not ship the compose plugin, so a compose call would fail on a
-  # fresh Pi -- and this is one container. service/docker-compose.pi.yml is
-  # the reference for these values, and keeping the two in step is not
-  # optional: this list drifted from it once and cost a clean install.
+  # fresh Pi -- and this is one container. docker-compose.pi.yml is the
+  # reference for these values, and keeping the two in step is not optional:
+  # this list drifted from it once and cost a clean install.
   #
   # The gateway URLs were the ones missing. Nothing here fails loudly without
   # them -- the container starts, the process runs, and /health answers 503

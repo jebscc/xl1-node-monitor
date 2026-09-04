@@ -1210,8 +1210,11 @@ ok "installed to /opt/xl1-heartbeat"
 # Unconditional, and here rather than at the end, because re-running this is
 # how a fix reaches a Pi. A service that is not installed yet is started by
 # the enable below instead; failing here is not fatal.
-if $SUDO systemctl is-enabled xl1-heartbeat >/dev/null 2>&1; then
-  $SUDO systemctl restart xl1-heartbeat 2>/dev/null \
+# Literal sudo, like every other command in this step. $SUDO is not set until
+# step 9 and this file runs under `set -u`, so using it here aborted the whole
+# wizard at "installed to /opt/xl1-heartbeat" -- on a real machine, mid-run.
+if sudo systemctl is-enabled xl1-heartbeat >/dev/null 2>&1; then
+  sudo systemctl restart xl1-heartbeat 2>/dev/null \
     && ok "restarted the agent, so the file just copied is the one running" \
     || warn "could not restart the agent" \
             "the new file is on disk but the old process is still serving the panel"

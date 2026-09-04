@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.34.2"
+AGENT_VERSION = "1.34.3"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -3099,6 +3099,26 @@ def attest(name, payload):
         value = payload.get(key)
         if value is not None:
             _attest_cache[key] = value
+    # AND THE ONE THE BACKEND IS SHOWING, when this beat carries none.
+    #
+    # payload["last_produced_block"] is set only on a cycle where a producer
+    # scan actually SIGHTED a block, and a low-share node goes many scans
+    # without one. So the cache above filled rarely, most anchors carried
+    # lastProducedBlock: null, and the panel drops those readings as thin --
+    # carriesChainObservation() filters them out. With every recent anchor
+    # thin, AnchorProof gets an empty list and returns null, so the entire
+    # proof section disappears from the public page. Measured 2026-09-04:
+    # 120 of the last 200 readings were thin, 29 of 31 that day.
+    #
+    # This is the same fallback, and the same reasoning, as the explorer link
+    # a few lines above: the value originated in THIS node's scan and is
+    # merely persisted by the receiver, so attesting it is still reporting
+    # what this machine observed. Contrast producedTotal, which is deliberately
+    # absent because it is arithmetic done somewhere else.
+    if _attest_cache.get("last_produced_block") is None:
+        shown = _producer_cursor.get("last_produced")
+        if isinstance(shown, int):
+            _attest_cache["last_produced_block"] = shown
     now = time.monotonic()
     last = _attest_cache["at"]
     if last is not None and now - last < ATTEST_INTERVAL:

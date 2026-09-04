@@ -2865,6 +2865,56 @@ def test_a_service_with_no_key_anchors_nothing_and_stores_nothing(tmp_path, monk
     assert list(tmp_path.glob("*.json")) == []
 
 
+def _attest_body(monkeypatch, tmp_path, payload, cursor=None):
+    """Run one attestation and return the record it hashed."""
+    sent = {}
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "ATTEST_SPOOL", str(tmp_path))
+    monkeypatch.setattr(agent, "read_reward_address", lambda name: "a6" * 20)
+    monkeypatch.setitem(agent._attest_cache, "at", None)
+    monkeypatch.setitem(agent._attest_cache, "last_produced_block", None)
+    monkeypatch.setitem(agent._producer_cursor, "last_produced", cursor)
+
+    def fake_urlopen(req, timeout=0):
+        sent["body"] = json.loads(req.data.decode())
+        raise agent.urllib.error.URLError("stop here; the body is what matters")
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_urlopen)
+    agent.attest("xl1-producer", payload)
+    return sent.get("body") or {}
+
+
+def test_an_anchor_carries_the_block_even_when_this_beat_saw_none(tmp_path, monkeypatch):
+    """Otherwise the proof section vanishes from the public page.
+
+    payload["last_produced_block"] is set only on a cycle where a producer
+    scan SIGHTED a block, and a low-share node goes many scans without one. So
+    most anchors carried lastProducedBlock: null, the panel drops those as
+    thin (carriesChainObservation), and with every recent anchor thin
+    AnchorProof gets an empty list and renders nothing at all.
+
+    Measured on the live site 2026-09-04: 120 of the last 200 readings thin,
+    29 of the 31 that day, and the proof card was simply absent.
+    """
+    body = _attest_body(monkeypatch, tmp_path, {}, cursor=583138)
+    assert body.get("lastProducedBlock") == 583138, body
+
+
+def test_this_beat_wins_over_the_remembered_one(tmp_path, monkeypatch):
+    # The fallback is for absence only. A fresh sighting is the better answer
+    # and must not be shadowed by the value the receiver echoed back.
+    body = _attest_body(monkeypatch, tmp_path,
+                        {"last_produced_block": 583200}, cursor=583138)
+    assert body.get("lastProducedBlock") == 583200, body
+
+
+def test_a_node_that_has_never_produced_still_reports_nothing(tmp_path, monkeypatch):
+    # No sighting anywhere is a real state, and inventing a block for it would
+    # be worse than the thin record this replaces.
+    body = _attest_body(monkeypatch, tmp_path, {}, cursor=None)
+    assert body.get("lastProducedBlock") is None, body
+
+
 def test_attest_sends_the_anchor_token(monkeypatch):
     """The service refuses an unauthenticated caller, correctly. An agent that
     does not present the token gets a 401 and, before this, said nothing."""

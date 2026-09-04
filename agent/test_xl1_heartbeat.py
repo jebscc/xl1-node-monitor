@@ -1984,6 +1984,48 @@ def test_a_field_smaller_than_three_still_has_a_top_three(monkeypatch):
     assert field["leader"] == 70.0
 
 
+def test_reporting_nothing_always_says_why(monkeypatch, capsys):
+    """Seven exits reported nothing and not one of them raised.
+
+    So _step's "collector peers failed" never printed, and because the
+    degraded note is itself gated on PEERS_URL being set, the exit that
+    actually happened was silent on BOTH channels. The panel had no peer tile
+    for weeks on a node whose fetch_peers ran perfectly by hand -- and the
+    journal had nothing to say about it.
+    """
+    monkeypatch.setattr(agent, "PEERS_URL", "")
+    monkeypatch.setitem(agent._peers_why, "seen", None)
+    assert agent.fetch_peers("xl1-producer") == (None, None, None, None)
+    said = capsys.readouterr().err
+    assert "peers: no reading" in said, said
+    assert "XL1_PEERS_URL" in said, said
+
+
+def test_it_says_why_once_and_not_every_minute(monkeypatch, capsys):
+    # This runs every 60s. A permanent condition repeating forever is its own
+    # way of being unreadable.
+    monkeypatch.setattr(agent, "PEERS_URL", "")
+    monkeypatch.setitem(agent._peers_why, "seen", None)
+    agent.fetch_peers("xl1-producer")
+    capsys.readouterr()
+    agent.fetch_peers("xl1-producer")
+    assert capsys.readouterr().err == ""
+
+
+def test_a_reading_rearms_the_message(monkeypatch, capsys):
+    # Otherwise a fault that comes back after a good cycle is never mentioned.
+    monkeypatch.setattr(agent, "PEERS_URL", "")
+    monkeypatch.setitem(agent._peers_why, "seen", None)
+    agent.fetch_peers("xl1-producer")
+    capsys.readouterr()
+    _stub_peers(monkeypatch, PEERS_BODY)
+    monkeypatch.setattr(agent, "PEERS_URL", "http://127.0.0.1:8090/peers")
+    assert agent.fetch_peers("xl1-producer")[0] == 2
+    monkeypatch.setattr(agent, "PEERS_URL", "")
+    agent.fetch_peers("xl1-producer")
+    assert "peers: no reading" in capsys.readouterr().err
+
+
 def test_one_bad_row_cannot_cost_the_share_that_used_to_work(monkeypatch):
     """The regression this guards against was shipped and seen.
 

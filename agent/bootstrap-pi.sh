@@ -1944,8 +1944,25 @@ head_ "11. Anchoring  (required)"
 # Empty when the node has not said -- a staked one stops complaining -- and an
 # empty answer must never be read as "changed".
 current_producer() {
-  $SUDO docker logs --since 60m xl1-producer 2>&1 \
+  _cp="$($SUDO docker logs --since 60m xl1-producer 2>&1 \
     | grep -oiE 'producer +(0x)?[0-9a-f]{40}' \
+    | grep -oiE '[0-9a-f]{40}' | head -1 | tr 'A-Z' 'a-z')"
+  [ -n "$_cp" ] && { printf '%s' "$_cp"; return 0; }
+
+  # THE LINE ABOVE IS PRINTED ONCE PER BLOCK, AND STEP 10 RECREATED THIS
+  # CONTAINER ~180 LINES AGO AND SLEPT 15 SECONDS.
+  #
+  # A sequence block took 52s when this was written and takes ~260s now, so
+  # the eligibility line is reliably ABSENT at the moment step 11 asks. The
+  # empty answer was then read as "could not ask", the delegation gate treats
+  # that as "nothing to do", and the wizard printed "anchoring is already set
+  # up" on a node that had never delegated -- on every re-run, identically.
+  #
+  # The startup wallet summary answers the same question and IS there within
+  # seconds of a cold start. Step 10 already parses it, with this awk, and
+  # prints "signing as ..." from it.
+  $SUDO docker logs xl1-producer 2>&1 \
+    | awk '/\[[0-9]+\] producer$/{f=1} f && /address:/{sub(/.*address: */, ""); print; exit}' \
     | grep -oiE '[0-9a-f]{40}' | head -1 | tr 'A-Z' 'a-z'
 }
 
@@ -1996,6 +2013,9 @@ anchor_configured() {
   # it is the condition's status only by a rule nobody should have to recall.
   delegation_anchored
   _dstatus=$?
+  # 2 means the record could not be reached. It is NOT evidence of a
+  # delegation, and the caller must not print one.
+  [ "$_dstatus" -ne 2 ] && _deleg_checked=1 || _deleg_checked=0
   if [ "$_dstatus" -eq 1 ]; then
     warn "this node has no delegation on chain" \
          "its readings are anchored but nothing yet says which producer they are for"
@@ -2051,7 +2071,17 @@ if [ "${DONE_ANCHOR:-0}" = 1 ]; then
 fi
 
 if [ "${DONE_ANCHOR:-0}" != 1 ] && anchor_configured; then
-  ok "anchoring is already set up on this machine"
+  # SAY WHICH, because these are different claims and only one of them is a
+  # check. "already set up" was printed whether the delegation record had
+  # been read or could not be reached, and a node that had never delegated
+  # got the same green tick as one that had. One honest line here would have
+  # ended a multi-day hunt on the first re-run.
+  if [ "${_deleg_checked:-0}" = 1 ]; then
+    ok "anchoring is already set up on this machine"
+  else
+    warn "could not check whether a delegation is on chain" \
+         "leaving anchoring as it is -- re-run this when the node has been up a few minutes"
+  fi
   # Adopt it, so the rest of this run and every run after it agree.
   DONE_ANCHOR=1
   save_state

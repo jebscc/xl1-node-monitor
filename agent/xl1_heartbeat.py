@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.34.1"
+AGENT_VERSION = "1.34.2"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1613,6 +1613,28 @@ def fetch_earnings(name):
     return _earnings_cache["value"]
 
 
+_peers_why = {"seen": None}
+
+
+def _peers_none(why):
+    """Every exit that reports nothing says why, once per distinct reason.
+
+    fetch_peers had seven returns that reported nothing and not one of them
+    raised, so `_step`'s "collector peers failed" never printed -- and because
+    the degraded note is itself gated on PEERS_URL being set, the one exit
+    that mattered was silent on both channels at once. The panel simply had no
+    peer tile, for weeks, on a node whose fetch_peers ran perfectly by hand.
+
+    Once per reason rather than every cycle: this runs every 60 seconds and a
+    permanent condition would otherwise fill the journal with one line a
+    minute, which is its own way of being unreadable.
+    """
+    if _peers_why["seen"] != why:
+        _peers_why["seen"] = why
+        print("peers: no reading -- %s" % why, file=sys.stderr, flush=True)
+    return None, None, None, None
+
+
 def fetch_peers(name):
     """(peer_count, our_share_percent, window, field_shape) for the field.
 
@@ -1642,10 +1664,10 @@ def fetch_peers(name):
     sent as four numbers.
     """
     if not PEERS_URL:
-        return None, None, None, None
+        return _peers_none("XL1_PEERS_URL is empty, so peers are not collected")
     address = read_reward_address(name)
     if not address:
-        return None, None, None, None
+        return _peers_none("no reward address for container %s" % name)
     now = time.monotonic()
     cached = _peers_cache["value"]
     if cached is not None and now - _peers_cache["at"] < PEERS_INTERVAL:
@@ -1655,21 +1677,22 @@ def fetch_peers(name):
             {"network": NODE_NETWORK, "window": PEERS_WINDOW})
         with urllib.request.urlopen(url, timeout=120) as resp:
             if not (200 <= resp.status < 300):
-                return None, None, None, None
+                return _peers_none("HTTP %s from %s" % (resp.status, PEERS_URL))
             body = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, ValueError):
-        return None, None, None, None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return _peers_none("%s: %s" % (type(e).__name__, e))
 
     producers = body.get("producers")
     total = body.get("totalBlocks")
     if not isinstance(producers, list) or not isinstance(total, int) or total <= 0:
-        return None, None, None, None
+        return _peers_none("malformed answer from %s" % PEERS_URL)
     # An empty field over a window that produced blocks is a contradiction --
     # they came from somewhere. Reporting 0 producers and a 0% share of it
     # would be a confident statement about a chain nobody produced on, so the
     # whole answer is refused rather than the shape alone.
     if not producers:
-        return None, None, None, None
+        return _peers_none(
+            "no producers for network=%s window=%s" % (NODE_NETWORK, PEERS_WINDOW))
 
     # NOT lstrip("0x") -- that strips every leading 0 and x, so 0x0a65... loses
     # its leading zero, never matches, and the node silently reports a 0% share
@@ -1718,12 +1741,13 @@ def fetch_peers(name):
     # a chain it is producing on is the same quiet wrongness the address
     # matching above already guards against.
     if isinstance(mine, bool) or not isinstance(mine, (int, float)):
-        return None, None, None, None
+        return _peers_none("our own block count is not a number")
     value = (len(producers), round(100.0 * mine / total, 2), body.get("window"), shape)
     # Cache only a real answer, for the same reason the balance does: a cached
     # failure pins the tile blank long after the cause is gone.
     _peers_cache["value"] = value
     _peers_cache["at"] = now
+    _peers_why["seen"] = None
     return value
 
 

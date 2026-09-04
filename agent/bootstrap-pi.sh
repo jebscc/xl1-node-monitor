@@ -2509,11 +2509,51 @@ printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
 
 printf '\n'
 if ask_yn "  Put that on chain?" "y"; then
+  # Tee'd, because what this prints is the ONLY copy of the payload. The
+  # chain holds a hash and the sequence gateway has no payloadsByHash, so a
+  # delegation nobody recorded is a transaction that proves a hash was
+  # anchored and nothing able to say what it was a hash OF.
+  _anchor_out="$(mktemp)"; chmod 600 "$_anchor_out"
   printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
     node_modules/.bin/tsx delegate-attestor.ts $DELEGATE_ARGS --anchor 2>&1 \
+    | tee "$_anchor_out" \
     | confirm_progress \
-    || { PRODUCER_MNEMONIC=""; die "the delegation did not anchor. Nothing else was changed."; }
+    || { PRODUCER_MNEMONIC=""; rm -f "$_anchor_out"; die "the delegation did not anchor. Nothing else was changed."; }
   ok "the delegation is on chain"
+
+  # AND TELL THE GRID, which nothing did until now.
+  #
+  # delegate-attestor anchors and prints "publish the payload alongside this
+  # tx hash" -- and for months the only delegation the backend knew about was
+  # one posted by hand. So /verify could not follow attestation -> delegation
+  # -> producer for any node set up since, and the panel said "not yet signed
+  # for" about a node that was properly delegated. A false negative on the one
+  # claim this whole feature exists to make.
+  #
+  # Best effort: the delegation is already on chain and that is the durable
+  # part. Failing to file the paperwork must not undo it.
+  _dpay="$(grep -m1 '^      {"schema"' "$_anchor_out" | sed 's/^ *//')"
+  _dhash="$(sed -n 's/^ *content hash *: *//p' "$_anchor_out" | tail -1 | tr -d ' \r')"
+  _dtx="$(sed -n 's/^ *tx hash *: *//p' "$_anchor_out" | tail -1 | tr -d ' \r')"
+  rm -f "$_anchor_out"
+  if [ -n "$_dpay" ] && [ -n "$_dhash" ] && [ -n "$_dtx" ] && [ -n "${TOKEN:-}" ]; then
+    _dbody="$(ATT_PAY="$_dpay" ATT_HASH="$_dhash" ATT_TX="$_dtx" \
+              ATT_ID="$NODE_ID" ATT_NET="$XL1_NET" ATT_BY="$ATTESTOR_ADDRESS" \
+      python3 -c 'import json,os; print(json.dumps({
+        "node_id": os.environ["ATT_ID"], "network": os.environ["ATT_NET"],
+        "kind": "delegation", "payload": os.environ["ATT_PAY"],
+        "content_hash": os.environ["ATT_HASH"], "tx_hash": os.environ["ATT_TX"],
+        "attested_by": os.environ["ATT_BY"]}))' 2>/dev/null)"
+    if [ -n "$_dbody" ] && printf '%s' "$_dbody" | curl -fsS --max-time 30 \
+         -X POST -H 'content-type: application/json' \
+         -H "X-Node-Token: $TOKEN" --data-binary @- \
+         "$BACKEND_URL/api/node/attestation" >/dev/null 2>&1; then
+      ok "recorded it on the grid, so /verify can follow it to the producer"
+    else
+      warn "could not record the delegation on the grid" \
+           "it IS on chain (tx ${_dtx}); the panel will say 'not yet signed for' until this is filed"
+    fi
+  fi
   # Recorded so a later run can tell "already set up" from "set up for a
   # producer this node no longer is". Public information -- it appears in every
   # block the node signs -- so it is readable, unlike the key beside it.

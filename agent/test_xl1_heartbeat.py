@@ -1928,7 +1928,7 @@ def _peers_body(*blocks):
     return {
         "totalBlocks": sum(blocks),
         "window": 1000,
-        "producers": [{"address": "0x%040x" % (i + 1), "blocks": b}
+        "producers": [{"address": "%040x" % (i + 1), "blocks": b}
                       for i, b in enumerate(blocks)],
     }
 
@@ -1982,6 +1982,48 @@ def test_a_field_smaller_than_three_still_has_a_top_three(monkeypatch):
     assert count == 2
     assert field["top3"] == 100.0
     assert field["leader"] == 70.0
+
+
+def test_one_bad_row_cannot_cost_the_share_that_used_to_work(monkeypatch):
+    """The regression this guards against was shipped and seen.
+
+    The count and the share read ONE matching row and ignored the rest. The
+    shape reads every row, so a single malformed entry anywhere in the field
+    now reaches arithmetic that never saw it before -- and a producer whose
+    blocks arrive as a string took out a peer count that had been working for
+    weeks. A new figure must not be able to remove an old one.
+    """
+    body = {
+        "totalBlocks": 100, "window": 1000,
+        "producers": [
+            {"address": "%040x" % 1, "blocks": 40},
+            {"address": "%040x" % 2, "blocks": "30"},   # a string
+            {"address": "%040x" % 3, "blocks": None},
+            {"address": "%040x" % 4},                    # no count at all
+        ],
+    }
+    _stub_peers(monkeypatch, body, reward="0x%040x" % 1)
+    count, share, window, field = agent.fetch_peers("xl1-producer")
+    # The figures that never depended on the others still arrive.
+    assert count == 4
+    assert share == 40.0
+    assert window == 1000
+    # And the shape describes only the rows it could actually read.
+    assert field is not None and field["leader"] == 40.0
+
+
+def test_an_unreadable_count_of_our_own_is_not_a_zero_share(monkeypatch):
+    """Predates the shape, and the shape is how it was found.
+
+    `mine = p.get("blocks") or 0` accepts a string and the multiply after it
+    raises. Reporting 0% instead would be worse than raising: this node
+    produces, and a confident 0% share of a chain it is producing on is the
+    same quiet wrongness the address matching already guards against.
+    """
+    body = {"totalBlocks": 100, "window": 1000,
+            "producers": [{"address": "%040x" % 1, "blocks": "40"}]}
+    _stub_peers(monkeypatch, body, reward="0x%040x" % 1)
+    assert agent.fetch_peers("xl1-producer") == (None, None, None, None)
 
 
 def test_no_field_is_reported_when_there_is_none(monkeypatch):

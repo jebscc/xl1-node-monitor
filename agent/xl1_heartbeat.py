@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.34.0"
+AGENT_VERSION = "1.34.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1683,22 +1683,42 @@ def fetch_peers(name):
             break
     # Sorted shares, biggest first. Percentages of the same window our own
     # share is measured against, so the four numbers can be read side by side.
-    shares = sorted(
-        (100.0 * (p.get("blocks") or 0) / total
-         for p in producers if isinstance(p, dict)),
-        reverse=True)
+    #
+    # EVERY ROW IS NOW TOUCHED, which the count and the share never did -- they
+    # read one matching row and ignored the rest. So a single malformed entry
+    # anywhere in the field can break arithmetic that used to be fine, and a
+    # new figure must never be able to take away an old one. Non-numeric block
+    # counts are skipped rather than raising, and the whole shape is computed
+    # inside a guard so that losing it still leaves the count and the share.
     shape = None
-    if shares:
-        mid = len(shares) // 2
-        shape = {
-            "leader": round(shares[0], 2),
-            # The middle producer, not the mean: one node taking a quarter of
-            # a chain drags an average up and makes the typical member of the
-            # field look busier than any of them are.
-            "median": round(
-                shares[mid] if len(shares) % 2 else (shares[mid - 1] + shares[mid]) / 2, 2),
-            "top3": round(sum(shares[:3]), 2),
-        }
+    try:
+        shares = sorted(
+            (100.0 * p["blocks"] / total
+             for p in producers
+             if isinstance(p, dict) and isinstance(p.get("blocks"), (int, float))
+             and not isinstance(p.get("blocks"), bool)),
+            reverse=True)
+        if shares:
+            mid = len(shares) // 2
+            shape = {
+                "leader": round(shares[0], 2),
+                # The middle producer, not the mean: one node taking a quarter
+                # of a chain drags an average up and makes the typical member
+                # of the field look busier than any of them are.
+                "median": round(
+                    shares[mid] if len(shares) % 2 else (shares[mid - 1] + shares[mid]) / 2, 2),
+                "top3": round(sum(shares[:3]), 2),
+            }
+    except (TypeError, ValueError, ZeroDivisionError):
+        shape = None
+    # Our own row has to be a number, and this predates the shape above it.
+    # `or 0` accepts a string, and the multiply below then raises -- so a
+    # single malformed count in OUR row lost the whole reading. Returning 0%
+    # instead would be worse: this node produces, and a confident 0% share of
+    # a chain it is producing on is the same quiet wrongness the address
+    # matching above already guards against.
+    if isinstance(mine, bool) or not isinstance(mine, (int, float)):
+        return None, None, None, None
     value = (len(producers), round(100.0 * mine / total, 2), body.get("window"), shape)
     # Cache only a real answer, for the same reason the balance does: a cached
     # failure pins the tile blank long after the cause is gone.

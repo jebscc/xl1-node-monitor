@@ -2003,6 +2003,29 @@ anchor_configured() {
   return 0
 }
 
+# BEFORE the gate below, because the gate is what hid this.
+#
+# DONE_ANCHOR is remembered in the state file and means "this wizard finished
+# its anchoring step once". It cannot mean "a delegation is on chain", and the
+# check that knows the difference was put inside anchor_configured -- which
+# the next line never calls once DONE_ANCHOR is 1. So the fix was unreachable
+# on precisely the machines it was written for: the ones that had run this
+# before. It was verified as a function and never verified as a step.
+#
+# Only a definite no clears the flag. Unreadable leaves it alone, for the same
+# reason as everywhere else here: the cost of being wrong is gas for a second
+# delegation, and an unreachable backend is not evidence about the chain.
+if [ "${DONE_ANCHOR:-0}" = 1 ]; then
+  delegation_anchored
+  _gate_status=$?
+  if [ "$_gate_status" -eq 1 ]; then
+    warn "no delegation for this node is on chain" \
+         "its readings are anchored but nothing says which producer they are for -- setting anchoring up again"
+    DONE_ANCHOR=0
+    save_state
+  fi
+fi
+
 if [ "${DONE_ANCHOR:-0}" != 1 ] && anchor_configured; then
   ok "anchoring is already set up on this machine"
   # Adopt it, so the rest of this run and every run after it agree.

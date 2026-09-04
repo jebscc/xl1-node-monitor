@@ -2884,6 +2884,59 @@ def _attest_body(monkeypatch, tmp_path, payload, cursor=None):
     return sent.get("body") or {}
 
 
+def test_an_anchor_carries_what_this_node_saw_of_the_chain(tmp_path, monkeypatch):
+    """A witness needs the node's view of the CHAIN, not only of itself.
+
+    Until this, an anchored reading let a third party check that a machine was
+    warm and had signed a block. The finalized head it was bounded by, whether
+    that bound really was finality, and how many producers were signing let a
+    witness compare two producers' anchors from the same hour and see whether
+    they agreed about the chain.
+    """
+    body = _attest_body(monkeypatch, tmp_path, {
+        "finalized_head": 583266, "scan_finalized": True,
+        "peer_count": 8, "peer_window": 1000,
+    }, cursor=583138)
+    assert body["finalizedHead"] == 583266, body
+    assert body["scanFinalized"] is True, body
+    assert body["peerCount"] == 8, body
+    assert body["peerWindow"] == 1000, body
+
+
+def test_an_anchor_publishes_no_machine_diagnostics(tmp_path, monkeypatch):
+    """This payload goes on a public page.
+
+    Disk, load, swap and throttle state are on OWNER_NODE_FIELDS precisely so
+    they are not a stranger's business. Anchoring them would publish by the
+    back door exactly what the allow-list withholds at the front.
+    """
+    body = _attest_body(monkeypatch, tmp_path, {
+        "disk_used_percent": 41.0, "load_1": 0.42, "swap_used_mb": 143,
+        "throttled_now": True, "undervolted_now": True, "agent_version": "1.35.0",
+        "producer_balance": 12.5, "cli_version": "5.3.2",
+    }, cursor=583138)
+    flat = json.dumps(body).lower()
+    for leaked in ("disk", "load", "swap", "throttl", "undervolt",
+                   "balance", "cliversion", "agentversion"):
+        assert leaked not in flat, "%s reached the anchored payload: %s" % (leaked, body)
+
+
+def test_an_anchor_publishes_the_field_size_but_not_our_place_in_it(tmp_path, monkeypatch):
+    """How many producers signed is a fact about the chain.
+
+    This node's SHARE of them is a ranking of one operator's hardware, and
+    that is not something to publish on their behalf.
+    """
+    body = _attest_body(monkeypatch, tmp_path, {
+        "peer_count": 8, "peer_window": 1000, "produced_share": 6.2,
+        "field_leader_share": 22.1, "field_median_share": 12.6,
+    }, cursor=583138)
+    assert body["peerCount"] == 8
+    flat = json.dumps(body).lower()
+    assert "share" not in flat, body
+    assert "6.2" not in flat, body
+
+
 def test_an_anchor_carries_the_block_even_when_this_beat_saw_none(tmp_path, monkeypatch):
     """Otherwise the proof section vanishes from the public page.
 

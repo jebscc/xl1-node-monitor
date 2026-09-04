@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.34.3"
+AGENT_VERSION = "1.35.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -3127,6 +3127,38 @@ def attest(name, payload):
         "producer": read_reward_address(name) or "",
         "height": _attest_cache.get("block_height"),
         "lastProducedBlock": _attest_cache.get("last_produced_block"),
+        # WHAT THIS NODE SAW OF THE CHAIN, beside what it saw of itself.
+        #
+        # An anchored reading is only worth as much as a third party can do
+        # with it, and until now a witness could check that a machine was warm
+        # and had signed a block. These three let them check the node's view of
+        # the CHAIN against their own at the same moment -- which is the part
+        # that distinguishes a producer keeping up from one reporting honestly
+        # about a stale view.
+        #
+        # All three are chain observations, which is why they can be published
+        # at all: this payload goes on a public page. Machine diagnostics stay
+        # out, deliberately -- disk, load, swap and throttle state are on
+        # OWNER_NODE_FIELDS precisely so they are not a stranger's business,
+        # and anchoring them would publish by the back door what the allow-list
+        # withholds at the front.
+        #
+        # finalizedHead is the head the node's own scan was bounded by, so it
+        # says where this machine believed finality was. A witness comparing
+        # two producers' anchors from the same hour can see whether they agreed.
+        "finalizedHead": payload.get("finalized_head"),
+        # Whether that bound really was the finalized head. A scan bounded by
+        # the latest block instead can count a block a reorg later removes, so
+        # a reading that says so is worth more than one that does not.
+        "scanFinalized": payload.get("scan_finalized"),
+        # HOW BIG THE FIELD WAS, not this node's place in it. The count is a
+        # fact about the chain -- how many distinct producers signed the last
+        # `peerWindow` blocks -- and it is what makes any single producer's
+        # activity readable. This node's SHARE is deliberately absent: beside
+        # the count it is a ranking, and a ranking of one operator's hardware
+        # is not something to publish without them choosing to.
+        "peerCount": payload.get("peer_count"),
+        "peerWindow": payload.get("peer_window"),
         # No producedTotal. The node does not have one: that figure is the
         # backend accumulating scan results over time, and a node attesting it
         # would be vouching for arithmetic done somewhere else. An attestation

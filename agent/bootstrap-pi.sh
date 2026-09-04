@@ -1195,6 +1195,27 @@ sudo mkdir -p /opt/xl1-heartbeat
 sudo cp "$WORK/xl1_heartbeat.py" /opt/xl1-heartbeat/
 [ -f "$WORK/xl1-heartbeat.service" ] && sudo cp "$WORK/xl1-heartbeat.service" /etc/systemd/system/
 ok "installed to /opt/xl1-heartbeat"
+
+# AND START THE ONE JUST INSTALLED.
+#
+# Copying the file is not installing the agent; the running process goes on
+# being whatever it was. The only restart in this script used to live inside
+# the anchoring block, which is skipped on every machine that already anchors
+# -- so re-running the wizard on a working node wrote a new agent to disk and
+# left the old one running, indefinitely. `grep AGENT_VERSION` on the file
+# then reports the new version while the process serving the panel is the old
+# one, which is the most misleading possible symptom: the thing you check
+# says the update worked.
+#
+# Unconditional, and here rather than at the end, because re-running this is
+# how a fix reaches a Pi. A service that is not installed yet is started by
+# the enable below instead; failing here is not fatal.
+if $SUDO systemctl is-enabled xl1-heartbeat >/dev/null 2>&1; then
+  $SUDO systemctl restart xl1-heartbeat 2>/dev/null \
+    && ok "restarted the agent, so the file just copied is the one running" \
+    || warn "could not restart the agent" \
+            "the new file is on disk but the old process is still serving the panel"
+fi
 DONE_AGENT=1; save_state
 
 # =============================================================================

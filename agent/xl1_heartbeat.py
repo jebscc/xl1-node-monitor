@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.36.0"
+AGENT_VERSION = "1.36.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -556,6 +556,25 @@ def read_statz(name):
     if not isinstance(doc, dict):
         return None
 
+    # WHERE THE TIMINGS LIVE.
+    #
+    # The node nests every stage under "timings" and keeps "counts" at the top
+    # level. This read them all from the top, so each timing came back None,
+    # head_p50_ms was absent, read_statz returned None, and the Latency tile
+    # was blank on both panels for as long as anyone had been looking at it.
+    #
+    # It failed SILENTLY, which is why it lasted: a shape this does not
+    # recognise is indistinguishable here from a node that will not answer, and
+    # the fixture it was tested against had been written flat rather than
+    # captured from a running producer.
+    #
+    # Both roots are accepted rather than only the current one. The document
+    # belongs to the node, and being wrong about its shape must not cost the
+    # whole reading a second time.
+    timings = doc.get("timings")
+    if not isinstance(timings, dict):
+        timings = doc
+
     out = {}
     for key, path in (
         ("head_min_ms", ("headFetch", "minMs")),
@@ -568,6 +587,13 @@ def read_statz(name):
         ("mempool_tx_ms", ("mempoolPendingTransactionsFetch", "p50Ms")),
         ("mempool_blocks_ms", ("mempoolPendingBlocksFetch", "p50Ms")),
         ("submit_ms", ("mempoolSubmitBlock", "p50Ms")),
+    ):
+        value = _statz_number(timings, *path)
+        if value is not None:
+            out[key] = value
+
+    # Counts are not timings and do not move with them.
+    for key, path in (
         ("checks_skipped", ("counts", "concurrentChecksSkipped")),
         ("publishes_rejected", ("counts", "rejectedPublishes")),
     ):

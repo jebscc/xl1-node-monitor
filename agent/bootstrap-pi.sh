@@ -2681,9 +2681,6 @@ elif ask_yn "  Put that on chain?" "y"; then
     # failed POST loses them, and the delegation becomes a transaction nobody
     # can ever verify or file. Cheap to write, unrecoverable not to.
     #
-    # Hex-checked because it names a file. The value comes from our own tool's
-    # output, not from a stranger, but a content hash is a content hash and
-    # anything else in it does not belong in a path.
     # Two separate ways this can be unusable, and they need different words.
     if [ -z "$_dbody" ]; then
       warn "could not build the delegation record" \
@@ -2700,16 +2697,37 @@ elif ask_yn "  Put that on chain?" "y"; then
            $SUDO chmod 0644 "$DELEGATION_SPOOL/delegation-$_dhash.json" 2>/dev/null || true ;;
       esac
     fi
+  else
+    # NO ELSE MEANT NO WORD. If the anchor output cannot be read back, all
+    # three variables come out empty, this block is skipped, and the run goes
+    # on to say something reassuring about the grid -- while the only copy of
+    # the payload sits in a temp file that was deleted four lines ago.
+    #
+    # The loudest failure in this script, because it is the only one that
+    # destroys something. The transaction is paid for and on chain; what is
+    # gone is the bytes it commits to, and no later run can rebuild them.
+    warn "the delegation anchored but its payload could not be read back" \
+         "scroll up and save the payload block printed above -- the chain holds only its hash, and that output is now the only copy of the bytes it commits to"
   fi
-  # Files this one and anything an earlier run left behind. Best effort: the
-  # delegation is on chain and that is the durable half. Failing to file the
-  # paperwork must not undo it -- and now it no longer has to, because the
-  # paperwork is on disk and the next run will try again by itself.
-  if file_delegations; then
+  # CONFIRMED AGAINST THE RECORD, not against a return code.
+  #
+  # file_delegations answers "did anything I tried fail", and returns 0 both
+  # when it filed something and when it had nothing to file. After an anchor
+  # those are opposite outcomes, and the first real run of this printed
+  # "recorded it on the grid" for a delegation the grid never received. That
+  # is the one sentence here that must never be wrong: it is what tells an
+  # operator to stop looking.
+  #
+  # So ask the grid instead of trusting the mechanism. Anything short of a
+  # definite yes reads as not filed, "could not tell" included -- an
+  # unconfirmed record is exactly the state the warning describes, and a
+  # re-run costs nothing now that the payload is on disk.
+  file_delegations || true
+  if delegation_exists_for "$RUNNING_PRODUCER" "$ATTESTOR_ADDRESS"; then
     ok "recorded it on the grid, so /verify can follow it to the producer"
   else
-    warn "could not record the delegation on the grid" \
-         "it IS on chain (tx ${_dtx}) and its payload is saved in $DELEGATION_SPOOL -- re-run this and it will file itself; no second delegation is needed"
+    warn "the delegation is NOT confirmed on the grid" \
+         "it IS on chain (tx ${_dtx}) and its payload is saved under $DELEGATION_SPOOL -- re-run this and it will file itself; no second delegation is needed"
   fi
   # Recorded so a later run can tell "already set up" from "set up for a
   # producer this node no longer is". Public information -- it appears in every

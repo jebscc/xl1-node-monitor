@@ -1418,6 +1418,109 @@ fi
 # Host hygiene, nothing to do with the producer, so it is asked on every pass.
 # Cheap and idempotent: it asks only when the answer is no.
 
+# Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf
+# setting Storage=volatile, to spare the SD card. The effect is invisible until
+# it matters: /var/log/journal exists and stays empty, journald writes to
+# /run/log/journal, and every log dies at reboot -- so the crash you most want
+# to read has already erased itself, and it reads as journald being
+# misconfigured rather than deliberately overridden.
+#
+# The name must sort AFTER 40-. Drop-ins merge by filename across directories
+# and the last name wins, so a 10- file is silently beaten by the vendor's.
+#
+# The caps keep the vendor's concern honest rather than pretending it was
+# wrong: a bounded journal, not an unbounded one.
+JOURNAL_CONF=/etc/systemd/journald.conf.d/99-xl1-persistent.conf
+if [ ! -f "$JOURNAL_CONF" ]; then
+  say "keeping logs across reboots"
+  $SUDO mkdir -p /etc/systemd/journald.conf.d
+  tmp_j="$(mktemp)"
+  chmod 644 "$tmp_j"
+  {
+    printf '# Explorer Grid: keep the journal across reboots, bounded.\n'
+    printf '# Must sort after 40-rpi-volatile-storage.conf, which sets Storage=volatile.\n'
+    printf '[Journal]\n'
+    printf 'Storage=persistent\n'
+    printf 'SystemMaxUse=200M\n'
+    printf 'SystemMaxFileSize=20M\n'
+    printf 'SystemKeepFree=500M\n'
+    printf 'MaxRetentionSec=2week\n'
+  } > "$tmp_j"
+  $SUDO install -o root -g root -m 644 "$tmp_j" "$JOURNAL_CONF"
+  rm -f "$tmp_j"
+  $SUDO systemctl restart systemd-journald 2>/dev/null || true
+  ok "logs now survive a reboot (capped at 200M, kept two weeks)"
+else
+  ok "logs already survive a reboot"
+fi
+# --- giving the board back what it is not using ------------------------------
+# A headless node has no use for 48 MB of GPU memory, and on a 905 MB board that
+# is 5% of everything there is. Raspberry Pi only: the config file is the tell,
+# and its absence means this is not a Pi and there is nothing to reclaim.
+#
+# Backed up first. This file decides whether the board boots at all, and an
+# unbootable Pi is a card reader and a trip to wherever it is mounted.
+BOOT_CONFIG=/boot/firmware/config.txt
+[ -f "$BOOT_CONFIG" ] || BOOT_CONFIG=/boot/config.txt
+if [ -f "$BOOT_CONFIG" ]; then
+  if grep -qE '^[[:space:]]*gpu_mem=16[[:space:]]*$' "$BOOT_CONFIG" 2>/dev/null; then
+    ok "gpu_mem is already 16M"
+  else
+    $SUDO cp -n "$BOOT_CONFIG" "$BOOT_CONFIG.bak-xl1" 2>/dev/null || true
+    # Delete then append, rather than edit in place: a config.txt with two
+    # gpu_mem lines takes the last, so editing the first changes nothing
+    # visible and costs an afternoon.
+    $SUDO sed -i -E '/^[[:space:]]*gpu_mem=/d' "$BOOT_CONFIG" 2>/dev/null || true
+    printf '\n# Explorer Grid: headless node, GPU memory returned to the system\ngpu_mem=16\n' \
+      | $SUDO tee -a "$BOOT_CONFIG" >/dev/null
+    ok "gpu_mem=16 written to $BOOT_CONFIG -- about 48 MB back on the next boot"
+  fi
+fi
+
+# The stock governor idles the CPU down between blocks. Whether a Pi 3 keeps up
+# is the open question about this hardware, and this is the one setting that
+# speaks to it directly.
+#
+# Skipped where there is no cpufreq at all, which is most virtual machines: a
+# governor cannot be set on a CPU whose speed the kernel does not control.
+CPUFREQ=/sys/devices/system/cpu/cpu0/cpufreq
+if [ -r "$CPUFREQ/scaling_available_governors" ] \
+   && grep -qw performance "$CPUFREQ/scaling_available_governors" 2>/dev/null; then
+  for c in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
+    [ -w "$c" ] || [ -e "$c" ] || continue
+    printf 'performance' | $SUDO tee "$c" >/dev/null 2>&1 || true
+  done
+  # Applied again at boot: the governor is not persistent, and a node that runs
+  # fast until its first reboot and slowly afterwards is the kind of difference
+  # nobody connects back to this.
+  if [ ! -f /etc/systemd/system/xl1-cpu-governor.service ]; then
+    tmp_g="$(mktemp)"
+    chmod 644 "$tmp_g"
+    {
+      printf '[Unit]\n'
+      printf 'Description=Pin the CPU governor to performance for the XL1 node\n'
+      printf 'After=multi-user.target\n\n'
+      printf '[Service]\n'
+      printf 'Type=oneshot\n'
+      printf 'RemainAfterExit=yes\n'
+      # \$c, escaped. Unescaped it expands HERE, in this shell, and bakes in
+      # whichever core the loop above finished on -- so the unit would set one
+      # CPU at boot and look entirely correct doing it. The loop has to reach
+      # systemd as text.
+      printf "ExecStart=/bin/sh -c 'for c in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do echo performance > \"\$c\" 2>/dev/null || true; done'\n\n"
+      printf '[Install]\n'
+      printf 'WantedBy=multi-user.target\n'
+    } > "$tmp_g"
+    $SUDO install -o root -g root -m 644 "$tmp_g" /etc/systemd/system/xl1-cpu-governor.service
+    rm -f "$tmp_g"
+    $SUDO systemctl daemon-reload 2>/dev/null || true
+    $SUDO systemctl enable --now xl1-cpu-governor.service >/dev/null 2>&1 || true
+  fi
+  ok "CPU governor set to performance, and pinned there across reboots"
+else
+  say "no cpufreq here, so the CPU governor is left alone"
+fi
+
 # --- security updates, installed without anyone remembering to ---------------
 #
 # The panel already counts pending updates. Nothing acts on that count, so a
@@ -1584,119 +1687,12 @@ case "$ARCH" in
      Reflash with the 64-bit Raspberry Pi OS and run this again." ;;
 esac
 
-# The firewall moved OUT of this branch on 2026-09-05 -- see the host hygiene
-# section before step 10. It only ever ran on a first install, so a machine
-# whose ufw had been turned off could not be repaired by re-running the wizard,
-# which is the documented way to fix a node. The Exposure card on the panel now
-# reports that state, so the tool was reporting a problem it declined to fix.
-#
-# KNOWN GAP, deliberately left: the journald, gpu_mem and cpu-governor blocks
-# below have the same property and have NOT been moved. Each has a side effect
-# on every run -- a journald restart, a boot-config rewrite, a daemon-reload --
-# so making them unconditional needs an "only if it differs" check first, which
-# is a different piece of work rather than a move.
-# Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf
-# setting Storage=volatile, to spare the SD card. The effect is invisible until
-# it matters: /var/log/journal exists and stays empty, journald writes to
-# /run/log/journal, and every log dies at reboot -- so the crash you most want
-# to read has already erased itself, and it reads as journald being
-# misconfigured rather than deliberately overridden.
-#
-# The name must sort AFTER 40-. Drop-ins merge by filename across directories
-# and the last name wins, so a 10- file is silently beaten by the vendor's.
-#
-# The caps keep the vendor's concern honest rather than pretending it was
-# wrong: a bounded journal, not an unbounded one.
-JOURNAL_CONF=/etc/systemd/journald.conf.d/99-xl1-persistent.conf
-if [ ! -f "$JOURNAL_CONF" ]; then
-  say "keeping logs across reboots"
-  $SUDO mkdir -p /etc/systemd/journald.conf.d
-  tmp_j="$(mktemp)"
-  chmod 644 "$tmp_j"
-  {
-    printf '# Explorer Grid: keep the journal across reboots, bounded.\n'
-    printf '# Must sort after 40-rpi-volatile-storage.conf, which sets Storage=volatile.\n'
-    printf '[Journal]\n'
-    printf 'Storage=persistent\n'
-    printf 'SystemMaxUse=200M\n'
-    printf 'SystemMaxFileSize=20M\n'
-    printf 'SystemKeepFree=500M\n'
-    printf 'MaxRetentionSec=2week\n'
-  } > "$tmp_j"
-  $SUDO install -o root -g root -m 644 "$tmp_j" "$JOURNAL_CONF"
-  rm -f "$tmp_j"
-  $SUDO systemctl restart systemd-journald 2>/dev/null || true
-  ok "logs now survive a reboot (capped at 200M, kept two weeks)"
-else
-  ok "logs already survive a reboot"
-fi
-# --- giving the board back what it is not using ------------------------------
-# A headless node has no use for 48 MB of GPU memory, and on a 905 MB board that
-# is 5% of everything there is. Raspberry Pi only: the config file is the tell,
-# and its absence means this is not a Pi and there is nothing to reclaim.
-#
-# Backed up first. This file decides whether the board boots at all, and an
-# unbootable Pi is a card reader and a trip to wherever it is mounted.
-BOOT_CONFIG=/boot/firmware/config.txt
-[ -f "$BOOT_CONFIG" ] || BOOT_CONFIG=/boot/config.txt
-if [ -f "$BOOT_CONFIG" ]; then
-  if grep -qE '^[[:space:]]*gpu_mem=16[[:space:]]*$' "$BOOT_CONFIG" 2>/dev/null; then
-    ok "gpu_mem is already 16M"
-  else
-    $SUDO cp -n "$BOOT_CONFIG" "$BOOT_CONFIG.bak-xl1" 2>/dev/null || true
-    # Delete then append, rather than edit in place: a config.txt with two
-    # gpu_mem lines takes the last, so editing the first changes nothing
-    # visible and costs an afternoon.
-    $SUDO sed -i -E '/^[[:space:]]*gpu_mem=/d' "$BOOT_CONFIG" 2>/dev/null || true
-    printf '\n# Explorer Grid: headless node, GPU memory returned to the system\ngpu_mem=16\n' \
-      | $SUDO tee -a "$BOOT_CONFIG" >/dev/null
-    ok "gpu_mem=16 written to $BOOT_CONFIG -- about 48 MB back on the next boot"
-  fi
-fi
-
-# The stock governor idles the CPU down between blocks. Whether a Pi 3 keeps up
-# is the open question about this hardware, and this is the one setting that
-# speaks to it directly.
-#
-# Skipped where there is no cpufreq at all, which is most virtual machines: a
-# governor cannot be set on a CPU whose speed the kernel does not control.
-CPUFREQ=/sys/devices/system/cpu/cpu0/cpufreq
-if [ -r "$CPUFREQ/scaling_available_governors" ] \
-   && grep -qw performance "$CPUFREQ/scaling_available_governors" 2>/dev/null; then
-  for c in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
-    [ -w "$c" ] || [ -e "$c" ] || continue
-    printf 'performance' | $SUDO tee "$c" >/dev/null 2>&1 || true
-  done
-  # Applied again at boot: the governor is not persistent, and a node that runs
-  # fast until its first reboot and slowly afterwards is the kind of difference
-  # nobody connects back to this.
-  if [ ! -f /etc/systemd/system/xl1-cpu-governor.service ]; then
-    tmp_g="$(mktemp)"
-    chmod 644 "$tmp_g"
-    {
-      printf '[Unit]\n'
-      printf 'Description=Pin the CPU governor to performance for the XL1 node\n'
-      printf 'After=multi-user.target\n\n'
-      printf '[Service]\n'
-      printf 'Type=oneshot\n'
-      printf 'RemainAfterExit=yes\n'
-      # \$c, escaped. Unescaped it expands HERE, in this shell, and bakes in
-      # whichever core the loop above finished on -- so the unit would set one
-      # CPU at boot and look entirely correct doing it. The loop has to reach
-      # systemd as text.
-      printf "ExecStart=/bin/sh -c 'for c in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do echo performance > \"\$c\" 2>/dev/null || true; done'\n\n"
-      printf '[Install]\n'
-      printf 'WantedBy=multi-user.target\n'
-    } > "$tmp_g"
-    $SUDO install -o root -g root -m 644 "$tmp_g" /etc/systemd/system/xl1-cpu-governor.service
-    rm -f "$tmp_g"
-    $SUDO systemctl daemon-reload 2>/dev/null || true
-    $SUDO systemctl enable --now xl1-cpu-governor.service >/dev/null 2>&1 || true
-  fi
-  ok "CPU governor set to performance, and pinned there across reboots"
-else
-  say "no cpufreq here, so the CPU governor is left alone"
-fi
+# The host-level setup that used to live here -- firewall, journald, gpu_mem
+# and the cpu governor -- moved to the hygiene section before step 10 on
+# 2026-09-05. All of it only ever ran on a first install, so a machine whose
+# firewall had been switched off, or whose governor unit had been removed,
+# could not be repaired by re-running the wizard, which is how a node is meant
+# to be fixed. Everything below this point is genuinely producer setup.
 
 printf '\n'
 

@@ -471,6 +471,28 @@ tmp="$(mktemp)"
     && printf 'XL1_STATED_RADIUS_KM=%s\n' "$XL1_STATED_RADIUS_KM"
   true
 } > "$tmp"
+
+# EVERYTHING THIS WRITER DOES NOT OWN IS CARRIED OVER.
+#
+# This file has two writers. The wizard's anchoring step appends
+# XL1_ATTEST_URL and XL1_ANCHOR_TOKEN to it at the end of setup; this rewrote
+# the whole file from scratch and dropped both -- and re-running the wizard is
+# the documented way to upgrade a device, so that happened on every upgrade.
+#
+# What it cost was not the token, which is free to reissue. The wizard reads
+# that same token back to decide whether anchoring is configured, so losing it
+# meant "not configured", which meant the whole anchoring step ran again --
+# including putting a fresh delegation on chain, for gas, on a node that
+# already had one. The one step the script says out loud must happen only once.
+#
+# The keys below are the ones this writer is responsible for and are dropped on
+# purpose: the location keys especially, because clearing a location has to
+# work, and an absent XL1_STATED_LAT is not the same as an empty one. Anything
+# else in the file belongs to somebody else and is none of this step's business.
+if [ -f /etc/xl1-heartbeat.env ]; then
+  $SUDO cat /etc/xl1-heartbeat.env 2>/dev/null | grep -vE '^(BACKEND_URL|NODE_ID|NODE_LABEL|NODE_ROLE|NODE_NETWORK|NODE_HEARTBEAT_TOKEN|XL1_STATED_LOCATION|XL1_STATED_LAT|XL1_STATED_LON|XL1_STATED_RADIUS_KM)=' >> "$tmp"
+fi
+
 $SUDO cp "$tmp" /etc/xl1-heartbeat.env
 rm -f "$tmp"
 $SUDO chmod 600 /etc/xl1-heartbeat.env

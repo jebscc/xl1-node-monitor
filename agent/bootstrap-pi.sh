@@ -2024,6 +2024,46 @@ delegation_anchored() {
 #
 # Returns 1 only if something was there to file and could not be, so a caller
 # can tell "nothing to do" from "the grid would not take it".
+# Is there already a delegation naming EXACTLY this producer and this attestor?
+#
+# Stricter than delegation_anchored on purpose, and the difference matters in
+# opposite directions for the two callers. That one asks whether this producer
+# has any delegation, which is the right question for "is this node set up".
+# This one guards a payment, so a delegation naming this producer and a
+# DIFFERENT attestor must not count: regenerate the attestation key and the old
+# delegation still names the producer while saying nothing about the new key.
+# Skipping on that would leave the node permanently unable to prove who its
+# readings are for, which is the worse mistake of the two.
+#
+# Both addresses compared within ONE record, which is why this parses instead
+# of grepping: two substrings somewhere in a fifty-record blob is not the same
+# claim as two substrings in the same record.
+#
+#   0  yes, this exact pair is on the record
+#   1  no
+#   2  could not tell -- never treated as yes
+delegation_exists_for() {
+  _de_prod="$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z' | sed 's/^0x//')"
+  _de_att="$(printf '%s' "${2:-}" | tr 'A-Z' 'a-z' | sed 's/^0x//')"
+  [ -n "$_de_prod" ] && [ -n "$_de_att" ] || return 2
+  command -v python3 >/dev/null 2>&1 || return 2
+  _de_json="$(curl -fsSL --max-time 25 \
+              "$BACKEND_URL/api/node/attestations?kind=delegation&limit=50" 2>/dev/null)" || return 2
+  printf '%s' "$_de_json" | DE_PROD="$_de_prod" DE_ATT="$_de_att" python3 -c '
+import json, os, sys
+try:
+    rows = json.load(sys.stdin).get("attestations") or []
+except Exception:
+    sys.exit(2)
+want_p, want_a = os.environ["DE_PROD"], os.environ["DE_ATT"]
+for row in rows:
+    blob = (row.get("payload") or "").lower().replace("0x", "")
+    if want_p in blob and want_a in blob:
+        sys.exit(0)
+sys.exit(1)
+' 2>/dev/null
+}
+
 file_delegations() {
   [ -n "${TOKEN:-}" ] || return 0
   [ -d "$DELEGATION_SPOOL" ] || return 0
@@ -2564,7 +2604,40 @@ printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
   node_modules/.bin/tsx delegate-attestor.ts $DELEGATE_ARGS 2>&1 | sed 's/^/    /'
 
 printf '\n'
-if ask_yn "  Put that on chain?" "y"; then
+
+# LAST STOP BEFORE THE MONEY.
+#
+# Everything above can be reached for reasons that have nothing to do with the
+# chain. This step re-ran on an already-delegated node because onboard.sh
+# rewrote the agent env and dropped the anchor token -- and anchor_configured
+# reads that token, returns 1 without a word, and never gets as far as asking
+# whether a delegation exists. Re-running the wizard is the documented way to
+# upgrade a device, so that was EVERY upgrade: another delegation on chain each
+# time, for the one step this script says out loud must happen once.
+#
+# That cause is fixed in onboard.sh. This is here because it should not have
+# been possible to reach this prompt at all, and the next reason to arrive here
+# uninvited will not be the same one.
+#
+# Only a definite yes skips. Unreadable proceeds, exactly as everywhere else
+# here: an unreachable backend is not evidence about the chain, and being wrong
+# that way costs a fraction of a token, while being wrong the other way leaves
+# a node permanently unable to prove who its readings are for.
+delegation_exists_for "$RUNNING_PRODUCER" "$ATTESTOR_ADDRESS"
+_delegated_already=$?
+
+if [ "$_delegated_already" = 0 ]; then
+  PRODUCER_MNEMONIC=""
+  ok "this producer has already delegated to this key"
+  note "  nothing to sign and nothing to pay for -- the delegation already on"
+  note "  chain names both of these addresses, which is all one ever says."
+  # Recorded on the skip path too, so a later run can tell "set up" from "set
+  # up for a producer this node no longer is" without asking the network.
+  if [ -n "$RUNNING_PRODUCER" ]; then
+    printf '%s\n' "$RUNNING_PRODUCER" | $SUDO tee "$ANCHOR_PRODUCER_FILE" >/dev/null
+    $SUDO chmod 0644 "$ANCHOR_PRODUCER_FILE" 2>/dev/null || true
+  fi
+elif ask_yn "  Put that on chain?" "y"; then
   # Tee'd, because what this prints is the ONLY copy of the payload. The
   # chain holds a hash and the sequence gateway has no payloadsByHash, so a
   # delegation nobody recorded is a transaction that proves a hash was

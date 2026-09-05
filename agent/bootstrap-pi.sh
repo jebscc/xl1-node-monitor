@@ -1531,6 +1531,38 @@ fi
 # enables it: Debian's postinst writes 20auto-upgrades with both switches on.
 # There is no install-but-leave-it-off to offer, and offering it would be a
 # lie about a security setting.
+# The no-reboot guarantee belongs on any machine where unattended-upgrades is
+# ACTIVE, not only ones this wizard switched on.
+#
+# auto_updates_on() answers "are updates installing themselves", which is not
+# the same question as "did we make that safe". Something else can turn them
+# on -- the image, or a package pulling unattended-upgrades in as a dependency
+# -- and the old shape then printed "already install themselves" and wrote
+# nothing. A block producer was left being patched by something that may
+# reboot it, with nothing here saying not to.
+#
+# A HEREDOC, not a multi-line printf. Inside single quotes a backslash before a
+# newline is literal rather than a continuation, so the printf this replaces
+# wrote a bare `\` on its own line between each comment -- and a stray backslash
+# in apt.conf is a syntax error, which would have broken apt itself.
+ensure_no_auto_reboot() {
+  $SUDO grep -qs 'Automatic-Reboot' /etc/apt/apt.conf.d/51xl1-no-reboot && return 0
+  $SUDO tee /etc/apt/apt.conf.d/51xl1-no-reboot >/dev/null <<'AUEOF'
+// Set by the Explorer Grid setup. A producer that vanishes mid-block
+// because a kernel landed is worse than an update that waits; the
+// panel reports when a reboot is pending.
+Unattended-Upgrade::Automatic-Reboot "false";
+AUEOF
+  # Read back rather than assumed. A machine told it will not reboot, that
+  # then does, takes a producer down mid-block.
+  if $SUDO grep -qs 'Automatic-Reboot' /etc/apt/apt.conf.d/51xl1-no-reboot; then
+    ok "and it will not reboot on its own"
+  else
+    warn "could not stop unattended-upgrades rebooting this machine" \
+         "a kernel update could take the producer down mid-block: see /etc/apt/apt.conf.d/51xl1-no-reboot"
+  fi
+}
+
 auto_updates_on() {
   # Same file, and the same reading, as the agent reports from.
   _au="$($SUDO grep -hs "Unattended-Upgrade" /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null \
@@ -1541,6 +1573,8 @@ auto_updates_on() {
 
 if auto_updates_on; then
   ok "security updates already install themselves"
+  # Whoever turned them on, this machine still must not reboot itself.
+  ensure_no_auto_reboot
 else
   printf '\n'
   note "Nothing on this machine installs security updates. The panel counts"
@@ -1565,6 +1599,7 @@ else
       # the package decided on install.
       printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' \
         | $SUDO tee /etc/apt/apt.conf.d/20auto-upgrades >/dev/null
+      ensure_no_auto_reboot
       # OUR OWN drop-in rather than an edit to the distro's 50unattended-
       # upgrades: that file is the distro's to change, and sorting after it
       # means this wins without a merge conflict on the next apt upgrade.
@@ -1575,17 +1610,6 @@ else
       # Debian does -- the agent measured that and says so where it counts
       # them. A hand-written security-only origin would install nothing here
       # and look like it was working.
-      # A HEREDOC, not a multi-line printf. Inside single quotes a backslash
-      # before a newline is literal rather than a continuation, so the printf
-      # this replaces wrote a bare `\` on its own line between each comment --
-      # and a stray backslash in apt.conf is a syntax error, which would have
-      # broken apt itself on every machine that answered yes.
-      $SUDO tee /etc/apt/apt.conf.d/51xl1-no-reboot >/dev/null <<'AUEOF'
-// Set by the Explorer Grid setup. A producer that vanishes mid-block
-// because a kernel landed is worse than an update that waits; the
-// panel reports when a reboot is pending.
-Unattended-Upgrade::Automatic-Reboot "false";
-AUEOF
       # Read back rather than assumed, like the account preset above: a
       # security setting that silently did not apply is worse than one
       # nobody switched on, because the panel will now say it is handled.

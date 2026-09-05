@@ -1363,15 +1363,60 @@ DONE_AGENT=1
 save_state
 
 # --- host hygiene, before anything that can decide to skip it ----------------
-# This lived inside the "else" of "is the producer already running", next to
-# the firewall, and so it ran on a fresh install and never again. Both
-# reference nodes reported "the producer is already running here" and were
-# never asked the question -- the same shape as the anchor gate that re-signed
-# a delegation on every upgrade: a step placed behind a gate that skips it on
-# exactly the machines that need it.
 #
-# It is host hygiene and has nothing to do with the producer, so it is asked
-# on every pass. Cheap and idempotent: it asks only when the answer is no.
+# Both of these protect the HOST rather than the node, and both used to sit
+# inside "is the producer already running" -- so neither ran on a machine
+# that was already set up, which is every machine after the first day.
+
+# Firewall first, because it is the only part of this that can lock you out of
+# your own machine, and doing it before anything is running means a mistake
+# costs nothing. Order matters: SSH is allowed BEFORE the default-deny takes
+# effect, or an operator working over SSH loses the session that is running
+# this. --force because `ufw enable` otherwise asks a question nothing here can
+# answer.
+#
+# 30303 is NOT opened, and that is a change from XYO's published steps.
+#
+# Measured on the reference node rather than reasoned about: a producer with
+# 1211 blocks to its name publishes no ports at all (PortBindings is empty),
+# nothing on the machine listens on 30303, and it had signed a block six before
+# the current head when this was checked. A federated producer submits through
+# the JsonRpc mempool; it does not gossip, and it does not accept inbound
+# connections -- which is the same property the whole grid depends on.
+#
+# So the rule opened a port to nothing. Small, but a firewall whose rules do not
+# match what listens is a firewall nobody can reason about later. If a role that
+# does peer ever lands here, open it then, with something behind it.
+if have ufw; then
+  say "setting up the firewall"
+  $SUDO ufw allow ssh >/dev/null 2>&1 || true
+  # Tailscale is required by step 5 and its traffic arrives on its own
+  # interface. Default-deny would otherwise make the tailnet address
+  # unreachable, which is the one route you would use to fix a firewall.
+  $SUDO ufw allow in on tailscale0 >/dev/null 2>&1 || true
+  $SUDO ufw default deny incoming >/dev/null 2>&1 || true
+  $SUDO ufw default allow outgoing >/dev/null 2>&1 || true
+  $SUDO ufw --force enable >/dev/null 2>&1 \
+    && ok "firewall on: ssh and tailscale in, everything else outbound only" \
+    || warn "could not enable the firewall" "not fatal -- the node runs either way; see: sudo ufw status"
+else
+  # Reached only when the install in step 7 failed, since ufw is on the apt
+  # list now. Still not fatal: a node with no firewall works, and stopping the
+  # run here would trade a working node for a missing rule.
+  warn "ufw could not be installed, so no firewall rules were set" \
+       "the node runs either way -- install it later with: sudo apt install ufw"
+fi
+
+# The same story as the firewall above, found the same day. This lived inside
+# the "else" of "is the producer already running" too, so it ran on a fresh
+# install and never again: both reference nodes reported the producer already
+# running, were never asked the question, and had neither config file
+# afterwards. The same shape as the anchor gate that re-signed a delegation on
+# every upgrade -- a step placed behind a gate that skips it on exactly the
+# machines that need it.
+#
+# Host hygiene, nothing to do with the producer, so it is asked on every pass.
+# Cheap and idempotent: it asks only when the answer is no.
 
 # --- security updates, installed without anyone remembering to ---------------
 #
@@ -1539,44 +1584,17 @@ case "$ARCH" in
      Reflash with the 64-bit Raspberry Pi OS and run this again." ;;
 esac
 
-# Firewall first, because it is the only part of this that can lock you out of
-# your own machine, and doing it before anything is running means a mistake
-# costs nothing. Order matters: SSH is allowed BEFORE the default-deny takes
-# effect, or an operator working over SSH loses the session that is running
-# this. --force because `ufw enable` otherwise asks a question nothing here can
-# answer.
+# The firewall moved OUT of this branch on 2026-09-05 -- see the host hygiene
+# section before step 10. It only ever ran on a first install, so a machine
+# whose ufw had been turned off could not be repaired by re-running the wizard,
+# which is the documented way to fix a node. The Exposure card on the panel now
+# reports that state, so the tool was reporting a problem it declined to fix.
 #
-# 30303 is NOT opened, and that is a change from XYO's published steps.
-#
-# Measured on the reference node rather than reasoned about: a producer with
-# 1211 blocks to its name publishes no ports at all (PortBindings is empty),
-# nothing on the machine listens on 30303, and it had signed a block six before
-# the current head when this was checked. A federated producer submits through
-# the JsonRpc mempool; it does not gossip, and it does not accept inbound
-# connections -- which is the same property the whole grid depends on.
-#
-# So the rule opened a port to nothing. Small, but a firewall whose rules do not
-# match what listens is a firewall nobody can reason about later. If a role that
-# does peer ever lands here, open it then, with something behind it.
-if have ufw; then
-  say "setting up the firewall"
-  $SUDO ufw allow ssh >/dev/null 2>&1 || true
-  # Tailscale is required by step 5 and its traffic arrives on its own
-  # interface. Default-deny would otherwise make the tailnet address
-  # unreachable, which is the one route you would use to fix a firewall.
-  $SUDO ufw allow in on tailscale0 >/dev/null 2>&1 || true
-  $SUDO ufw default deny incoming >/dev/null 2>&1 || true
-  $SUDO ufw default allow outgoing >/dev/null 2>&1 || true
-  $SUDO ufw --force enable >/dev/null 2>&1 \
-    && ok "firewall on: ssh and tailscale in, everything else outbound only" \
-    || warn "could not enable the firewall" "not fatal -- the node runs either way; see: sudo ufw status"
-else
-  # Reached only when the install in step 7 failed, since ufw is on the apt
-  # list now. Still not fatal: a node with no firewall works, and stopping the
-  # run here would trade a working node for a missing rule.
-  warn "ufw could not be installed, so no firewall rules were set" \
-       "the node runs either way -- install it later with: sudo apt install ufw"
-fi
+# KNOWN GAP, deliberately left: the journald, gpu_mem and cpu-governor blocks
+# below have the same property and have NOT been moved. Each has a side effect
+# on every run -- a journald restart, a boot-config rewrite, a daemon-reload --
+# so making them unconditional needs an "only if it differs" check first, which
+# is a different piece of work rather than a move.
 # Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf
 # setting Storage=volatile, to spare the SD card. The effect is invisible until
 # it matters: /var/log/journal exists and stays empty, journald writes to

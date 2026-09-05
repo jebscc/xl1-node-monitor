@@ -1475,6 +1475,88 @@ else
   warn "ufw could not be installed, so no firewall rules were set" \
        "the node runs either way -- install it later with: sudo apt install ufw"
 fi
+# --- security updates, installed without anyone remembering to ---------------
+#
+# The panel already counts pending updates. Nothing acts on that count, so a
+# node drifts unpatched for months while the number on screen climbs -- and
+# both reference nodes measured `off` the first time anything looked.
+#
+# Opt-in, and asked as ONE question, because installing the package is what
+# enables it: Debian's postinst writes 20auto-upgrades with both switches on.
+# There is no install-but-leave-it-off to offer, and offering it would be a
+# lie about a security setting.
+auto_updates_on() {
+  # Same file, and the same reading, as the agent reports from.
+  _au="$($SUDO grep -hs "Unattended-Upgrade" /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null \
+        | grep -v '^[[:space:]]*//' | head -1)"
+  [ -n "$_au" ] || return 1
+  case "$_au" in *'"0"'*) return 1 ;; *) return 0 ;; esac
+}
+
+if auto_updates_on; then
+  ok "security updates already install themselves"
+else
+  printf '\n'
+  note "Nothing on this machine installs security updates. The panel counts"
+  note "them; a person still has to act on the number, and months of them"
+  note "add up on a device that is reachable and holds a key."
+  note ""
+  note "This installs unattended-upgrades and turns it on. It will NOT"
+  note "reboot on its own -- a producer that vanishes mid-block because a"
+  note "kernel landed is worse than the update waiting for you. The panel"
+  note "already says when a reboot is pending."
+  printf '\n'
+  if ask_yn "  Install security updates automatically?" "y"; then
+    # The PACKAGE is unattended-upgrades; the BINARY is unattended-upgrade,
+    # singular. `have unattended-upgrades` can therefore never be true, so
+    # asking that way runs apt-get on every pass and leaves the real gate
+    # resting on the test beside it. Ask about the file that exists.
+    $SUDO test -x /usr/bin/unattended-upgrade \
+      || $SUDO apt-get install -y -qq unattended-upgrades >/dev/null 2>&1 || true
+    if $SUDO test -x /usr/bin/unattended-upgrade; then
+      # Written rather than trusted to the postinst, so a re-run repairs a
+      # file somebody turned off, and so this is the same two lines whatever
+      # the package decided on install.
+      printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' \
+        | $SUDO tee /etc/apt/apt.conf.d/20auto-upgrades >/dev/null
+      # OUR OWN drop-in rather than an edit to the distro's 50unattended-
+      # upgrades: that file is the distro's to change, and sorting after it
+      # means this wins without a merge conflict on the next apt upgrade.
+      #
+      # And deliberately NOT setting Origins-Pattern. The distro's own list
+      # is right for the distro, and this one matters: Raspberry Pi OS does
+      # not put security fixes in a separate -security suite the way stock
+      # Debian does -- the agent measured that and says so where it counts
+      # them. A hand-written security-only origin would install nothing here
+      # and look like it was working.
+      # A HEREDOC, not a multi-line printf. Inside single quotes a backslash
+      # before a newline is literal rather than a continuation, so the printf
+      # this replaces wrote a bare `\` on its own line between each comment --
+      # and a stray backslash in apt.conf is a syntax error, which would have
+      # broken apt itself on every machine that answered yes.
+      $SUDO tee /etc/apt/apt.conf.d/51xl1-no-reboot >/dev/null <<'AUEOF'
+// Set by the Explorer Grid setup. A producer that vanishes mid-block
+// because a kernel landed is worse than an update that waits; the
+// panel reports when a reboot is pending.
+Unattended-Upgrade::Automatic-Reboot "false";
+AUEOF
+      # Read back rather than assumed, like the account preset above: a
+      # security setting that silently did not apply is worse than one
+      # nobody switched on, because the panel will now say it is handled.
+      if auto_updates_on; then
+        ok "security updates will install themselves, and will not reboot"
+      else
+        warn "could not turn on automatic security updates" \
+             "the node runs either way -- see: sudo cat /etc/apt/apt.conf.d/20auto-upgrades"
+      fi
+    else
+      warn "unattended-upgrades could not be installed" \
+           "not fatal: nothing else depends on it. Try later with: sudo apt install unattended-upgrades"
+    fi
+  else
+    note "Left off. The panel will keep counting what is pending."
+  fi
+fi
 # Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf
 # setting Storage=volatile, to spare the SD card. The effect is invisible until
 # it matters: /var/log/journal exists and stays empty, journald writes to

@@ -2482,10 +2482,36 @@ fi
 # --- the delegation ----------------------------------------------------------
 # The producer phrase goes in on STDIN. Never an argument, never an -e: the
 # delegate tool reads stdin for exactly this reason.
-note "Binding that key to your producer. This is the only time the producer"
-note "phrase is used after setup, and it is used here by you, once."
-PRODUCER_MNEMONIC="$($SUDO sed -n 's/^XL1_MNEMONIC=//p' "$PRODUCER_ENV" 2>/dev/null)"
-[ -n "$PRODUCER_MNEMONIC" ] || die "could not read the producer phrase from $PRODUCER_ENV"
+# ASKED BEFORE THE KEY IS READ, rather than after.
+#
+# The decision used to sit just above the prompt -- correct, and late. By then
+# the producer phrase had been read out of root's env file into a shell
+# variable and piped through a container for a dry run whose output was thrown
+# away. Nothing leaked, and the whole design of the delegated attestor rests on
+# that key being touched once, by a person: reading it on a node already known
+# to be delegated is a use that cannot justify itself.
+#
+# current_producer is read here rather than lower down, because the argument
+# list below needs the same answer and there is no reason to ask the container
+# twice -- nor to let the two readings disagree about which producer this is.
+# Declared before the branch that may or may not fill it. This file runs
+# under `set -u`, so a read of an unset variable aborts the whole wizard --
+# and the reads below are guarded by the same condition as the assignment,
+# which is a coupling one careless edit undoes. Empty is the honest value
+# for "the phrase was never needed", and costs nothing to state.
+PRODUCER_MNEMONIC=""
+RUNNING_PRODUCER="$(current_producer)"
+_guard_producer="$RUNNING_PRODUCER"
+[ -n "$_guard_producer" ] || _guard_producer="$($SUDO cat "$ANCHOR_PRODUCER_FILE" 2>/dev/null | tr -d ' \r\n')"
+delegation_exists_for "$_guard_producer" "$ATTESTOR_ADDRESS"
+_delegated_already=$?
+
+if [ "$_delegated_already" != 0 ]; then
+  note "Binding that key to your producer. This is the only time the producer"
+  note "phrase is used after setup, and it is used here by you, once."
+  PRODUCER_MNEMONIC="$($SUDO sed -n 's/^XL1_MNEMONIC=//p' "$PRODUCER_ENV" 2>/dev/null)"
+  [ -n "$PRODUCER_MNEMONIC" ] || die "could not read the producer phrase from $PRODUCER_ENV"
+fi
 
 spin_char() { # spin_char <n> -> one frame of the spinner
   printf '%s' '|/-\' | cut -c$(( ${1:-0} % 4 + 1 ))
@@ -2570,7 +2596,8 @@ confirm_progress() {
 # what the chain actually sees. Empty means the log did not say -- a young
 # container, or one that has rotated its logs -- and that is not grounds to
 # refuse; it is grounds to say the check could not be made.
-RUNNING_PRODUCER="$(current_producer)"
+#
+# Read once, above, where the decision to skip is made.
 DELEGATE_ARGS="--attestor $ATTESTOR_ADDRESS"
 
 # WHICH ACCOUNT of the phrase this node produces as.
@@ -2599,11 +2626,14 @@ else
 fi
 
 # Dry run first, printed in full, so what is about to go on chain is seen
-# before it goes there.
-printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
-  node_modules/.bin/tsx delegate-attestor.ts $DELEGATE_ARGS 2>&1 | sed 's/^/    /'
-
-printf '\n'
+# before it goes there. Skipped with everything else when there is nothing
+# to sign: it exists to show an operator what they are about to approve,
+# and they are not about to approve anything.
+if [ "$_delegated_already" != 0 ]; then
+  printf '%s' "$PRODUCER_MNEMONIC" | $SUDO docker run --rm -i xl1-service:local \
+    node_modules/.bin/tsx delegate-attestor.ts $DELEGATE_ARGS 2>&1 | sed 's/^/    /'
+  printf '\n'
+fi
 
 # LAST STOP BEFORE THE MONEY.
 #
@@ -2623,23 +2653,6 @@ printf '\n'
 # here: an unreachable backend is not evidence about the chain, and being wrong
 # that way costs a fraction of a token, while being wrong the other way leaves
 # a node permanently unable to prove who its readings are for.
-# RUNNING_PRODUCER comes from the container log and is empty often enough to
-# matter -- a young container, or one that has rotated its logs. Empty means
-# this check cannot judge, which sends the run to the prompt below; and at
-# that prompt the only answers are "pay for another delegation" or "no",
-# which aborts the wizard before it writes the service config. A blank log
-# line should not force that choice.
-#
-# So fall back to the address recorded when the delegation was made, which is
-# what that file exists for and what anchor_configured already trusts for its
-# mismatch check. Only as a FALLBACK: if the log can be read it wins, so a
-# node now signing as a different producer is judged on what it signs as
-# today, not on what it was delegated for once.
-_guard_producer="$RUNNING_PRODUCER"
-[ -n "$_guard_producer" ] || _guard_producer="$($SUDO cat "$ANCHOR_PRODUCER_FILE" 2>/dev/null | tr -d ' \r\n')"
-delegation_exists_for "$_guard_producer" "$ATTESTOR_ADDRESS"
-_delegated_already=$?
-
 if [ "$_delegated_already" = 0 ]; then
   PRODUCER_MNEMONIC=""
   ok "this producer has already delegated to this key"

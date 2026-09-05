@@ -2623,7 +2623,21 @@ printf '\n'
 # here: an unreachable backend is not evidence about the chain, and being wrong
 # that way costs a fraction of a token, while being wrong the other way leaves
 # a node permanently unable to prove who its readings are for.
-delegation_exists_for "$RUNNING_PRODUCER" "$ATTESTOR_ADDRESS"
+# RUNNING_PRODUCER comes from the container log and is empty often enough to
+# matter -- a young container, or one that has rotated its logs. Empty means
+# this check cannot judge, which sends the run to the prompt below; and at
+# that prompt the only answers are "pay for another delegation" or "no",
+# which aborts the wizard before it writes the service config. A blank log
+# line should not force that choice.
+#
+# So fall back to the address recorded when the delegation was made, which is
+# what that file exists for and what anchor_configured already trusts for its
+# mismatch check. Only as a FALLBACK: if the log can be read it wins, so a
+# node now signing as a different producer is judged on what it signs as
+# today, not on what it was delegated for once.
+_guard_producer="$RUNNING_PRODUCER"
+[ -n "$_guard_producer" ] || _guard_producer="$($SUDO cat "$ANCHOR_PRODUCER_FILE" 2>/dev/null | tr -d ' \r\n')"
+delegation_exists_for "$_guard_producer" "$ATTESTOR_ADDRESS"
 _delegated_already=$?
 
 if [ "$_delegated_already" = 0 ]; then

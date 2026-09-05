@@ -370,7 +370,17 @@ if [ "$OS" = linux ] || [ "$OS" = macos ]; then
   fi
   if [ "$(id -u)" = 0 ]; then
     ok "running as root; the service can be installed"
-  elif sudo -n true 2>/dev/null; then
+  # `sudo -n true` answers "can I sudo RIGHT NOW", which is not the same
+  # question. sudo's credential cache is not tty-scoped, so it succeeds for
+  # minutes after the user last typed their password anywhere on the machine --
+  # and the wizard prompts for sudo in step 2, before this runs in step 9. So
+  # on every wizard run this branch won, and every operator was told their
+  # machine has passwordless sudo moments after typing a password into it.
+  #
+  # Ask the rules instead of the cache. A cold cache cannot list them either,
+  # which lands in the branch below -- and "you will be asked for a password"
+  # is the right thing to say when we cannot show otherwise.
+  elif sudo -n -l 2>/dev/null | grep -qE 'NOPASSWD:[[:space:]]*ALL'; then
     ok "passwordless sudo is available"
   elif have sudo; then
     warn "sudo will prompt for a password during --install" "expected, just be at the keyboard"

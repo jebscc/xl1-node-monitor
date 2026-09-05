@@ -100,6 +100,14 @@ ANCHOR_ENV="${ANCHOR_ENV:-/etc/xl1-anchor.env}"
 # a home directory and is missing on plenty of working devices -- and a check
 # that cannot run is worse here than no check, since it would silently pass.
 ANCHOR_PRODUCER_FILE="${ANCHOR_PRODUCER_FILE:-/etc/xl1-anchor.producer}"
+# Where a delegation's payload is kept, forever, from the moment it is signed.
+#
+# The chain stores a HASH. Sequence's gateway has no payloadsByHash, so the
+# bytes that hash to it exist in exactly one place: whatever recorded them. A
+# delegation whose payload is lost is a transaction proving that some hash was
+# anchored, with nothing able to say what it was a hash of -- unverifiable and
+# unfilable, permanently, for a step that costs gas and is meant to happen once.
+DELEGATION_SPOOL="${DELEGATION_SPOOL:-/var/lib/xl1-attestations}"
 # A copy of the node image's presets, kept on the host so one line in it can be
 # changed: which account of the wallet phrase this node produces as.
 #
@@ -1995,6 +2003,46 @@ delegation_anchored() {
   esac
 }
 
+# File any delegation this machine has signed but never got onto the grid.
+#
+# THE GRID'S RECORD AND THE CHAIN ARE TWO DIFFERENT THINGS, and delegation_anchored
+# above can only read the first. Nothing on the backend walks the chain for
+# delegations -- the single writer of that collection is the POST below -- so
+# "the site has no record" is what a node looks like when the chain write
+# succeeded and the filing that follows it did not.
+#
+# Before this, that state was unrecoverable rather than merely untidy. The
+# payload was extracted from a temp file, the temp file deleted, and if the
+# POST then failed the only copy of those bytes went with it; the next run read
+# "no delegation" and anchored a second one, for gas, while the first stayed
+# unverifiable forever.
+#
+# So the payload is written to the spool at the moment it is signed and is
+# never removed, and this runs on every wizard pass. Re-posting one already
+# filed is free: the backend upserts on content_hash with $setOnInsert, so a
+# duplicate is a no-op rather than a second record.
+#
+# Returns 1 only if something was there to file and could not be, so a caller
+# can tell "nothing to do" from "the grid would not take it".
+file_delegations() {
+  [ -n "${TOKEN:-}" ] || return 0
+  [ -d "$DELEGATION_SPOOL" ] || return 0
+  _fd_fail=0
+  # Readable without sudo: the spool is 0755 and each file 0644. The payload is
+  # public -- two addresses and a sentence, the same bytes published on /verify
+  # -- so it is stored as public rather than guarded like the key beside it.
+  for _fd in "$DELEGATION_SPOOL"/delegation-*.json; do
+    [ -f "$_fd" ] || continue
+    if curl -fsS --max-time 30 -X POST -H 'content-type: application/json' \
+         -H "X-Node-Token: $TOKEN" --data-binary "@$_fd" \
+         "$BACKEND_URL/api/node/attestation" >/dev/null 2>&1; then
+      continue
+    fi
+    _fd_fail=1
+  done
+  return "$_fd_fail"
+}
+
 anchor_configured() {
   $SUDO test -s "$ANCHOR_ENV" 2>/dev/null || return 1
   $SUDO grep -q '^XL1_ANCHOR_TOKEN=.' "$AGENT_ENV" 2>/dev/null || return 1
@@ -2059,6 +2107,14 @@ anchor_configured() {
 # Only a definite no clears the flag. Unreadable leaves it alone, for the same
 # reason as everywhere else here: the cost of being wrong is gas for a second
 # delegation, and an unreachable backend is not evidence about the chain.
+# Before either gate reads the grid's record, put anything this machine is
+# holding INTO that record. Otherwise a delegation that is on chain but unfiled
+# reads as no delegation at all, and the answer to that is to anchor a second
+# one -- paying gas to solve a filing problem, and leaving the first still
+# unfiled. Silent: it has nothing to say on the runs where there is nothing to
+# file, which is almost all of them.
+file_delegations || true
+
 if [ "${DONE_ANCHOR:-0}" = 1 ]; then
   delegation_anchored
   _gate_status=$?
@@ -2536,7 +2592,7 @@ if ask_yn "  Put that on chain?" "y"; then
   _dhash="$(sed -n 's/^ *content hash *: *//p' "$_anchor_out" | tail -1 | tr -d ' \r')"
   _dtx="$(sed -n 's/^ *tx hash *: *//p' "$_anchor_out" | tail -1 | tr -d ' \r')"
   rm -f "$_anchor_out"
-  if [ -n "$_dpay" ] && [ -n "$_dhash" ] && [ -n "$_dtx" ] && [ -n "${TOKEN:-}" ]; then
+  if [ -n "$_dpay" ] && [ -n "$_dhash" ] && [ -n "$_dtx" ]; then
     _dbody="$(ATT_PAY="$_dpay" ATT_HASH="$_dhash" ATT_TX="$_dtx" \
               ATT_ID="$NODE_ID" ATT_NET="$XL1_NET" ATT_BY="$ATTESTOR_ADDRESS" \
       python3 -c 'import json,os; print(json.dumps({
@@ -2544,15 +2600,43 @@ if ask_yn "  Put that on chain?" "y"; then
         "kind": "delegation", "payload": os.environ["ATT_PAY"],
         "content_hash": os.environ["ATT_HASH"], "tx_hash": os.environ["ATT_TX"],
         "attested_by": os.environ["ATT_BY"]}))' 2>/dev/null)"
-    if [ -n "$_dbody" ] && printf '%s' "$_dbody" | curl -fsS --max-time 30 \
-         -X POST -H 'content-type: application/json' \
-         -H "X-Node-Token: $TOKEN" --data-binary @- \
-         "$BACKEND_URL/api/node/attestation" >/dev/null 2>&1; then
-      ok "recorded it on the grid, so /verify can follow it to the producer"
+    # TO DISK BEFORE THE NETWORK, and this order is the whole fix.
+    #
+    # These bytes are now the only copy in existence: the temp file above is
+    # gone and the chain holds their hash, not them. Posting first and storing
+    # second -- or storing only on success, which is the same thing -- means a
+    # failed POST loses them, and the delegation becomes a transaction nobody
+    # can ever verify or file. Cheap to write, unrecoverable not to.
+    #
+    # Hex-checked because it names a file. The value comes from our own tool's
+    # output, not from a stranger, but a content hash is a content hash and
+    # anything else in it does not belong in a path.
+    # Two separate ways this can be unusable, and they need different words.
+    if [ -z "$_dbody" ]; then
+      warn "could not build the delegation record" \
+           "the payload printed above is the only copy of it -- keep that output"
     else
-      warn "could not record the delegation on the grid" \
-           "it IS on chain (tx ${_dtx}); the panel will say 'not yet signed for' until this is filed"
+      # Hex-checked because it names a file. The value comes from our own
+      # tool's output, not from a stranger, but a content hash is a content
+      # hash and anything else in it does not belong in a path.
+      case "$_dhash" in
+        "" | *[!0-9a-fA-F]*) warn "the delegation's content hash is not a hash" \
+                             "not storing it under that name" ;;
+        *) $SUDO mkdir -p "$DELEGATION_SPOOL" 2>/dev/null || true
+           printf '%s\n' "$_dbody" | $SUDO tee "$DELEGATION_SPOOL/delegation-$_dhash.json" >/dev/null
+           $SUDO chmod 0644 "$DELEGATION_SPOOL/delegation-$_dhash.json" 2>/dev/null || true ;;
+      esac
     fi
+  fi
+  # Files this one and anything an earlier run left behind. Best effort: the
+  # delegation is on chain and that is the durable half. Failing to file the
+  # paperwork must not undo it -- and now it no longer has to, because the
+  # paperwork is on disk and the next run will try again by itself.
+  if file_delegations; then
+    ok "recorded it on the grid, so /verify can follow it to the producer"
+  else
+    warn "could not record the delegation on the grid" \
+         "it IS on chain (tx ${_dtx}) and its payload is saved in $DELEGATION_SPOOL -- re-run this and it will file itself; no second delegation is needed"
   fi
   # Recorded so a later run can tell "already set up" from "set up for a
   # producer this node no longer is". Public information -- it appears in every

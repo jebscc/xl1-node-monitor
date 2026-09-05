@@ -277,7 +277,7 @@ FOUND_NAME=""; FOUND_LAT=""; FOUND_LON=""
 lookup_postcode() { # lookup_postcode <country> <code>
   FOUND_NAME=""; FOUND_LAT=""; FOUND_LON=""
   have curl || return 1
-  local cc pc enc resp
+  local cc enc resp
   cc="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
   # Spaces are legal in plenty of postcodes and illegal in a URL path.
   enc="$(printf '%s' "$2" | sed 's/ /%20/g')"
@@ -1154,6 +1154,16 @@ if [ "$TS_DONE" != 1 ]; then
     note "moment you do -- nothing else is needed here."
     printf '\n'
     if [ "$TTY_OK" = 1 ]; then
+      # The redirects are the calling shell's, not sudo's, and that is the
+      # point. This script is run as `curl ... | bash`, so stdin is the pipe --
+      # tailscale's sign-in URL would go into a pipe nobody is reading and the
+      # operator would wait at a blank screen. /dev/tty reaches the terminal,
+      # and the calling shell is the thing that has it.
+      #
+      # SC2024 warns about `sudo cmd > file` opening the file as the wrong
+      # user. That matters for a root-owned file; the target here is this
+      # session's own terminal.
+      # shellcheck disable=SC2024
       sudo tailscale up --hostname="$TS_HOST" < /dev/tty > /dev/tty 2>&1 \
         || die "sign-in did not complete. Run 'sudo tailscale up' and then start this again."
     else

@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.35.0"
+AGENT_VERSION = "1.36.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -2343,6 +2343,174 @@ def read_os_updates():
     return value
 
 
+def _published_host_ip(mapping):
+    """The host address of one docker port mapping, or None if it publishes none.
+
+    `docker ps` gives Ports as a comma list, and the entries are not all the
+    same shape:
+
+        8090/tcp                     exposed inside the container only
+        127.0.0.1:8090->8090/tcp     published, and only to this machine
+        0.0.0.0:8090->8090/tcp       published to every interface
+        :::8090->8090/tcp            the same, over IPv6
+
+    Only the ones with an arrow are published. The host side is what decides
+    who can reach it, so that is what comes back.
+    """
+    if "->" not in mapping:
+        return None
+    host = mapping.split("->", 1)[0].strip()
+    # Strip the port, which is after the LAST colon -- an IPv6 address is full
+    # of them, so splitting on the first would return "" for every v6 mapping
+    # and quietly call them all contained.
+    if ":" not in host:
+        return None
+    return host.rsplit(":", 1)[0]
+
+
+def _exposed_ports():
+    """Container ports published to anything but this machine, or None.
+
+    THE FIREWALL DOES NOT COVER THESE. Docker writes its own iptables rules,
+    and a published port is reachable whatever ufw says -- so the containment
+    for the anchor service is its 127.0.0.1 bind address, not the firewall the
+    operator can see. Nothing enforced that, and nothing reported it: add a
+    second container, or drop the bind prefix, and the port is on the network
+    while every visible signal still says the firewall is on.
+
+    Returns a list of "name port" strings, empty when nothing is exposed, and
+    None when docker could not be asked -- which is not the same as nothing.
+    """
+    out = run(["docker", "ps", "--format", "{{.Names}}	{{.Ports}}"], timeout=15)
+    if out is None:
+        return None
+    exposed = []
+    for line in out.splitlines():
+        if "	" not in line:
+            continue
+        name, ports = line.split("	", 1)
+        for mapping in ports.split(","):
+            host = _published_host_ip(mapping)
+            if host is None:
+                continue
+            bare = host.strip().strip("[]")
+            # Loopback in both families. "::" and "0.0.0.0" are every
+            # interface and are exactly what this exists to catch.
+            if bare.startswith("127.") or bare in ("::1", "localhost"):
+                continue
+            exposed.append("%s %s" % (name.strip(), mapping.strip()))
+    return exposed
+
+
+def _ssh_password_auth():
+    """Whether sshd would accept a password, or None if it cannot be told.
+
+    sshd takes the FIRST value it sees for a keyword, not the last, and Debian
+    puts `Include /etc/ssh/sshd_config.d/*.conf` at the top of the main file --
+    so a drop-in wins over the line below it. Reading the main file alone gets
+    this backwards on exactly the systems that use drop-ins, which is most
+    current Raspberry Pi OS installs.
+
+    Unset means yes: that is sshd's default, and reporting "no" for a file that
+    simply does not mention it would be the most dangerous kind of wrong here.
+    """
+    main = "/etc/ssh/sshd_config"
+    if not os.path.exists(main):
+        return None                      # no sshd, nothing to say
+    paths = []
+    try:
+        paths = sorted(
+            os.path.join("/etc/ssh/sshd_config.d", f)
+            for f in os.listdir("/etc/ssh/sshd_config.d")
+            if f.endswith(".conf"))
+    except OSError:
+        pass                             # no drop-in dir is normal
+    read_any = False
+    for path in paths + [main]:
+        try:
+            with open(path, "r", errors="replace") as fh:
+                lines = fh.readlines()
+        except OSError:
+            continue
+        read_any = True
+        for line in lines:
+            bits = line.strip().split()
+            if len(bits) >= 2 and bits[0].lower() == "passwordauthentication":
+                return bits[1].lower() in ("yes", "true")
+    if not read_any:
+        return None                      # it exists but this account cannot read it
+    return True                          # sshd's default when nothing says otherwise
+
+
+def _auto_updates():
+    """Whether unattended-upgrades is set to install, or None if unreadable.
+
+    The agent already counts pending updates. This says whether anything is
+    going to act on that count without somebody remembering to.
+    """
+    path = "/etc/apt/apt.conf.d/20auto-upgrades"
+    if not os.path.exists(path):
+        return False                     # the file is what enables it
+    try:
+        with open(path, "r", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("//") or "Unattended-Upgrade" not in line:
+            continue
+        # APT::Periodic::Unattended-Upgrade "1";
+        return '"0"' not in line
+    return False
+
+
+def read_security_posture():
+    """What stands between this machine and the network, measured not assumed.
+
+    Every value is True, False, None, or a list -- and None always means "could
+    not tell", which a panel must never draw as "no". That distinction matters
+    more here than anywhere else on this agent: "the firewall is off" and "I
+    could not read the firewall" call for opposite responses, and only one of
+    them is a reason to get out of bed.
+
+    All of it is readable without root, deliberately. This agent runs as
+    xl1agent, and giving it sudo so it could report on security would be its
+    own answer to the question.
+    """
+    out = {}
+
+    # `systemctl is-active` EXITS NON-ZERO when the unit is inactive, and run()
+    # returns None on any non-zero exit -- so asking that way reports a
+    # disabled firewall as an unreadable one. `show` always exits 0 and puts
+    # the answer in its output, which is the difference between a fact and a
+    # missing value.
+    state = run(["systemctl", "show", "ufw",
+                 "--property=LoadState,ActiveState"], timeout=10)
+    if state is not None:
+        props = dict(
+            line.split("=", 1) for line in state.splitlines() if "=" in line)
+        if props.get("LoadState") == "not-found":
+            out["firewall"] = False      # not installed is not protected
+        elif props.get("ActiveState"):
+            out["firewall"] = (props["ActiveState"] == "active")
+
+    exposed = _exposed_ports()
+    if exposed is not None:
+        out["exposed_ports"] = exposed
+
+    ssh_pw = _ssh_password_auth()
+    if ssh_pw is not None:
+        out["ssh_password_auth"] = ssh_pw
+
+    auto = _auto_updates()
+    if auto is not None:
+        out["auto_updates"] = auto
+
+    # Nothing readable at all is a failed reader, not a secure machine.
+    return out or None
+
+
 def read_image_inventory():
     """How many versioned node images are on disk, or None.
 
@@ -2491,6 +2659,7 @@ def _slow_worker():
             _step("earnings", lambda: _slow_put("earnings", fetch_earnings(name)))
             _step("peers", lambda: _slow_put("peers", fetch_peers(name)))
             _step("os_updates", lambda: _slow_put("os_updates", read_os_updates()))
+            _step("security", lambda: _slow_put("security", read_security_posture()))
             # Last, and only when the backend has told us where to resume.
             stats = _step("producer_stats", lambda: fetch_producer_stats(name))
             if stats:
@@ -2748,6 +2917,15 @@ def collect():
     _degraded_note(degraded, "os_updates",
                    bool(OS_UPDATE_INTERVAL) and updates is None
                    and os.path.exists("/usr/bin/apt"))
+
+    # Nested, like latency: one coherent reading with several parts, and a
+    # panel that shows them together is the only way any of them mean much.
+    security = _slow_get("security", read_security_posture)
+    if security:
+        payload["security"] = security
+    # Every part of it is readable without root, so nothing at all coming back
+    # is a broken reader rather than a quiet machine.
+    _degraded_note(degraded, "security", security is None)
 
     blocked = _slow_get("blocked_reason", lambda: read_blocked_reason(name))
     if blocked:

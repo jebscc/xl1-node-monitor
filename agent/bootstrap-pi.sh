@@ -1610,6 +1610,31 @@ while [ -z "$MNEMONIC" ] && [ "$tries" -lt 5 ]; do
 done
 [ -n "$MNEMONIC" ] || die "no wallet phrase given. Nothing was changed; run this again when you have one."
 
+# Where the rewards go, taken from the node's own config before asking.
+#
+# Same reasoning as the account below: /etc/xl1-producer.env is what the node
+# runs on, and the state file is a memory of an answer that lives in a home
+# directory and is missing on plenty of working devices. This block is reached
+# on the rebuild path too -- a producer that only needs a newer image comes
+# through here -- so without this, updating a node meant retyping its payout
+# address from memory, and a slip moved the rewards.
+#
+# The remembered answer still wins if there is one: an operator who changed it
+# in this wizard last week should not have it reverted by an env file written
+# before that.
+if [ -z "${REWARD_ADDRESS:-}" ]; then
+  REWARD_ADDRESS="$($SUDO sed -n 's/^XL1_REWARD_ADDRESS=//p' "$PRODUCER_ENV" 2>/dev/null | head -1 | tr -d ' \r\n')"
+  # Validated exactly like a typed one. A file is not more trustworthy than a
+  # keyboard just because nobody watched it being written, and accepting an
+  # unchecked value here would mean the only path that skips the format check
+  # is the one nobody looks at.
+  if [ -n "$REWARD_ADDRESS" ] \
+     && printf '%s' "$REWARD_ADDRESS" | grep -qE "^0x[0-9a-fA-F]{40}$"; then
+    note "Rewards go to $REWARD_ADDRESS -- read from this node's own config."
+  else
+    REWARD_ADDRESS=""
+  fi
+fi
 REWARD_ADDRESS="${REWARD_ADDRESS:-}"
 tries=0
 while [ -z "$REWARD_ADDRESS" ] && [ "$tries" -lt 5 ]; do
@@ -1647,6 +1672,30 @@ done
 # So it asks what it actually needs to know -- whether a specific account is
 # wanted -- and names both reasons. Everyone else keeps 0 without being made
 # to think about derivation paths.
+# WHICH ACCOUNT THIS NODE ACTUALLY PRODUCES AS, read from the file the
+# container is mounted with rather than from the state file.
+#
+# The preset file is the mechanism -- there is no environment variable for
+# this -- so it, and not an answer recorded months ago, is what the node runs
+# on. The state file lives in a home directory and is simply missing on plenty
+# of working devices.
+#
+# What that cost, before this: a node producing as account 1 whose state file
+# had been lost came back as ACCOUNT_INDEX=0, the block below was skipped
+# because 0 needs no preset, PRESET_ARGS stayed empty, and the container was
+# started WITHOUT the mount -- so it produced as account 0. A different
+# address, a different producer, signing blocks nobody had delegated to, and
+# not one line of output saying the identity had changed.
+producer_account() {
+  $SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
+    "$PRESETS_DIR/roles/producer.json" 2>/dev/null | head -1
+}
+_preset_account="$(producer_account)"
+if [ -n "$_preset_account" ] && [ "$_preset_account" != "${ACCOUNT_INDEX:-0}" ]; then
+  ACCOUNT_INDEX="$_preset_account"
+  note "This node is set up to produce as account $ACCOUNT_INDEX -- read from the"
+  note "preset it runs on, which outranks anything this wizard remembered."
+fi
 ACCOUNT_INDEX="${ACCOUNT_INDEX:-0}"
 printf '\n'
 note "One wallet phrase holds many addresses. A wallet extension shows them as"
@@ -2611,10 +2660,6 @@ DELEGATE_ARGS="--attestor $ATTESTOR_ADDRESS"
 # Read from the preset the container is actually mounted with, not from the
 # answer given during setup: the file is what the node runs on, and a state
 # file can be missing or stale on a device set up before it existed.
-producer_account() {
-  $SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
-    "$PRESETS_DIR/roles/producer.json" 2>/dev/null | head -1
-}
 ACCOUNT_FOR_DELEGATION="$(producer_account)"
 [ -n "$ACCOUNT_FOR_DELEGATION" ] || ACCOUNT_FOR_DELEGATION="${ACCOUNT_INDEX:-0}"
 DELEGATE_ARGS="$DELEGATE_ARGS --account $ACCOUNT_FOR_DELEGATION"

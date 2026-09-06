@@ -2056,6 +2056,55 @@ fi
 #
 # The file is empty between mktemp and chmod, so nothing is exposed in the gap.
 # Same shape as the Tailscale key handling further up.
+# --- WHO OWNS THIS CONTAINER ------------------------------------------------
+#
+# This script installs no unit for the producer, but an operator may -- and
+# on the reference node one exists. Where it does, systemd owns the
+# container's lifecycle and this script must not fight it.
+#
+# What fighting it looked like: `docker rm -f` here killed the unit's
+# container, systemd restarted on its own schedule, its ExecStartPre removed
+# the container this script had just made, and the check fifteen seconds
+# later found nothing and reported "the producer started and stopped again
+# -- a wrong phrase shows up here". The phrase was fine. The producer was
+# fine. Only this script was wrong.
+#
+# And quietly, which is worse: the unit reads its OWN --env-file. Everything
+# written to $PRODUCER_ENV -- phrase, reward address, account -- never
+# reached the running node. Both files happening to carry the same phrase is
+# the only reason that was invisible.
+#
+# No sudo on the reads: systemctl show and is-active answer any user, and a
+# password prompt for a lookup is a stumble on a cold cache.
+producer_unit() {
+  for _pu in $(grep -rl -- "name xl1-producer" \
+                 /etc/systemd/system /usr/lib/systemd/system 2>/dev/null); do
+    _pu="${_pu##*/}"
+    [ "$(systemctl is-active "$_pu" 2>/dev/null)" = active ] || continue
+    printf '%s' "$_pu"; return 0
+  done
+  return 1
+}
+
+producer_unit_envfile() {  # producer_unit_envfile <unit>
+  # Both --env-file forms, because a unit may use either.
+  systemctl show "$1" -p ExecStart --value 2>/dev/null \
+    | sed -n 's/.*--env-file[= ]\([^ ;"]*\).*/\1/p' | head -1
+}
+
+PRODUCER_UNIT_NAME="$(producer_unit || true)"
+if [ -n "$PRODUCER_UNIT_NAME" ]; then
+  _unit_env="$(producer_unit_envfile "$PRODUCER_UNIT_NAME")"
+  if [ -n "$_unit_env" ]; then
+    warn "$PRODUCER_UNIT_NAME manages this producer" \
+         "it loads $_unit_env, so that is where this writes -- anything written anywhere else would never reach the node"
+    PRODUCER_ENV="$_unit_env"
+  else
+    warn "$PRODUCER_UNIT_NAME manages this producer" \
+         "its --env-file could not be read, so settings go to $PRODUCER_ENV and may not be what the unit loads"
+  fi
+fi
+
 tmp_env="$(mktemp)"
 chmod 600 "$tmp_env"
 {
@@ -2065,6 +2114,20 @@ chmod 600 "$tmp_env"
   printf 'XL1_MNEMONIC=%s\n' "$MNEMONIC"
   printf 'XL1_REWARD_ADDRESS=%s\n' "$REWARD_ADDRESS"
 } > "$tmp_env"
+
+# EVERYTHING THIS WRITER DOES NOT OWN IS CARRIED OVER -- the same rule the
+# agent env needed. The unit's file holds XL1_CHAIN__ID, which nothing here
+# writes, and replacing the file wholesale would drop it: the entrypoint
+# fails without a chain id where the network preset does not supply one.
+#
+# Assignments only. Comments and blanks are not carried, so a re-run cannot
+# accumulate a copy of its own header each time -- the cost is that
+# commented-out documentation in an operator's file is not preserved.
+if $SUDO test -f "$PRODUCER_ENV"; then
+  $SUDO grep -E "^[A-Za-z_][A-Za-z0-9_]*=" "$PRODUCER_ENV" 2>/dev/null \
+    | grep -vE '^(XL1_NETWORK|XL1_ROLE|XL1_MNEMONIC|XL1_REWARD_ADDRESS)=' \
+    >> "$tmp_env" || true
+fi
 $SUDO install -o root -g root -m 600 "$tmp_env" "$PRODUCER_ENV"
 rm -f "$tmp_env"
 MNEMONIC=""
@@ -2149,14 +2212,30 @@ if [ "${ACCOUNT_INDEX:-0}" != 0 ]; then
   ok "producing as account $ACCOUNT_INDEX of the phrase"
 fi
 
-$SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true
-# shellcheck disable=SC2086
-$SUDO docker run -d --name xl1-producer --restart unless-stopped \
-  -e NODE_OPTIONS="--max-old-space-size=$NODE_HEAP_MB" $PRESET_ARGS \
-  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
-  --env-file "$PRODUCER_ENV" xl1:local >/dev/null \
-  || die "the producer would not start. Check: sudo docker logs xl1-producer"
-ok "heap capped at ${NODE_HEAP_MB}M, logs rotate at 10M x 3"
+if [ -n "$PRODUCER_UNIT_NAME" ]; then
+  # systemd owns the lifecycle. Ask it, and leave the container alone.
+  say "restarting $PRODUCER_UNIT_NAME"
+  $SUDO systemctl restart "$PRODUCER_UNIT_NAME" \
+    || die "systemctl restart $PRODUCER_UNIT_NAME failed. Check: systemctl status $PRODUCER_UNIT_NAME"
+  # The heap cap, the log rotation and any preset mount are flags on a
+  # `docker run` this script no longer issues. They belong to the unit, and
+  # saying so is better than setting them somewhere nothing reads.
+  note "Heap cap, log rotation and any preset mount live on that unit's own"
+  note "ExecStart, not here. Edit the unit to change them."
+  if [ "${ACCOUNT_INDEX:-0}" != 0 ]; then
+    warn "this node produces as account $ACCOUNT_INDEX, which needs the preset mount" \
+         "the unit's ExecStart must carry -e XL1_PRESETS_DIR=/presets -v $PRESETS_DIR:/presets, or the node comes back as account 0 -- a different address"
+  fi
+else
+  $SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true
+  # shellcheck disable=SC2086
+  $SUDO docker run -d --name xl1-producer --restart unless-stopped \
+    -e NODE_OPTIONS="--max-old-space-size=$NODE_HEAP_MB" $PRESET_ARGS \
+    --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
+    --env-file "$PRODUCER_ENV" xl1:local >/dev/null \
+    || die "the producer would not start. Check: sudo docker logs xl1-producer"
+  ok "heap capped at ${NODE_HEAP_MB}M, logs rotate at 10M x 3"
+fi
 
 sleep 15
 if $SUDO docker ps --filter name=xl1-producer --format '{{.Names}}' | grep -q xl1-producer; then
@@ -2164,7 +2243,11 @@ if $SUDO docker ps --filter name=xl1-producer --format '{{.Names}}' | grep -q xl
 else
   printf '\n'
   $SUDO docker logs --tail 20 xl1-producer 2>&1 | sed 's/^/    /'
-  die "the producer started and stopped again. The lines above say why -- a wrong phrase shows up here."
+  if [ -n "$PRODUCER_UNIT_NAME" ]; then
+    die "the producer is not running. Check: systemctl status $PRODUCER_UNIT_NAME"
+  else
+    die "the producer started and stopped again. The lines above say why -- a wrong phrase shows up here."
+  fi
 fi
 
 # Which address it actually came back as, read from the node rather than

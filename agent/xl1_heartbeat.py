@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.36.2"
+AGENT_VERSION = "1.37.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -143,6 +143,13 @@ OS_PENDING_INTERVAL = int(os.environ.get("XL1_OS_PENDING_INTERVAL", "900"))
 # field. One scan of a wide window, so it runs far slower than the heartbeat.
 PEERS_URL = os.environ.get("XL1_PEERS_URL", "http://127.0.0.1:8090/peers")
 PEERS_WINDOW = int(os.environ.get("XL1_PEERS_WINDOW", "1000"))
+
+# How many producers the field list may carry. A SAFETY VALVE, not a display
+# choice: the page is meant to show every active producer, so this only exists
+# so an unbounded field cannot grow the heartbeat without limit. peer_count
+# always reports the true total, so a truncated list can say it was truncated
+# rather than quietly presenting itself as the whole field.
+MAX_FIELD_ROWS = int(os.environ.get("XL1_MAX_FIELD_ROWS", "100"))
 PEERS_INTERVAL = int(os.environ.get("XL1_PEERS_INTERVAL", "3600"))
 LOG_TAIL_MAX_CHARS = 300
 
@@ -1668,10 +1675,21 @@ def fetch_peers(name):
     three other producers and alarming against ten. The share, and whether the
     share moved, is what makes a quiet day readable.
 
-    Only aggregates are sent. The other producers' addresses stay on this
-    machine for the same reason ours does -- they are public on the chain, but
-    a dashboard has no need to hold a list of them, and not collecting is
-    simpler than deciding later who may read it.
+    The field is now sent in full: address and block count per producer, so the
+    public page can draw the standings. This REVERSES the rule that used to sit
+    here -- "a dashboard has no need to hold a list of them, and not collecting
+    is simpler than deciding later who may read it" -- which was good reasoning
+    and was overridden deliberately on 2026-09-06.
+
+    What makes that defensible: these addresses are already public on chain, and
+    already published by at least one other operator's dashboard. What it costs:
+    this machine now holds a list about other people's machines, and "simpler
+    not to collect it" was a real argument that no longer applies. If the
+    standings are ever dropped from the page, drop this too rather than leaving
+    it gathering.
+
+    Capped at MAX_FIELD_ROWS. The window is the node's own choice and a large
+    field would otherwise grow the heartbeat without bound.
 
     No predicted share is computed. Blocks are not handed out in proportion to
     balance -- measured over 1000 blocks, a 10x balance spread produced a 2x
@@ -1757,6 +1775,23 @@ def fetch_peers(name):
                 "median": round(
                     shares[mid] if len(shares) % 2 else (shares[mid - 1] + shares[mid]) / 2, 2),
                 "top3": round(sum(shares[:3]), 2),
+                # Biggest first, so the table reads as a ranking without the
+                # page having to sort it. Rows whose count is not a number are
+                # skipped rather than raising -- the same rule the shares above
+                # follow, and for the same reason: one malformed entry in
+                # somebody else's row must not cost us the whole reading.
+                "producers": [
+                    {"address": str(p.get("address", "")).lower(),
+                     "blocks": p["blocks"],
+                     "share": round(100.0 * p["blocks"] / total, 2)}
+                    for p in sorted(
+                        (q for q in producers
+                         if isinstance(q, dict)
+                         and isinstance(q.get("blocks"), (int, float))
+                         and not isinstance(q.get("blocks"), bool)
+                         and q.get("address")),
+                        key=lambda q: q["blocks"], reverse=True)[:MAX_FIELD_ROWS]
+                ],
             }
     except (TypeError, ValueError, ZeroDivisionError):
         shape = None
@@ -2966,6 +3001,7 @@ def collect():
     if peer_field:
         payload["field_leader_share"] = peer_field.get("leader")
         payload["field_median_share"] = peer_field.get("median")
+        payload["field_producers"] = peer_field.get("producers")
         payload["field_top3_share"] = peer_field.get("top3")
     _degraded_note(degraded, "peers",
                    bool(PEERS_URL) and bool(name) and peer_count is None)

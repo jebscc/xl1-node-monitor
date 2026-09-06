@@ -487,6 +487,10 @@ REPORTED_FIELDS = {
     # against: 10% is most of a chain in a field of thirty and half the
     # leader's take in a field of four, and a share alone cannot say which.
     "field_leader_share", "field_median_share", "field_top3_share",
+    # The field itself, address and block count per producer, so the public
+    # standings can be drawn. Collected since 1.37.0; see fetch_peers for why
+    # that reverses an earlier rule rather than merely extending it.
+    "field_producers",
     # container
     "container_status", "container_started_at", "container_error", "exit_code",
     "exited_at", "health_status", "image", "restart_count", "running",
@@ -1975,18 +1979,46 @@ def test_the_middle_producer_is_not_the_average_one(monkeypatch):
     assert field["median"] < mean, "the median has been replaced by a mean"
 
 
-def test_the_shape_carries_no_addresses(monkeypatch):
-    """The reason has not changed: a dashboard has no need for a list of them.
+def test_the_field_now_carries_addresses_and_says_so(monkeypatch):
+    """Reversed on 2026-09-06. This asserted the exact opposite.
 
-    Shape is not identity. None of these figures says WHO, and a change that
-    started sending one would fail here rather than on somebody's panel.
+    The old rule -- "a dashboard has no need for a list of them" -- was not
+    wrong, and the failure of THIS test is what a reviewer should see if the
+    standings are ever quietly dropped from the page while the collecting
+    carries on. The addresses are public on chain and already published by
+    another operator; holding them here is still a choice that was made, not a
+    detail that happened.
     """
     _stub_peers(monkeypatch, _peers_body(50, 25, 15, 10))
     _, _, _, field = agent.fetch_peers("xl1-producer")
-    flat = json.dumps(field).lower()
-    assert "0x" not in flat and "address" not in flat, field
-    assert set(field) == {"leader", "median", "top3"}, field
+    assert set(field) == {"leader", "median", "top3", "producers"}, field
+    rows = field["producers"]
+    assert [r["blocks"] for r in rows] == sorted(
+        (r["blocks"] for r in rows), reverse=True), "the table must arrive ranked"
+    assert all(r["address"] == r["address"].lower() for r in rows)
+    assert abs(sum(r["share"] for r in rows) - 100.0) < 0.5
 
+
+def test_the_field_list_is_capped(monkeypatch):
+    """The window is this node's choice; the size of the field is not. An
+    uncapped list grows the heartbeat with somebody else's network."""
+    monkeypatch.setattr(agent, "MAX_FIELD_ROWS", 3)
+    _stub_peers(monkeypatch, _peers_body(50, 25, 15, 10))
+    _, _, _, field = agent.fetch_peers("xl1-producer")
+    assert len(field["producers"]) == 3
+    # The cap must not distort the aggregates, which are of the WHOLE field.
+    assert field["top3"] == 90.0
+
+
+def test_one_malformed_row_does_not_cost_the_whole_field(monkeypatch):
+    """Same rule the shares already followed: somebody else's bad row must not
+    take away our own reading."""
+    body = _peers_body(50, 25, 15, 10)
+    body["producers"][1]["blocks"] = "twenty-five"
+    _stub_peers(monkeypatch, body)
+    count, share, _, field = agent.fetch_peers("xl1-producer")
+    assert count == 4 and share is not None
+    assert all(isinstance(r["blocks"], (int, float)) for r in field["producers"])
 
 def test_a_field_smaller_than_three_still_has_a_top_three(monkeypatch):
     # sum() of a short slice is the whole field, which is the right answer:

@@ -471,6 +471,10 @@ REPORTED_FIELDS = {
     # be: that is the operator's choice of wallet, not a fact about the node.
     "producer_address",
     "os_updates", "os_security_updates", "os_apt_age_hours", "os_reboot_required",
+    # What stands between this machine and the network. Nested, and
+    # owner-only on the receiver: "sshd takes passwords and nothing is
+    # firewalled" is not a sentence to publish next to a map pin.
+    "security",
     "producer_balance_symbol", "producer_balance_raw",
     # stake held against this producer on the backing EVM, and the minimum,
     # both raw -- reported without a verdict about whether it is enough
@@ -1666,6 +1670,12 @@ def test_a_healthy_agent_reports_an_empty_list(monkeypatch, tmp_path):
     # A blind agent is not a healthy one until every reader is working, and apt
     # was the reader still left blind here.
     monkeypatch.setattr(agent, "read_os_updates", lambda: (0, 0, 1.0, False))
+    # Same reason as apt above. None of the security readers can answer on a
+    # test runner -- no ufw unit, no docker, no sshd -- and a reader that
+    # could not run is exactly what degraded is for, so a healthy agent has
+    # to be given a working one.
+    monkeypatch.setattr(agent, "read_security_posture",
+                        lambda: {"firewall": True, "exposed_ports": []})
     payload = agent.collect()
     assert payload["agent_degraded"] == [], payload["agent_degraded"]
 
@@ -3093,3 +3103,155 @@ def test_the_first_anchor_does_not_wait_for_the_host_to_be_an_hour_old(monkeypat
 
     agent.attest("xl1-producer", {})
     assert calls, "a node that just booted must still attest"
+
+
+# ---------------------------------------------------------------- security ---
+# The firewall does not cover a published container port. Docker writes its own
+# iptables rules, so the containment for the anchor service is its 127.0.0.1
+# bind address and not ufw -- and nothing measured that, so a second container
+# or a dropped bind prefix would put a port on the network while every visible
+# signal still said the firewall was on.
+
+def test_a_loopback_publish_is_not_exposed(monkeypatch):
+    monkeypatch.setattr(agent, "run", lambda *a, **k:
+                        "xl1-service-anchor-1\t127.0.0.1:8090->8090/tcp")
+    assert agent._exposed_ports() == []
+
+
+def test_a_publish_to_every_interface_is_exposed(monkeypatch):
+    monkeypatch.setattr(agent, "run", lambda *a, **k:
+                        "xl1-service-anchor-1\t0.0.0.0:8090->8090/tcp")
+    assert agent._exposed_ports() == ["xl1-service-anchor-1 0.0.0.0:8090->8090/tcp"]
+
+
+def test_an_ipv6_publish_is_not_read_as_loopback(monkeypatch):
+    """Splitting the host side on the FIRST colon returns "" for every v6
+    mapping, which then matches nothing and is quietly called contained. The
+    port is on the network and the panel says it is not."""
+    monkeypatch.setattr(agent, "run", lambda *a, **k: "svc\t:::8090->8090/tcp")
+    assert agent._exposed_ports() == ["svc :::8090->8090/tcp"]
+
+
+def test_an_ipv6_loopback_publish_is_contained(monkeypatch):
+    """The case that decides how the host side is split. `[::1]:8090` has three
+    colons, so taking the part before the FIRST one gives "[" -- which matches
+    no loopback form and reports a contained port as exposed. The port before
+    the LAST colon is the only split that survives IPv6."""
+    monkeypatch.setattr(agent, "run", lambda *a, **k: "svc	[::1]:8090->8090/tcp")
+    assert agent._exposed_ports() == []
+
+
+def test_a_container_port_that_is_not_published_is_not_exposed(monkeypatch):
+    """`8090/tcp` with no arrow is reachable only inside the container."""
+    monkeypatch.setattr(agent, "run", lambda *a, **k: "xl1-producer\t8090/tcp")
+    assert agent._exposed_ports() == []
+
+
+def test_docker_that_will_not_answer_is_not_an_empty_list(monkeypatch):
+    """Empty means "nothing is exposed", which is a finding. None means nobody
+    looked. Collapsing them reports a machine as contained on the strength of a
+    command that failed."""
+    monkeypatch.setattr(agent, "run", lambda *a, **k: None)
+    assert agent._exposed_ports() is None
+
+
+def test_a_disabled_firewall_is_false_not_missing(monkeypatch):
+    """`systemctl is-active` exits non-zero when inactive and run() returns
+    None on any non-zero exit, so asking that way reports a disabled firewall
+    as an unreadable one. `show` always exits 0 and puts the answer in stdout."""
+    monkeypatch.setattr(agent, "run", lambda *a, **k:
+                        "LoadState=loaded\nActiveState=inactive")
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: [])
+    monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
+    monkeypatch.setattr(agent, "_auto_updates", lambda: None)
+    assert agent.read_security_posture()["firewall"] is False
+
+
+def test_ufw_not_installed_is_not_protected(monkeypatch):
+    monkeypatch.setattr(agent, "run", lambda *a, **k:
+                        "LoadState=not-found\nActiveState=inactive")
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: [])
+    monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
+    monkeypatch.setattr(agent, "_auto_updates", lambda: None)
+    assert agent.read_security_posture()["firewall"] is False
+
+
+def test_nothing_readable_at_all_is_a_failed_reader(monkeypatch):
+    """Not a secure machine. The caller marks the reader degraded on None, and
+    an empty dict would instead be drawn as a clean bill of health."""
+    monkeypatch.setattr(agent, "run", lambda *a, **k: None)
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: None)
+    monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
+    monkeypatch.setattr(agent, "_auto_updates", lambda: None)
+    assert agent.read_security_posture() is None
+
+
+def test_a_dropin_beats_the_main_sshd_config(tmp_path, monkeypatch):
+    """sshd takes the FIRST value it sees, and Debian puts the Include at the
+    top of the main file -- so a drop-in wins over the line below it. Reading
+    the main file alone gets this backwards on the systems that use drop-ins,
+    which is most current Raspberry Pi OS installs."""
+    etc = tmp_path / "ssh"
+    (etc / "sshd_config.d").mkdir(parents=True)
+    (etc / "sshd_config").write_text("PasswordAuthentication no\n")
+    (etc / "sshd_config.d" / "50-cloud.conf").write_text("PasswordAuthentication yes\n")
+    monkeypatch.setattr(agent.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(agent.os, "listdir", lambda p: ["50-cloud.conf"])
+    real_open = open
+    def fake_open(path, *a, **k):
+        name = str(path).replace("\\", "/").split("/etc/ssh/")[-1]
+        return real_open(str(etc / name), *a, **k)
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert agent._ssh_password_auth() is True
+
+
+def test_sshd_saying_nothing_means_passwords_are_accepted(tmp_path, monkeypatch):
+    """Unset is sshd's default of yes. Reporting "no" for a file that simply
+    does not mention it is the most dangerous way to be wrong here."""
+    cfg = tmp_path / "sshd_config"
+    cfg.write_text("# nothing about passwords\nPort 22\n")
+    monkeypatch.setattr(agent.os.path, "exists", lambda p: p == "/etc/ssh/sshd_config")
+    monkeypatch.setattr(agent.os, "listdir", lambda p: (_ for _ in ()).throw(OSError()))
+    real_open = open
+    monkeypatch.setattr("builtins.open", lambda p, *a, **k: real_open(str(cfg), *a, **k))
+    assert agent._ssh_password_auth() is True
+
+
+# The shape the node ACTUALLY serves, captured from a running producer on
+# 2026-09-05 rather than imagined. The stage timings are nested under
+# "timings"; only "counts" sits at the top level.
+#
+# The fixture above this was written flat, so it passed while the real reading
+# returned nothing at all: every timing missed, head_p50_ms absent, read_statz
+# returning None, and the Latency tile therefore blank on both panels for as
+# long as anyone had been looking at it. Nothing said so, because a shape this
+# does not recognise is indistinguishable here from a node that will not answer.
+STATZ_REAL = json.dumps({
+    "actor": "producer",
+    "actorStartedAt": "2026-09-05T23:13:14.674Z",
+    "counts": {"blockProductionChecks": 7, "concurrentChecksSkipped": 0,
+               "rejectedPublishes": 0},
+    "timings": {
+        "headFetch": {"count": 7, "minMs": 181, "p50Ms": 194, "p95Ms": 320},
+        "productionCycle": {"p50Ms": 511, "p95Ms": 668},
+        "blockProduction": {"p50Ms": 317},
+        "mempoolPendingTransactionsFetch": {"p50Ms": 133},
+        "mempoolPendingBlocksFetch": {"p50Ms": 141},
+        "mempoolSubmitBlock": {"p50Ms": 205},
+    },
+})
+
+
+def test_it_reads_the_shape_the_node_actually_serves(monkeypatch):
+    _stub_run(monkeypatch, [("statz", STATZ_REAL)])
+    got = agent.read_statz("xl1-producer")
+    assert got is not None, "the real document read as nothing at all"
+    assert got["head_p50_ms"] == 194
+    assert got["head_min_ms"] == 181
+    assert got["samples"] == 7
+    assert got["cycle_p50_ms"] == 511
+    assert got["build_ms"] == 317
+    assert got["submit_ms"] == 205
+    # counts stay at the top level in the same document, so both roots have to
+    # be handled -- getting one right is what hid this.
+    assert got["publishes_rejected"] == 0

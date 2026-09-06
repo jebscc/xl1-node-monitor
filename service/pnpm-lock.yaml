@@ -18,29 +18,29 @@ importers:
         specifier: 8.2.0
         version: 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
       '@xylabs/assert':
-        specifier: 5.0.102
-        version: 5.0.102
+        specifier: 8.0.2
+        version: 8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)
       '@xylabs/delay':
-        specifier: 5.0.102
-        version: 5.0.102
+        specifier: 8.0.2
+        version: 8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)
       '@xylabs/typeof':
-        specifier: 5.0.102
-        version: 5.0.102
+        specifier: 8.0.2
+        version: 8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)
       '@xyo-network/account-model':
-        specifier: 5.3.30
-        version: 5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(@xyo-network/previous-hash-store-model@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)))(ethers@6.17.0)
+        specifier: 7.0.15
+        version: 7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
       '@xyo-network/payload-builder':
-        specifier: 5.3.30
-        version: 5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(@xyo-network/hash@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(@xyo-network/wasm@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)))(debug@4.4.3)(observable-fns@0.6.1))(zod@4.5.4)
+        specifier: 7.0.15
+        version: 7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
       '@xyo-network/payload-model':
-        specifier: 5.3.30
-        version: 5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(zod@4.5.4)
+        specifier: 7.0.15
+        version: 7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
       '@xyo-network/sdk':
         specifier: 7.4.0
         version: 7.4.0(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4)
       '@xyo-network/xl1-protocol':
-        specifier: 5.5.2
-        version: 5.5.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.0(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4))(ajv@8.20.0)(zod@4.5.4)
+        specifier: 5.5.3
+        version: 5.5.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.0(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4))(ajv@8.20.0)(zod@4.5.4)
       '@xyo-network/xl1-sdk':
         specifier: 5.5.3
         version: 5.5.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.0(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4))(ajv@8.20.0)(async-mutex@0.5.0)(ethers@6.17.0)(typescript@5.6.3)(zod@4.5.4)
@@ -76,6 +76,18 @@ packages:
     resolution: {integrity: sha512-H25R3yRb6BjgoemEgW3qlRA6t6YdDRb08MIHQbH0G6+kFJNdvlFZbUKLz5MNnpPezAAJ48XTF1mhw3cykbJVXQ==}
     engines: {node: '>=18'}
 
+  '@ariestools/sdk@8.0.8':
+    resolution: {integrity: sha512-FbSvAqOV5pLf0DO5KPAX9bAB+RwS5PekY5EIq5LUt1w87OmEe9bNQujVv2jSCUU0rBm9mzC+OiRa1sKoEZrXTg==}
+    engines: {node: '>=18.17.1'}
+    peerDependencies:
+      '@opentelemetry/api': ^1.9.1
+      zod: ^4.4.3
+    peerDependenciesMeta:
+      '@opentelemetry/api':
+        optional: true
+      zod:
+        optional: true
+
   '@ariestools/sdk@8.1.9':
     resolution: {integrity: sha512-FNTqeT80qO5W3WmObM1OR7rQ+4FkULy/xQYBVShl7p7gg+SnbKKgDy23kkfvpCMiyW13Me9kykA0DPy/UnU+og==}
     engines: {node: '>=18.17.1'}
@@ -107,6 +119,12 @@ packages:
     engines: {node: '>=18'}
     peerDependencies:
       '@opentelemetry/api': ^1.9
+
+  '@ariestools/threads@8.0.8':
+    resolution: {integrity: sha512-9i2oe4Otg+q2ZWlV4YOBfSJcCoErtWtJdO57IQZkaBEwya++ZlHCLtyl9nGR0LJv/jC1mcQ+ElKK/yAO2/DUGw==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      observable-fns: ^0.6.1
 
   '@ariestools/threads@8.1.9':
     resolution: {integrity: sha512-1khQcDswVQtUgCvXZRi4LgaBigZNU7jyaK4kM6vno2DrI7HdhA7BB9kBmVLNZkUqePpGUIBNvIal9Ba3rEI8Mg==}
@@ -329,6 +347,10 @@ packages:
     resolution: {integrity: sha512-5yb2gMI1BDm0JybZezeoX/3XhPDOtTbcFvpTXM9kxsoZjPZFh4XciqRbpD6N86HYZqWDhEaKUDuOyR0sQHEjMA==}
     engines: {node: '>=12.0.0'}
 
+  '@metamask/safe-event-emitter@3.1.3':
+    resolution: {integrity: sha512-Pnl74ukgoOkSItBRmZ9nnhdBbRtBI1ZvpeYjKNgxjVzDWa/AtruKZc+7LjfZ0iO8iYqh7Ts3bPs2Gu7M2hSf7g==}
+    engines: {node: '>=12.0.0'}
+
   '@metamask/scure-bip39@2.1.1':
     resolution: {integrity: sha512-1K8aBsAqr6+8jWhguVl06n8e+zjV9sUnys+5PLyVU4mb8LbulQ60F6cq7iQys3xX/yCwKt1+7c7j2nuTEpW+ZQ==}
     engines: {node: ^16.20 || ^18.16 || >=20}
@@ -345,8 +367,16 @@ packages:
     resolution: {integrity: sha512-dtw3Kb0SwYpFfKrdTeFF0k0N9GLZ48sT6idGqk5lGriLCz120zxwgSbFyuHLA1XhFVvlYXoTf8wrPVffEZcVZg==}
     engines: {node: ^18.18 || ^20.14 || >=22}
 
-  '@noble/ciphers@2.3.0':
-    resolution: {integrity: sha512-Clu/xdfgVTf9o7ngLOURaxePwR0j8sjclKEtVij10/jGulwFsPWCvvRgG/XjUVf8Nei+jLG6uwyXzUTGY1DQrw==}
+  '@metamask/utils@11.12.1':
+    resolution: {integrity: sha512-X97J5AEcaKDTIAfKb4X93ZTLfvOahzDVadlveQW+7OZ7yhXjMxXoFmhX2d9UKv48iS2Dxq9kbGJ1lUfphu9ebQ==}
+    engines: {node: ^18.18 || ^20.14 || >=22}
+
+  '@noble/ciphers@2.2.0':
+    resolution: {integrity: sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/ciphers@2.4.0':
+    resolution: {integrity: sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==}
     engines: {node: '>= 20.19.0'}
 
   '@noble/curves@1.2.0':
@@ -355,12 +385,20 @@ packages:
   '@noble/curves@1.4.2':
     resolution: {integrity: sha512-TavHr8qycMChk8UwMld0ZDRvatedkzWfH8IiaeGCfymOP5i0hSCozz9vHOL0nkwk7HRMlFnAiKpS2jrUmSybcw==}
 
-  '@noble/curves@2.3.0':
-    resolution: {integrity: sha512-v7cY+4oWYPQszRj6ZFGzTVL7uP2TaLo1xMhWHzYC5wj0ZhOXQ5x+sBre8rF3hi8cAoi0bh1qXoovoOkdFtvqEg==}
+  '@noble/curves@2.2.0':
+    resolution: {integrity: sha512-T/BoHgFXirb0ENSPBquzX0rcjXeM6Lo892a2jlYJkqk83LqZx0l1Of7DzlKJ6jkpvMrkHSnAcgb5JegL8SeIkQ==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
     engines: {node: '>= 20.19.0'}
 
   '@noble/hashes@1.3.2':
     resolution: {integrity: sha512-MVC8EAQp7MvEcm30KWENFjgR+Mkmf+D189XJTkFIlwohU5hcBbn1ZkKq7KVTi2Hme3PMGF390DaL52beVrIihQ==}
+    engines: {node: '>= 16'}
+
+  '@noble/hashes@1.3.3':
+    resolution: {integrity: sha512-V7/fPHgl+jsVPXqqeOzT8egNj2iBIVt+ECeMMG8TdcnTikP3oaBtUVqpT/gYCR68aEBJSF+XbYUxStjbFMqIIA==}
     engines: {node: '>= 16'}
 
   '@noble/hashes@1.4.0':
@@ -371,12 +409,24 @@ packages:
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
 
+  '@noble/hashes@2.2.0':
+    resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
+    engines: {node: '>= 20.19.0'}
+
   '@noble/hashes@2.3.0':
     resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
     engines: {node: '>= 20.19.0'}
 
-  '@noble/post-quantum@0.7.0':
-    resolution: {integrity: sha512-IH2tpuGV4vBMdpCCua2BN7EuUICtmGp6DlBMNBYAYcL6QQ7eHt85GjLyD7ZT6Qx/xgIPIMqsSLDGvYqOm8Vqag==}
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/post-quantum@0.6.1':
+    resolution: {integrity: sha512-+pormrDZwjRw05U8ADK4JpHejo87+gBd+muRBB/ozztH5yhDLMDF4jHQWN3NQQAsu1zBNPWTG0ZwVI0CR29H0A==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/post-quantum@0.7.1':
+    resolution: {integrity: sha512-+P9981IiAnVh+rmcubozzVwrEy3XsN/tMhTnvsjV9VDaYpOnNCqWqKo2FLWxbu92YHfjGIlE5XnW175UK+ln+Q==}
     engines: {node: '>= 20.19.0'}
 
   '@opentelemetry/api@1.9.1':
@@ -417,8 +467,8 @@ packages:
   '@scure/base@1.2.6':
     resolution: {integrity: sha512-g/nm5FgUa//MCj1gV09zTJTaM6KBAHqLN907YVQqf7zC49+DcO4B1so4ZX07Ef10Twr6nuqYEH9GEggFXA4Fmg==}
 
-  '@scure/base@2.0.0':
-    resolution: {integrity: sha512-3E1kpuZginKkek01ovG8krQ0Z44E3DHPjc5S2rjJw9lZn3KSQOs8S7wqikF/AH7iRanHypj85uGyxk0XAyC37w==}
+  '@scure/base@2.2.0':
+    resolution: {integrity: sha512-b8XEupJibegiXV+tDUseI8oLQc8ei3d/4Jkb2RpbHh3MfE054ov3uIz2dhFkB3FI8iwYkEh0gGCApkrYggkPNg==}
 
   '@scure/base@2.3.0':
     resolution: {integrity: sha512-NsG6Y03tY6R5BUis4FdVtHVkur0U6FOzskgs9ZXNl78CUc9fkZ78HmENUle1nSOkCasDmbubmWD9qwB7mm4PZA==}
@@ -428,6 +478,9 @@ packages:
 
   '@scure/bip39@1.3.0':
     resolution: {integrity: sha512-disdg7gHuTDZtY+ZdkmLpPCk7fxZSu3gBiEGuoC1XYxv9cGx3Z6cpTggCgW6odSOOIXCiDjuGejW+aJKCY/pIQ==}
+
+  '@scure/bip39@2.2.0':
+    resolution: {integrity: sha512-T/Bj/YvYMNkIPq6EENO6/rcs2e7qTNuyoUXf0KBFDmp0ZDu0H2X4Lq6yC3i0c8PcWkov5EbW+yQZZbdMmk154A==}
 
   '@scure/bip39@2.3.0':
     resolution: {integrity: sha512-qdyWuxoYwi3+YmqIsfkpz1I029m980WkVPilj+kG7VxSm+gKQ2BmQru3nv3LbMtpSUXuyZwdFT65JkpKu5OHOQ==}
@@ -450,264 +503,142 @@ packages:
   '@types/node@22.7.5':
     resolution: {integrity: sha512-jML7s2NAzMWc//QSJ1a3prpk78cOPchGvXJsC3C6R6PSMoooztvRVQEz89gmBTBY1SPMaqo5teB4uNHPdetShQ==}
 
-  '@xylabs/api@5.0.102':
-    resolution: {integrity: sha512-ZvpAc+wp65EFpRzUdFcKpSg7GZC/Wy61O6Tdac0oPS47oz7NPudgj+OJlf9JWihDQ5pZ4Ll5aprx4mPlpMG0nQ==}
+  '@xylabs/assert@8.0.2':
+    resolution: {integrity: sha512-CEz6EivWl9uvWuD1b9E7k9psdrYorPLUIELhkVJrVQcK5IDFVdGc9aPrZ7zUu8zfaE3qcJfJddX+VP0sFqJypw==}
     engines: {node: '>=18'}
+    deprecated: Use @ariestools/sdk/assert instead. @xylabs/assert is a compatibility shim only and will not receive further updates.
     peerDependencies:
-      pako: '>=2.1.0 <2.2'
+      '@opentelemetry/api': ^1.9.1
+      '@opentelemetry/sdk-trace-base': ^2.9.0
+      async-mutex: ^0.5.0
+      zod: ^4.4.3
 
-  '@xylabs/array@5.0.102':
-    resolution: {integrity: sha512-H4ZpFj1PNvSRqhhI/xSqX/UEHV8uy4ik3LcKfXRB0+aH1BvbhYPbNkHnEVSoLbU1eF+z/MJ00EZWBymQVYucsg==}
+  '@xylabs/delay@8.0.2':
+    resolution: {integrity: sha512-yU0wrxIilvxEa46hC8kBnEYc8wudlb/w6+SiKzjUiT3m2imp6wT4/mrH4pP5zf6OEDTRmcvX39dirBy35LeExQ==}
     engines: {node: '>=18'}
-
-  '@xylabs/arraybuffer@5.0.102':
-    resolution: {integrity: sha512-Mt24NC2T28msrYLNmkSYoq1N1ibspyYG4+RJlLDWHUp6sA2MXiGI7ojmwRXJog1q6BIXqOkmhGXGq/vVD5g6tQ==}
-    engines: {node: '>=18'}
+    deprecated: Use @ariestools/sdk/delay instead. @xylabs/delay is a compatibility shim only and will not receive further updates.
     peerDependencies:
-      zod: '>=4.4.3 <5'
+      '@opentelemetry/api': ^1.9.1
+      '@opentelemetry/sdk-trace-base': ^2.9.0
+      async-mutex: ^0.5.0
+      zod: ^4.4.3
 
-  '@xylabs/assert@5.0.102':
-    resolution: {integrity: sha512-9eHxlzjGj9rqQjg2qubgg77IhCfrFbONxw3HRbTp0EXFD3jf4y+OrrHByvhU4RD+SToqfZznCobmzG/9N8gVEg==}
+  '@xylabs/typeof@8.0.2':
+    resolution: {integrity: sha512-T5fg+pDx9pvyGzq7IIXYXTe/oLZpCICOBEooE4z1aK+ksTflvpD6aNFWhAYthPRw2fjkVEAOMOPD4kJ0kzUYCw==}
     engines: {node: '>=18'}
-
-  '@xylabs/axios@5.0.102':
-    resolution: {integrity: sha512-Xkvowa5r5tY3g/64ZM8gySKD9WGg7v9p8BqtKlmmO6XN9D2AnVDmf4erByKVQoU334+vqvCFD4kqFUYTbtZeUQ==}
-    engines: {node: '>=18'}
+    deprecated: Use @ariestools/sdk/typeof instead. @xylabs/typeof is a compatibility shim only and will not receive further updates.
     peerDependencies:
-      axios: '>=1.16.0 <2'
-      pako: '>=2.1.0 <2.2'
-    peerDependenciesMeta:
-      axios:
-        optional: true
+      '@opentelemetry/api': ^1.9.1
+      '@opentelemetry/sdk-trace-base': ^2.9.0
+      async-mutex: ^0.5.0
+      zod: ^4.4.3
 
-  '@xylabs/base@5.0.102':
-    resolution: {integrity: sha512-V0AoMSvBNJnepZAmx0mFAQtLXxIR2IvwVCJbhwY5lEnVIpWXlwKOIaCHcbwb0yOhLkyWiI8kXYnRrBaQ8sUavA==}
-    engines: {node: '>=18'}
+  '@xyo-network/account-model@7.0.15':
+    resolution: {integrity: sha512-JvicS8vpvGObzg+Zmu/WPK8omfZw9IERd/fZS3H0UIW0P8Wc+ZZY7CV7XX9afkBLMU5PO8ZA7dyttAhTYgq6gg==}
+    engines: {node: ^24}
+    deprecated: Use @xyo-network/sdk-protocol/account-model instead. Replace @xyo-network/account-model with @xyo-network/sdk-protocol/account-model. This package is a compatibility shim only and will not receive further updates.
     peerDependencies:
-      '@opentelemetry/api': '>=1.9.1 <2'
-      zod: '>=4.4.3 <5'
+      '@ariestools/sdk': ^8.0.2
+      '@ariestools/threads': ^8.0.2
+      '@bitauth/libauth': ^3.0.0
+      '@metamask/providers': ^22.1.1
+      '@noble/post-quantum': ^0.6.1
+      '@opentelemetry/api': ^1.9.1
+      '@opentelemetry/sdk-trace-base': ^2.9.0
+      '@scure/base': ^2.2.0
+      '@scure/bip39': ^2.2.0
+      ajv: ^8.20.0
+      async-mutex: ^0.5.0
+      debug: ^4.4.3
+      ethers: ^6.17.0
+      hash-wasm: ^4.12.0
+      idb: ^8.0.3
+      observable-fns: ^0.6.1
+      webextension-polyfill: ^0.12.0
+      zod: ^4.4.3
 
-  '@xylabs/bignumber@5.0.102':
-    resolution: {integrity: sha512-eOfvTQHmS2TolA8xCx2yvP/N7c+Z40LQiu/6VDtKlHt9ypHCgO3DGFOokPZsEdikUG/74xR9sTOmu2rAH8jaXw==}
-    engines: {node: '>=18'}
+  '@xyo-network/payload-builder@7.0.15':
+    resolution: {integrity: sha512-K13rqblnm7duj5me9/0KEuI6dyF9naNuQLrh3irPcLRp+1RsMf+Z2RGx3LkdnXi4lIITg3YNNMlnoBaR3cbOvw==}
+    engines: {node: ^24}
+    deprecated: Use @xyo-network/sdk-protocol/payload-builder instead. Replace @xyo-network/payload-builder with @xyo-network/sdk-protocol/payload-builder. This package is a compatibility shim only and will not receive further updates.
     peerDependencies:
-      bn.js: '>=5.2.3 <5.3'
+      '@ariestools/sdk': ^8.0.2
+      '@ariestools/threads': ^8.0.2
+      '@bitauth/libauth': ^3.0.0
+      '@metamask/providers': ^22.1.1
+      '@noble/post-quantum': ^0.6.1
+      '@opentelemetry/api': ^1.9.1
+      '@opentelemetry/sdk-trace-base': ^2.9.0
+      '@scure/base': ^2.2.0
+      '@scure/bip39': ^2.2.0
+      ajv: ^8.20.0
+      async-mutex: ^0.5.0
+      debug: ^4.4.3
+      ethers: ^6.17.0
+      hash-wasm: ^4.12.0
+      idb: ^8.0.3
+      observable-fns: ^0.6.1
+      webextension-polyfill: ^0.12.0
+      zod: ^4.4.3
 
-  '@xylabs/buffer@5.0.102':
-    resolution: {integrity: sha512-qSK0ZZUPqj9+emhY+RHeeFrc4RDgT60jQxq3R2cY6bdEoqgmOoC5CA625w57QzJbUYx26UR5l5FBjMPesUeRUA==}
-    engines: {node: '>=18'}
+  '@xyo-network/payload-model@7.0.15':
+    resolution: {integrity: sha512-AYgS8Dt/eAJ2Bp4DsvOkYI8611Gw/Z4qhqZQBT+1TXmj7AqEYxbHCUx4VXcSBvJAWJghuvGbeeNZPIMdv+A1jg==}
+    engines: {node: ^24}
+    deprecated: Use @xyo-network/sdk-protocol/payload-model instead. Replace @xyo-network/payload-model with @xyo-network/sdk-protocol/payload-model. This package is a compatibility shim only and will not receive further updates.
     peerDependencies:
-      buffer: '>=6.0.3 <6.1'
+      '@ariestools/sdk': ^8.0.2
+      '@ariestools/threads': ^8.0.2
+      '@bitauth/libauth': ^3.0.0
+      '@metamask/providers': ^22.1.1
+      '@noble/post-quantum': ^0.6.1
+      '@opentelemetry/api': ^1.9.1
+      '@opentelemetry/sdk-trace-base': ^2.9.0
+      '@scure/base': ^2.2.0
+      '@scure/bip39': ^2.2.0
+      ajv: ^8.20.0
+      async-mutex: ^0.5.0
+      debug: ^4.4.3
+      ethers: ^6.17.0
+      hash-wasm: ^4.12.0
+      idb: ^8.0.3
+      observable-fns: ^0.6.1
+      webextension-polyfill: ^0.12.0
+      zod: ^4.4.3
 
-  '@xylabs/creatable@5.0.102':
-    resolution: {integrity: sha512-uqARBO7xSGwp82/O9PpjqnDWDCAUuINwt0/BxzPAqwlFS+oyGYG9S3LqZbXzKbBRF6pzrgjaGoWSscakYSfbFg==}
-    engines: {node: '>=18'}
+  '@xyo-network/sdk-protocol-core@7.0.16':
+    resolution: {integrity: sha512-hbVP86Wfr5XW+9bAfkE1MbNaWcAs49edDOFMZ3E5/C1px8mZLodONwdneofErZfH0pVg/69CSOhQFBCZNzEIEw==}
+    engines: {node: ^24}
     peerDependencies:
-      '@opentelemetry/api': '>=1.9.1 <2'
-      async-mutex: '>=0.5.0 <0.6'
-      zod: '>=4.4.3 <5'
+      '@ariestools/sdk': ^8.0.4
+      '@opentelemetry/api': ^1.9.1
+      '@opentelemetry/sdk-trace-base': ^2.9.0
+      ajv: ^8.20.0
+      ethers: ^6.17.0
+      observable-fns: ^0.6.1
+      webextension-polyfill: ^0.12.0
+      zod: ^4.4.3
 
-  '@xylabs/decimal-precision@5.0.102':
-    resolution: {integrity: sha512-t9yyf86+Z0HkebJ7i8EdLBs+Xtj4eRNO7SLUhDxveaAbMFy2+XaJtxVTsB5xGKEiOr0qgIv6Z1BwUOBrW6zpRw==}
-    engines: {node: '>=18'}
-
-  '@xylabs/delay@5.0.102':
-    resolution: {integrity: sha512-YbiO8TaJe4s3B8n+xh+lMUQm8akVDmQeQgtSgwZnDLjjt7HWm6aZh1FrhD6c/jcSuIloWcHoUTlbZoOujvmF/Q==}
-    engines: {node: '>=18'}
-
-  '@xylabs/enum@5.0.102':
-    resolution: {integrity: sha512-vXDmxwSIov+o+NWYEZXxRevkekJCw68ZHD6cn7A0Z4jV+3Uk/mgMgF/a31vHMzm+gTxxl5f3HwFfDJNKtGxbzw==}
-    engines: {node: '>=18'}
-
-  '@xylabs/error@5.0.102':
-    resolution: {integrity: sha512-5KuJnY/CbdKvqjK5/gAdyXfH6k/x/0CQUWaVCscB9g4XNkzGh0qL5rO3ma21Cw2BEMvnEM7G0B1B62Fr/Oq3JQ==}
-    engines: {node: '>=18'}
-
-  '@xylabs/eth-address@5.0.102':
-    resolution: {integrity: sha512-e/q4CvebToaNgYowO09SZCWSqHS8edBIJhiCTyXAXsHbLMF3x8olLyzD2EB3jF6ZhSHVB+x3TD5DvnYPc/rUhQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      ethers: '>=6.16.0 <7'
-
-  '@xylabs/events@5.0.102':
-    resolution: {integrity: sha512-gW8ruZm+1xZPzLveMFGfiyD9COnNxmrBypVOPjuYoTsgvc51dQ1UU0vMHwMPXpi8ejfTa03t/0DyUHOl1y+Dyw==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      '@opentelemetry/api': '>=1.9.1 <2'
-      zod: '>=4.4.3 <5'
-
-  '@xylabs/exists@5.0.102':
-    resolution: {integrity: sha512-Ge/FDnYvY4Ou6SRupjOOjYPAlZu2/XFjbwhOrFVruttMAeqOwGkbS0hVKDowvyqscMxzym/eg2X+60rWdP3MwQ==}
-    engines: {node: '>=18'}
-
-  '@xylabs/fetch@5.0.102':
-    resolution: {integrity: sha512-YFjYkp5WGxv3NJXJ6Wk5Jpw1abj8kG8Njy2pSMmWBVmWt1b3w1ZKjovBnNNSFClt+nWfz/rU6D04cPZPVMxaoA==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      pako: '>=2.1.0 <2.2'
-
-  '@xylabs/forget@5.0.102':
-    resolution: {integrity: sha512-n7wxNaXyOIBBZ55zkE7SS6NvzkjhzmUTOtCRkHED/sO8uOnxyr2V6eOdFxl/3hR+TU82m4w0ud4sk8LBFRD5ag==}
-    engines: {node: '>=18'}
-
-  '@xylabs/function-name@5.0.102':
-    resolution: {integrity: sha512-uM+kFOUxLrouIio/1vP/0KzOyG3RNEUdNHsvm0EZy2c+iOtPS+1fZl8eKOaBr3kUcrUWQ7nUEnRJrPasPSyE+Q==}
-    engines: {node: '>=18'}
-
-  '@xylabs/hex@5.0.102':
-    resolution: {integrity: sha512-/BqMitTfiC2rGL+O+OI9KWJWfqK1tFeeAqawuqsq2X+mSZVNfwI5yCdcd9CSDzVgB94615F20jh4T+f7zxNmmA==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: '>=4.4.3 <5'
-
-  '@xylabs/logger@5.0.102':
-    resolution: {integrity: sha512-82MV2dOYHcK+sWB+iDM+JQBa+9/T8+zUpyX0fxAX7ACnzYxdtRYQ/UuDqGSJ/7bMLeA7+Qu5QyHcYgCO3oV78g==}
-    engines: {node: '>=18'}
-
-  '@xylabs/object-model@5.0.102':
-    resolution: {integrity: sha512-LDM1ITLu/mTf2i7p2x4b7s+hLIXh5vPdbrB3IdFG1EARPvAkJGTynSlKKDIPHGZafm4PdXNdw8eUrv0eI9qjXQ==}
-    engines: {node: '>=18'}
-
-  '@xylabs/object@5.0.102':
-    resolution: {integrity: sha512-AorGBQN6DQ8kP0ZVH2ClIJ3ETPVbwxE/seimid2ekcc9janj6hCJi6lfH4IZYV9MUYZnVuCsxpz8KHUImm8IIQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: '>=4.4.3 <5'
-
-  '@xylabs/platform@5.0.102':
-    resolution: {integrity: sha512-9Www68eH9Vqhnh27ewYhGWGazHekkriLMPxxtrxlw8tTtJyCMZtB/lNEsQN+S8OsmNbsggYewjTqpltdPD1bWQ==}
-    engines: {node: '>=18'}
-
-  '@xylabs/profile@5.0.102':
-    resolution: {integrity: sha512-XhnbZEt6aeTLG3/ryYcC/JjKTy5DJpUAL0v8ajCCCxQokXXzidINY4P32gBa2Y3IfCdIFOP+L5e5WRQ0VQ9brA==}
-    engines: {node: '>=18'}
-
-  '@xylabs/promise@5.0.102':
-    resolution: {integrity: sha512-3Zwzma/la94zIC464GeLon2FV9U1CJW8ityanh4DUoRMTnBWekekXfHYKITVkcQO83UjHDhcYwhScXw3i+0VhA==}
-    engines: {node: '>=18'}
-
-  '@xylabs/retry@5.0.102':
-    resolution: {integrity: sha512-YKljDy7o5H8yH4HG3T5v7Ui/XxaIHud1fx+OquyPtrBwjbUPSdwZ1TwfiDhFpitb21djL4oqt0wXWAB6D4v+TQ==}
-    engines: {node: '>=18'}
-
-  '@xylabs/sdk-js@5.0.102':
-    resolution: {integrity: sha512-LiwUglYPTwQNV2kc4XaYsD/d6ztZUIMet7fCpqodvSWmtbJNPSuQtzeMnWfXPsvxMw6fbl4nZp4gCcn8mSwUzg==}
-    engines: {node: '>=18.17.1'}
-    peerDependencies:
-      '@opentelemetry/api': '>=1.9.1 <2'
-      '@opentelemetry/sdk-trace-base': '>=2.7.1 <3'
-      async-mutex: '>=0.5.0 <0.6'
-      axios: '>=1.16.0 <2'
-      bn.js: '>=5.2.3 <5.3'
-      buffer: '>=6.0.3 <6.1'
-      chalk: '>=5.6.2 <5.7'
-      ethers: '>=6.16.0 <7'
-      pako: '>=2.1.0 <2.2'
-      zod: '>=4.4.3 <5'
-    peerDependenciesMeta:
-      axios:
-        optional: true
-
-  '@xylabs/set@5.0.102':
-    resolution: {integrity: sha512-K3OPZXuyvFVThnxnwOZg4IqsG17lSI9f21kL+Zif4FE7dVifeO23SO46Cc5Acz5UI60SIcXKBuGw6m5IhQ38oA==}
-    engines: {node: '>=18'}
-
-  '@xylabs/static-implements@5.0.102':
-    resolution: {integrity: sha512-ifY9LtG082lwj/rnv0SZit8yRv89UyIBC0EO0F97aACtf9FQr8OCMSj3PE6TfoeMEuPSOciWxHtXdmdmb4WTlw==}
-    engines: {node: '>=18'}
-
-  '@xylabs/storage@5.0.102':
-    resolution: {integrity: sha512-k6JNBc48hbnthw2m5IrY8CMZSrnNIU3b0K2rqUcHNxDZ1S/ZyFTLvG8uqzeciXL3DRUJuCG7IVucSxgdmY8QYw==}
-    engines: {node: '>=18'}
-
-  '@xylabs/telemetry-exporter@5.0.102':
-    resolution: {integrity: sha512-wZWl/7Xtdzw6YykqpqIyy9wtgFkbT/OSmS+H+OMz2nOG4Y2JSb8favLJMlv1nKLKs9XDK0+nt8bsIKxxDcviMA==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      '@opentelemetry/api': '>=1.9.1 <2'
-      '@opentelemetry/sdk-trace-base': '>=2.7.1 <3'
-      chalk: '>=5.6.2 <5.7'
-
-  '@xylabs/telemetry@5.0.102':
-    resolution: {integrity: sha512-13Cxf3X4Xy235yzCCmNSNleWMgIsEiK0EaEi54v/XswYWaCwsI0+OO0akN6+itChGLqQ/DdlpVDye9ojBOZLBw==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      '@opentelemetry/api': '>=1.9.1 <2'
-
-  '@xylabs/threads@5.0.102':
-    resolution: {integrity: sha512-ggzA3n6t++u2dBhoxbykLR6odwqvKv49L5MB14CE6+iiaTLckHMi9ISipRnc2Cm/5jqdqbdStyE4hUFZB+tYkA==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      debug: '>=4.4.3 <4.5'
-      observable-fns: '>=0.6.1 <0.7'
-
-  '@xylabs/timer@5.0.102':
-    resolution: {integrity: sha512-2D45nbe4Vzr/NyBCMpovIE1up8M4HHJ1UyyQrTInHdhSBZxZePOLIAKgc4xry0SmTduibPyubYggv3pJh2YYLQ==}
-    engines: {node: '>=18'}
-
-  '@xylabs/typeof@5.0.102':
-    resolution: {integrity: sha512-CpRHP5Dd2oLONURQzj0DPIYXVzyqbqZ67OiSYMbihleW7Ar61p9nPF5kKg16w+81ecJX0cMzEr25phu3y8bmEQ==}
-    engines: {node: '>=18'}
-
-  '@xylabs/url@5.0.102':
-    resolution: {integrity: sha512-yl3qVjScqy9WEuK7Hu7BmU3m+Pn+b31wFOHAIs9W+5Mcm276YYpNQivqnf+88FgW6d9tqKvGTST1yAPupnF3PQ==}
-    engines: {node: '>=18'}
-
-  '@xylabs/zod@5.0.102':
-    resolution: {integrity: sha512-gAe+6bKP+IaAV6cFY42acWkd80RbXr6ddVoqxTs3TdDDUOumjkgvNZaJnkirbxnBUID54DIBkDsj6ucNWVybEg==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: '>=4.4.3 <5'
-
-  '@xyo-network/account-model@5.3.30':
-    resolution: {integrity: sha512-oUKkWNm49MzXYWpursQJ19CVWromMLam4Ulm1kD9tsYKyUfIPGMx8t3H30b053kxxLbUj+PAU6ESUJ0BBGi+7g==}
-    peerDependencies:
-      '@xylabs/sdk-js': ^5
-      '@xyo-network/previous-hash-store-model': ~5.3.30
-
-  '@xyo-network/data@5.3.30':
-    resolution: {integrity: sha512-t6cHbWhsfu4z39XVB6WCsDkHs1M3nB4T+km88xbPUmwor8qeV+zpwW3vku52JFr5tMYzUhNwOA3DC/MdurRfpg==}
-    peerDependencies:
-      '@xylabs/sdk-js': ^5
-      ethers: ^6
-    peerDependenciesMeta:
-      ethers:
-        optional: true
-
-  '@xyo-network/hash@5.3.30':
-    resolution: {integrity: sha512-mboge7CXaJx66X+y7dHAr8pv4DaptGpiW6R8Nwm5IN35L1OKnfRNvSjyRxTujuNAFGlQKtDa1B2C8GtRNk3/4A==}
-    peerDependencies:
-      '@xylabs/sdk-js': ^5
-      '@xyo-network/wasm': ~5.3.30
-
-  '@xyo-network/key-model@5.3.30':
-    resolution: {integrity: sha512-AYlOZdqz6FahgOYIPy/BdNuH6JZCXdCVRbSpB1XagKu9LPevWP7o2p+MwcFnaaXvVMDaMNNsvaJhg+OIsW/8Mw==}
-
-  '@xyo-network/payload-builder@5.3.30':
-    resolution: {integrity: sha512-QjNXBdPZZEyRqrMREiFNW8HASr83Bvt1vAEwTgLnVkmHHDFl/Lp2qwteFctVnq/xcmcYpWLXUMZkT7lYstlV/Q==}
-    peerDependencies:
-      '@xylabs/sdk-js': ^5
-      '@xyo-network/hash': ~5.3.30
-
-  '@xyo-network/payload-model@5.3.30':
-    resolution: {integrity: sha512-CR0liAIAhxLenJU79t+9QneWufx90EOOtTLfU7YwEzoduMt6i1zAaJB+g8dI3ggmBCuYYxCAaQdt1BoAkUrhhA==}
-    peerDependencies:
-      '@xylabs/sdk-js': ^5
-      zod: ^4
-
-  '@xyo-network/previous-hash-store-model@5.3.30':
-    resolution: {integrity: sha512-V1MrgFzVGIPBk6lnnf5p5noryKtmfrrciMk1xu1UK1xyQy487W906MUQN++MP9bs8Suaz1Swd0jK1w7Kn0uC5g==}
-    peerDependencies:
-      '@xylabs/sdk-js': ^5
-
-  '@xyo-network/sdk-protocol-core@7.3.2':
-    resolution: {integrity: sha512-Zu4UUolN2QlVmd7x+OLKVdEr0Le/yeAq3ZUM8vo0aUW44bsW9rhs60h0qryw2aN75m6QBf2kNf8GW6qWQoUwUg==}
+  '@xyo-network/sdk-protocol-core@7.3.3':
+    resolution: {integrity: sha512-6/DpB+d5452PxiRn3vF6Bq6pubz8oAZ0W0d9ttMS448XE7Z0tCVHU7spfB+jYdhMGab4diFLjMaQZsxaNq1Wjg==}
     engines: {node: ^24}
     peerDependencies:
       '@ariestools/sdk': ^8.1
       ajv: ^8.20
       ethers: ^6.17
       zod: ^4.4
+
+  '@xyo-network/sdk-protocol@7.0.16':
+    resolution: {integrity: sha512-U3msPW9JY6rDAAas9BDFWkMV1n4Q9dnndGu/xwt07l2a5DFCVaNpUtCjeZZ2DkI8XlwHEwGbXUm2j3dANbCkJA==}
+    engines: {node: ^24}
+    peerDependencies:
+      '@ariestools/sdk': ^8.0.4
+      '@opentelemetry/api': ^1.9.1
+      '@opentelemetry/sdk-trace-base': ^2.9.0
+      ajv: ^8.20.0
+      ethers: ^6.17.0
+      observable-fns: ^0.6.1
+      webextension-polyfill: ^0.12.0
+      zod: ^4.4.3
 
   '@xyo-network/sdk-protocol@7.3.2':
     resolution: {integrity: sha512-4tmUbQjbfg0w65vWf4TVUApazeXtawDWIE8Phrdozmfi6dtk9KGqUPx14VCXVmai/maA/eK1Az0TyMzCMMFQRQ==}
@@ -724,21 +655,6 @@ packages:
 
   '@xyo-network/typechain@4.2.0':
     resolution: {integrity: sha512-ssrTBBTCP/JhSmckDZtK0QBV9cj6VwoBRNxvikTVwY3YB0m8Tv+YZptHhDXcOnHbJTdm75u4s7Ye+dfcHB+Qfg==}
-
-  '@xyo-network/wasm@5.3.30':
-    resolution: {integrity: sha512-ih8JewE+3zC3ePwe9bk1gOOLnKEVgTz1EGhcCEyLdptSVV6uyk+G2iKnmuoPhlNBZw3NUR0+seBmQoxr7pValA==}
-    peerDependencies:
-      '@xylabs/sdk-js': ^5
-
-  '@xyo-network/xl1-protocol@5.5.2':
-    resolution: {integrity: sha512-Ndt3LBO8N0ZaSi+yqIyvbbFudqq6i96yBoEHaKzLqcF4zmu5hvp4Q5uhANoHIABgUkMPD2KS69p58V3G/5zPqw==}
-    engines: {node: '>=22.3'}
-    peerDependencies:
-      '@ariestools/sdk': ^8.1
-      '@opentelemetry/api': ^1.9
-      '@xyo-network/sdk': ^7.4
-      ajv: ^8.20
-      zod: ^4.5
 
   '@xyo-network/xl1-protocol@5.5.3':
     resolution: {integrity: sha512-sLkSx+Sj5bxMWLG+oY9MDRzCspNnlljwkPECynmZJKtEDxLpwCNOjOf8sVFh93bX/XOEQn1OnCq3s8M7MqR93Q==}
@@ -768,10 +684,6 @@ packages:
   aes-js@4.0.0-beta.5:
     resolution: {integrity: sha512-G965FqalsNyrPqgEGON7nIx1e/OVENSgiEIzyC63haUMuvNnwIgIjMs52hlTCKhkBny7A2ORNlfY9Zu+jmGk1Q==}
 
-  agent-base@6.0.2:
-    resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
-    engines: {node: '>= 6.0.0'}
-
   ajv@8.20.0:
     resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
 
@@ -792,24 +704,9 @@ packages:
   async-mutex@0.5.0:
     resolution: {integrity: sha512-1A94B18jkJ3DYq284ohPxoXbfTA5HsQ7/Mf4DEhcyLx3Bz27Rh59iScbB6EPiP+B+joue6YCxcMXSbFC1tZKwA==}
 
-  asynckit@0.4.0:
-    resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
-
-  axios@1.19.0:
-    resolution: {integrity: sha512-ht/iuYZXEjFxLH/Hkezgd7m6JKlHHXEUSneaDz8uZe1Gj5QZtCnpyDsckvAiEnT89OEbCLmnte4R4sn7P0EKFw==}
-
-  base64-js@1.5.1:
-    resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
-
-  bn.js@5.2.5:
-    resolution: {integrity: sha512-Vq886eXykuP5E6HcKSSStP3bJgrE6In5WKxVUvJ8XGpWWYs2xZHWqUwzCtGgEtBcxyd57KBFDPFoUfNzdaHCNg==}
-
   body-parser@1.20.6:
     resolution: {integrity: sha512-p5tAzS57i5MV9fZFDj9LeIiTZEufbSe2eDozP+ElheSUq1m74CRq1jI4mYNDdVs9vQztXFLuk/Gd6BWTdwRJ5g==}
     engines: {node: '>= 0.8', npm: 1.2.8000 || >= 1.4.16}
-
-  buffer@6.0.3:
-    resolution: {integrity: sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==}
 
   bytes@3.1.2:
     resolution: {integrity: sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==}
@@ -823,10 +720,6 @@ packages:
     resolution: {integrity: sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg==}
     engines: {node: '>= 0.4'}
 
-  chalk@5.6.2:
-    resolution: {integrity: sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA==}
-    engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
-
   cliui@8.0.1:
     resolution: {integrity: sha512-BSeNnyus75C4//NQ9gQt1/csTXyo/8Sb+afLAkzAptFuMsod9HFokGNudZpi/oQV73hnVK+sR+5PVRMd+Dr7YQ==}
     engines: {node: '>=12'}
@@ -837,10 +730,6 @@ packages:
 
   color-name@1.1.4:
     resolution: {integrity: sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==}
-
-  combined-stream@1.0.8:
-    resolution: {integrity: sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==}
-    engines: {node: '>= 0.8'}
 
   content-disposition@0.5.4:
     resolution: {integrity: sha512-FveZTNuGw04cxlAiWbzi6zTAL/lhehaWbTtgluJh4/E95DqMwTmha3KZN1aAWA8cFIhHzMZUvLevkw5Rqk+tSQ==}
@@ -885,10 +774,6 @@ packages:
 
   deep-freeze-strict@1.1.1:
     resolution: {integrity: sha512-QemROZMM2IvhAcCFvahdX2Vbm4S/txeq5rFYU9fh4mQP79WTMW5c/HkQ2ICl1zuzcDZdPZ6zarDxQeQMsVYoNA==}
-
-  delayed-stream@1.0.0:
-    resolution: {integrity: sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==}
-    engines: {node: '>=0.4.0'}
 
   depd@2.0.0:
     resolution: {integrity: sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==}
@@ -939,10 +824,6 @@ packages:
     resolution: {integrity: sha512-HWcBoN6NileqtSydK2FqHbS/LoDd2pqrnQHLyJzBj4kOp/ky2MWMN694xOfkK8/SnUsW2DH7EfyVlydKCsm1Zw==}
     engines: {node: '>= 0.4'}
 
-  es-set-tostringtag@2.1.0:
-    resolution: {integrity: sha512-j6vWzfrGVfyXxge+O0x5sh6cvxAog0a/4Rdd2K36zCMV5eJ+/+tOAngRO8cODMNWbVRdVlmGZQL2YS3yR8bIUA==}
-    engines: {node: '>= 0.4'}
-
   esbuild@0.28.2:
     resolution: {integrity: sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==}
     engines: {node: '>=18'}
@@ -989,19 +870,6 @@ packages:
     resolution: {integrity: sha512-6BN9trH7bp3qvnrRyzsBz+g3lZxTNZTbVO2EV1CS0WIcDbawYVdYvGflME/9QP0h0pYlCDBCTjYa9nZzMDpyxQ==}
     engines: {node: '>= 0.8'}
 
-  follow-redirects@1.16.0:
-    resolution: {integrity: sha512-y5rN/uOsadFT/JfYwhxRS5R7Qce+g3zG97+JrtFZlC9klX/W5hD7iiLzScI4nZqUS7DNUdhPgw4xI8W2LuXlUw==}
-    engines: {node: '>=4.0'}
-    peerDependencies:
-      debug: '*'
-    peerDependenciesMeta:
-      debug:
-        optional: true
-
-  form-data@4.0.6:
-    resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
-    engines: {node: '>= 6'}
-
   forwarded@0.2.0:
     resolution: {integrity: sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow==}
     engines: {node: '>= 0.6'}
@@ -1038,10 +906,6 @@ packages:
     resolution: {integrity: sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==}
     engines: {node: '>= 0.4'}
 
-  has-tostringtag@1.0.2:
-    resolution: {integrity: sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==}
-    engines: {node: '>= 0.4'}
-
   hash-wasm@4.12.0:
     resolution: {integrity: sha512-+/2B2rYLb48I/evdOIhP+K/DD2ca2fgBjp6O+GBEnCDk2e4rpeXIK8GvIyRPjTezgmWn9gmKwkQjjx6BtqDHVQ==}
 
@@ -1057,19 +921,12 @@ packages:
     resolution: {integrity: sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==}
     engines: {node: '>= 0.8'}
 
-  https-proxy-agent@5.0.1:
-    resolution: {integrity: sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==}
-    engines: {node: '>= 6'}
-
   iconv-lite@0.4.24:
     resolution: {integrity: sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==}
     engines: {node: '>=0.10.0'}
 
   idb@8.0.3:
     resolution: {integrity: sha512-LtwtVyVYO5BqRvcsKuB2iUMnHwPVByPCXFXOpuU96IZPPoPN6xjOGxZQ74pgSVVLQWtUOYgyeL4GE98BY5D3wg==}
-
-  ieee754@1.2.1:
-    resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
 
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
@@ -1159,9 +1016,6 @@ packages:
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
 
-  pako@2.1.0:
-    resolution: {integrity: sha512-w+eufiZ1WuJYgPXbV/PO3NCMEc3xqylkKHzp8bxp1uW4qaSNQUkwmLLEc3kKsfz8lpV1F8Ht3U1Cm+9Srog2ug==}
-
   parseurl@1.3.3:
     resolution: {integrity: sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==}
     engines: {node: '>= 0.8'}
@@ -1176,10 +1030,6 @@ packages:
   proxy-addr@2.0.7:
     resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
     engines: {node: '>= 0.10'}
-
-  proxy-from-env@2.1.0:
-    resolution: {integrity: sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==}
-    engines: {node: '>=10'}
 
   qs@6.16.0:
     resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
@@ -1316,9 +1166,6 @@ packages:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
 
-  wasm-feature-detect@1.8.0:
-    resolution: {integrity: sha512-zksaLKM2fVlnB5jQQDqKXXwYHLQUVH9es+5TOOHwGOVJOCeRBCiPjwSg+3tN2AdTCzjgli4jijCH290kXb/zWQ==}
-
   webextension-polyfill@0.12.0:
     resolution: {integrity: sha512-97TBmpoWJEE+3nFBQ4VocyCdLKfw54rFaJ6EVQYLBCXqCIpLSZkwGgASpv4oPt9gdKCJ80RJlcmNzNn008Ag6Q==}
 
@@ -1372,6 +1219,13 @@ snapshots:
       - supports-color
       - typescript
 
+  '@ariestools/sdk@8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)':
+    dependencies:
+      async-mutex: 0.5.0
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.1
+      zod: 4.5.4
+
   '@ariestools/sdk@8.1.9(@opentelemetry/api@1.9.1)(zod@4.5.4)':
     dependencies:
       '@ariestools/telemetry': 8.1.9(@opentelemetry/api@1.9.1)
@@ -1395,6 +1249,16 @@ snapshots:
   '@ariestools/telemetry@8.2.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
+
+  '@ariestools/threads@8.0.8(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)':
+    dependencies:
+      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      debug: 4.4.3
+      observable-fns: 0.6.1
+    transitivePeerDependencies:
+      - '@opentelemetry/api'
+      - supports-color
+      - zod
 
   '@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)':
     dependencies:
@@ -1522,8 +1386,8 @@ snapshots:
   '@metamask/json-rpc-middleware-stream@8.0.8(typescript@5.6.3)':
     dependencies:
       '@metamask/json-rpc-engine': 10.5.0(typescript@5.6.3)
-      '@metamask/safe-event-emitter': 3.1.2
-      '@metamask/utils': 11.12.0
+      '@metamask/safe-event-emitter': 3.1.3
+      '@metamask/utils': 11.12.1
       readable-stream: 3.6.2
     transitivePeerDependencies:
       - supports-color
@@ -1555,8 +1419,8 @@ snapshots:
       '@metamask/json-rpc-middleware-stream': 8.0.8(typescript@5.6.3)
       '@metamask/object-multiplex': 2.1.0
       '@metamask/rpc-errors': 7.0.3
-      '@metamask/safe-event-emitter': 3.1.2
-      '@metamask/utils': 11.12.0
+      '@metamask/safe-event-emitter': 3.1.3
+      '@metamask/utils': 11.12.1
       detect-browser: 5.3.0
       extension-port-stream: 4.2.0(webextension-polyfill@0.12.0)
       fast-deep-equal: 3.1.3
@@ -1576,9 +1440,11 @@ snapshots:
 
   '@metamask/safe-event-emitter@3.1.2': {}
 
+  '@metamask/safe-event-emitter@3.1.3': {}
+
   '@metamask/scure-bip39@2.1.1':
     dependencies:
-      '@noble/hashes': 1.3.2
+      '@noble/hashes': 1.3.3
       '@scure/base': 1.1.9
 
   '@metamask/superstruct@3.4.1': {}
@@ -1616,7 +1482,26 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@noble/ciphers@2.3.0': {}
+  '@metamask/utils@11.12.1':
+    dependencies:
+      '@ethereumjs/tx': 4.2.0
+      '@metamask/scure-bip39': 2.1.1
+      '@metamask/superstruct': 3.4.1
+      '@noble/hashes': 1.8.0
+      '@scure/base': 1.2.6
+      '@types/debug': 4.1.13
+      '@types/lodash': 4.17.25
+      debug: 4.4.3
+      lodash: 4.18.1
+      pony-cause: 2.1.11
+      semver: 7.8.5
+      uuid: 9.0.1
+    transitivePeerDependencies:
+      - supports-color
+
+  '@noble/ciphers@2.2.0': {}
+
+  '@noble/ciphers@2.4.0': {}
 
   '@noble/curves@1.2.0':
     dependencies:
@@ -1626,23 +1511,39 @@ snapshots:
     dependencies:
       '@noble/hashes': 1.4.0
 
-  '@noble/curves@2.3.0':
+  '@noble/curves@2.2.0':
     dependencies:
-      '@noble/hashes': 2.3.0
+      '@noble/hashes': 2.2.0
+
+  '@noble/curves@2.4.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
 
   '@noble/hashes@1.3.2': {}
+
+  '@noble/hashes@1.3.3': {}
 
   '@noble/hashes@1.4.0': {}
 
   '@noble/hashes@1.8.0': {}
 
+  '@noble/hashes@2.2.0': {}
+
   '@noble/hashes@2.3.0': {}
 
-  '@noble/post-quantum@0.7.0':
+  '@noble/hashes@2.4.0': {}
+
+  '@noble/post-quantum@0.6.1':
     dependencies:
-      '@noble/ciphers': 2.3.0
-      '@noble/curves': 2.3.0
-      '@noble/hashes': 2.3.0
+      '@noble/ciphers': 2.2.0
+      '@noble/curves': 2.2.0
+      '@noble/hashes': 2.2.0
+
+  '@noble/post-quantum@0.7.1':
+    dependencies:
+      '@noble/ciphers': 2.4.0
+      '@noble/curves': 2.4.0
+      '@noble/hashes': 2.4.0
 
   '@opentelemetry/api@1.9.1': {}
 
@@ -1678,7 +1579,7 @@ snapshots:
 
   '@scure/base@1.2.6': {}
 
-  '@scure/base@2.0.0': {}
+  '@scure/base@2.2.0': {}
 
   '@scure/base@2.3.0': {}
 
@@ -1692,6 +1593,11 @@ snapshots:
     dependencies:
       '@noble/hashes': 1.4.0
       '@scure/base': 1.1.9
+
+  '@scure/bip39@2.2.0':
+    dependencies:
+      '@noble/hashes': 2.2.0
+      '@scure/base': 2.2.0
 
   '@scure/bip39@2.3.0':
     dependencies:
@@ -1715,295 +1621,135 @@ snapshots:
     dependencies:
       undici-types: 6.19.8
 
-  '@xylabs/api@5.0.102(pako@2.1.0)':
+  '@xylabs/assert@8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)':
     dependencies:
-      '@xylabs/enum': 5.0.102
-      '@xylabs/fetch': 5.0.102(pako@2.1.0)
-      '@xylabs/typeof': 5.0.102
-      pako: 2.1.0
-
-  '@xylabs/array@5.0.102':
-    dependencies:
-      '@xylabs/exists': 5.0.102
-
-  '@xylabs/arraybuffer@5.0.102(zod@4.5.4)':
-    dependencies:
-      '@xylabs/assert': 5.0.102
-      '@xylabs/hex': 5.0.102(zod@4.5.4)
-      '@xylabs/typeof': 5.0.102
-      zod: 4.5.4
-
-  '@xylabs/assert@5.0.102': {}
-
-  '@xylabs/axios@5.0.102(axios@1.19.0(debug@4.4.3))(pako@2.1.0)':
-    dependencies:
-      pako: 2.1.0
-    optionalDependencies:
-      axios: 1.19.0(debug@4.4.3)
-
-  '@xylabs/base@5.0.102(@opentelemetry/api@1.9.1)(zod@4.5.4)':
-    dependencies:
+      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)
       '@opentelemetry/api': 1.9.1
-      '@xylabs/assert': 5.0.102
-      '@xylabs/logger': 5.0.102
-      '@xylabs/object': 5.0.102(zod@4.5.4)
-      zod: 4.5.4
-
-  '@xylabs/bignumber@5.0.102(bn.js@5.2.5)':
-    dependencies:
-      bn.js: 5.2.5
-
-  '@xylabs/buffer@5.0.102(buffer@6.0.3)':
-    dependencies:
-      buffer: 6.0.3
-
-  '@xylabs/creatable@5.0.102(@opentelemetry/api@1.9.1)(async-mutex@0.5.0)(zod@4.5.4)':
-    dependencies:
-      '@opentelemetry/api': 1.9.1
-      '@xylabs/assert': 5.0.102
-      '@xylabs/base': 5.0.102(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@xylabs/events': 5.0.102(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@xylabs/logger': 5.0.102
-      '@xylabs/promise': 5.0.102
-      '@xylabs/telemetry': 5.0.102(@opentelemetry/api@1.9.1)
-      '@xylabs/typeof': 5.0.102
+      '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
       async-mutex: 0.5.0
       zod: 4.5.4
 
-  '@xylabs/decimal-precision@5.0.102': {}
-
-  '@xylabs/delay@5.0.102':
+  '@xylabs/delay@8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)':
     dependencies:
-      '@xylabs/timer': 5.0.102
-
-  '@xylabs/enum@5.0.102': {}
-
-  '@xylabs/error@5.0.102':
-    dependencies:
-      '@xylabs/typeof': 5.0.102
-
-  '@xylabs/eth-address@5.0.102(ethers@6.17.0)':
-    dependencies:
-      '@xylabs/assert': 5.0.102
-      ethers: 6.17.0
-
-  '@xylabs/events@5.0.102(@opentelemetry/api@1.9.1)(zod@4.5.4)':
-    dependencies:
-      '@opentelemetry/api': 1.9.1
-      '@xylabs/assert': 5.0.102
-      '@xylabs/base': 5.0.102(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@xylabs/error': 5.0.102
-      '@xylabs/forget': 5.0.102
-      '@xylabs/object': 5.0.102(zod@4.5.4)
-      '@xylabs/promise': 5.0.102
-      '@xylabs/typeof': 5.0.102
-      zod: 4.5.4
-
-  '@xylabs/exists@5.0.102': {}
-
-  '@xylabs/fetch@5.0.102(pako@2.1.0)':
-    dependencies:
-      pako: 2.1.0
-
-  '@xylabs/forget@5.0.102':
-    dependencies:
-      '@xylabs/delay': 5.0.102
-      '@xylabs/logger': 5.0.102
-      '@xylabs/promise': 5.0.102
-      '@xylabs/typeof': 5.0.102
-
-  '@xylabs/function-name@5.0.102':
-    dependencies:
-      '@xylabs/error': 5.0.102
-      '@xylabs/typeof': 5.0.102
-
-  '@xylabs/hex@5.0.102(zod@4.5.4)':
-    dependencies:
-      '@xylabs/error': 5.0.102
-      '@xylabs/typeof': 5.0.102
-      zod: 4.5.4
-
-  '@xylabs/logger@5.0.102':
-    dependencies:
-      '@xylabs/enum': 5.0.102
-      '@xylabs/error': 5.0.102
-      '@xylabs/typeof': 5.0.102
-
-  '@xylabs/object-model@5.0.102':
-    dependencies:
-      '@xylabs/assert': 5.0.102
-      '@xylabs/logger': 5.0.102
-      '@xylabs/promise': 5.0.102
-      '@xylabs/typeof': 5.0.102
-
-  '@xylabs/object@5.0.102(zod@4.5.4)':
-    dependencies:
-      '@xylabs/assert': 5.0.102
-      '@xylabs/object-model': 5.0.102
-      '@xylabs/promise': 5.0.102
-      '@xylabs/typeof': 5.0.102
-      '@xylabs/zod': 5.0.102(zod@4.5.4)
-      zod: 4.5.4
-
-  '@xylabs/platform@5.0.102': {}
-
-  '@xylabs/profile@5.0.102': {}
-
-  '@xylabs/promise@5.0.102':
-    dependencies:
-      '@xylabs/typeof': 5.0.102
-
-  '@xylabs/retry@5.0.102':
-    dependencies:
-      '@xylabs/delay': 5.0.102
-      '@xylabs/promise': 5.0.102
-
-  '@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)':
-    dependencies:
+      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
-      '@xylabs/api': 5.0.102(pako@2.1.0)
-      '@xylabs/array': 5.0.102
-      '@xylabs/arraybuffer': 5.0.102(zod@4.5.4)
-      '@xylabs/assert': 5.0.102
-      '@xylabs/axios': 5.0.102(axios@1.19.0(debug@4.4.3))(pako@2.1.0)
-      '@xylabs/base': 5.0.102(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@xylabs/bignumber': 5.0.102(bn.js@5.2.5)
-      '@xylabs/buffer': 5.0.102(buffer@6.0.3)
-      '@xylabs/creatable': 5.0.102(@opentelemetry/api@1.9.1)(async-mutex@0.5.0)(zod@4.5.4)
-      '@xylabs/decimal-precision': 5.0.102
-      '@xylabs/delay': 5.0.102
-      '@xylabs/enum': 5.0.102
-      '@xylabs/error': 5.0.102
-      '@xylabs/eth-address': 5.0.102(ethers@6.17.0)
-      '@xylabs/events': 5.0.102(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@xylabs/exists': 5.0.102
-      '@xylabs/fetch': 5.0.102(pako@2.1.0)
-      '@xylabs/forget': 5.0.102
-      '@xylabs/function-name': 5.0.102
-      '@xylabs/hex': 5.0.102(zod@4.5.4)
-      '@xylabs/logger': 5.0.102
-      '@xylabs/object': 5.0.102(zod@4.5.4)
-      '@xylabs/platform': 5.0.102
-      '@xylabs/profile': 5.0.102
-      '@xylabs/promise': 5.0.102
-      '@xylabs/retry': 5.0.102
-      '@xylabs/set': 5.0.102
-      '@xylabs/static-implements': 5.0.102
-      '@xylabs/storage': 5.0.102
-      '@xylabs/telemetry': 5.0.102(@opentelemetry/api@1.9.1)
-      '@xylabs/telemetry-exporter': 5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(chalk@5.6.2)
-      '@xylabs/timer': 5.0.102
-      '@xylabs/typeof': 5.0.102
-      '@xylabs/url': 5.0.102
-      '@xylabs/zod': 5.0.102(zod@4.5.4)
       async-mutex: 0.5.0
-      bn.js: 5.2.5
-      buffer: 6.0.3
-      chalk: 5.6.2
-      ethers: 6.17.0
-      pako: 2.1.0
       zod: 4.5.4
-    optionalDependencies:
-      axios: 1.19.0(debug@4.4.3)
 
-  '@xylabs/set@5.0.102': {}
-
-  '@xylabs/static-implements@5.0.102': {}
-
-  '@xylabs/storage@5.0.102':
+  '@xylabs/typeof@8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)':
     dependencies:
-      '@xylabs/promise': 5.0.102
-
-  '@xylabs/telemetry-exporter@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(chalk@5.6.2)':
-    dependencies:
+      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
-      '@xylabs/logger': 5.0.102
-      chalk: 5.6.2
-
-  '@xylabs/telemetry@5.0.102(@opentelemetry/api@1.9.1)':
-    dependencies:
-      '@opentelemetry/api': 1.9.1
-      '@xylabs/logger': 5.0.102
-      '@xylabs/typeof': 5.0.102
-
-  '@xylabs/threads@5.0.102(debug@4.4.3)(observable-fns@0.6.1)':
-    dependencies:
-      '@xylabs/assert': 5.0.102
-      debug: 4.4.3
-      observable-fns: 0.6.1
-
-  '@xylabs/timer@5.0.102':
-    dependencies:
-      '@xylabs/assert': 5.0.102
-
-  '@xylabs/typeof@5.0.102': {}
-
-  '@xylabs/url@5.0.102': {}
-
-  '@xylabs/zod@5.0.102(zod@4.5.4)':
-    dependencies:
-      '@xylabs/error': 5.0.102
-      '@xylabs/typeof': 5.0.102
+      async-mutex: 0.5.0
       zod: 4.5.4
 
-  '@xyo-network/account-model@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(@xyo-network/previous-hash-store-model@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)))(ethers@6.17.0)':
-    dependencies:
-      '@xylabs/sdk-js': 5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)
-      '@xyo-network/key-model': 5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(ethers@6.17.0)
-      '@xyo-network/previous-hash-store-model': 5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))
-    transitivePeerDependencies:
-      - ethers
-
-  '@xyo-network/data@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(ethers@6.17.0)':
-    dependencies:
-      '@scure/base': 2.0.0
-      '@xylabs/sdk-js': 5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)
-    optionalDependencies:
-      ethers: 6.17.0
-
-  '@xyo-network/hash@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(@xyo-network/wasm@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)))(debug@4.4.3)(observable-fns@0.6.1)':
-    dependencies:
-      '@xylabs/sdk-js': 5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)
-      '@xylabs/threads': 5.0.102(debug@4.4.3)(observable-fns@0.6.1)
-      '@xyo-network/wasm': 5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))
-      hash-wasm: 4.12.0
-    transitivePeerDependencies:
-      - debug
-      - observable-fns
-
-  '@xyo-network/key-model@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(ethers@6.17.0)':
-    dependencies:
-      '@xyo-network/data': 5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(ethers@6.17.0)
-    transitivePeerDependencies:
-      - '@xylabs/sdk-js'
-      - ethers
-
-  '@xyo-network/payload-builder@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(@xyo-network/hash@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(@xyo-network/wasm@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)))(debug@4.4.3)(observable-fns@0.6.1))(zod@4.5.4)':
-    dependencies:
-      '@xylabs/sdk-js': 5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)
-      '@xyo-network/hash': 5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(@xyo-network/wasm@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)))(debug@4.4.3)(observable-fns@0.6.1)
-      '@xyo-network/payload-model': 5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(zod@4.5.4)
-    transitivePeerDependencies:
-      - zod
-
-  '@xyo-network/payload-model@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))(zod@4.5.4)':
-    dependencies:
-      '@xylabs/sdk-js': 5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)
-      zod: 4.5.4
-
-  '@xyo-network/previous-hash-store-model@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))':
-    dependencies:
-      '@xylabs/sdk-js': 5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)
-
-  '@xyo-network/sdk-protocol-core@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+  '@xyo-network/account-model@7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
     dependencies:
       '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
       '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
       '@bitauth/libauth': 3.0.0
       '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
-      '@noble/post-quantum': 0.7.0
+      '@noble/post-quantum': 0.7.1
+      '@opentelemetry/api': 1.9.1
+      '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
+      '@scure/base': 2.3.0
+      '@scure/bip39': 2.3.0
+      '@xyo-network/sdk-protocol': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      ajv: 8.20.0
+      async-mutex: 0.5.0
+      debug: 4.4.3
+      ethers: 6.17.0
+      hash-wasm: 4.12.0
+      idb: 8.0.3
+      observable-fns: 0.6.1
+      webextension-polyfill: 0.12.0
+      zod: 4.5.4
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
+
+  '@xyo-network/payload-builder@7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+    dependencies:
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
+      '@bitauth/libauth': 3.0.0
+      '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
+      '@noble/post-quantum': 0.7.1
+      '@opentelemetry/api': 1.9.1
+      '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
+      '@scure/base': 2.3.0
+      '@scure/bip39': 2.3.0
+      '@xyo-network/sdk-protocol': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      ajv: 8.20.0
+      async-mutex: 0.5.0
+      debug: 4.4.3
+      ethers: 6.17.0
+      hash-wasm: 4.12.0
+      idb: 8.0.3
+      observable-fns: 0.6.1
+      webextension-polyfill: 0.12.0
+      zod: 4.5.4
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
+
+  '@xyo-network/payload-model@7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+    dependencies:
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
+      '@bitauth/libauth': 3.0.0
+      '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
+      '@noble/post-quantum': 0.7.1
+      '@opentelemetry/api': 1.9.1
+      '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
+      '@scure/base': 2.3.0
+      '@scure/bip39': 2.3.0
+      '@xyo-network/sdk-protocol': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      ajv: 8.20.0
+      async-mutex: 0.5.0
+      debug: 4.4.3
+      ethers: 6.17.0
+      hash-wasm: 4.12.0
+      idb: 8.0.3
+      observable-fns: 0.6.1
+      webextension-polyfill: 0.12.0
+      zod: 4.5.4
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
+
+  '@xyo-network/sdk-protocol-core@7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+    dependencies:
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/threads': 8.0.8(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
+      '@bitauth/libauth': 3.0.0
+      '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
+      '@noble/post-quantum': 0.6.1
+      '@opentelemetry/api': 1.9.1
+      '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
+      '@scure/base': 2.2.0
+      '@scure/bip39': 2.2.0
+      ajv: 8.20.0
+      async-mutex: 0.5.0
+      ethers: 6.17.0
+      hash-wasm: 4.12.0
+      idb: 8.0.3
+      observable-fns: 0.6.1
+      webextension-polyfill: 0.12.0
+      zod: 4.5.4
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
+
+  '@xyo-network/sdk-protocol-core@7.3.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+    dependencies:
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
+      '@bitauth/libauth': 3.0.0
+      '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
+      '@noble/post-quantum': 0.7.1
       '@scure/base': 2.3.0
       '@scure/bip39': 2.3.0
       ajv: 8.20.0
@@ -2019,9 +1765,24 @@ snapshots:
       - typescript
       - webextension-polyfill
 
+  '@xyo-network/sdk-protocol@7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+    dependencies:
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@opentelemetry/api': 1.9.1
+      '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
+      '@xyo-network/sdk-protocol-core': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      ajv: 8.20.0
+      ethers: 6.17.0
+      observable-fns: 0.6.1
+      webextension-polyfill: 0.12.0
+      zod: 4.5.4
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
+
   '@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
     dependencies:
-      '@xyo-network/sdk-protocol-core': 7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      '@xyo-network/sdk-protocol-core': 7.3.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
     transitivePeerDependencies:
       - '@ariestools/sdk'
       - '@opentelemetry/api'
@@ -2044,23 +1805,6 @@ snapshots:
   '@xyo-network/typechain@4.2.0':
     dependencies:
       ethers: 6.17.0
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-
-  '@xyo-network/wasm@5.3.30(@xylabs/sdk-js@5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4))':
-    dependencies:
-      '@xylabs/sdk-js': 5.0.102(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(axios@1.19.0(debug@4.4.3))(bn.js@5.2.5)(buffer@6.0.3)(chalk@5.6.2)(ethers@6.17.0)(pako@2.1.0)(zod@4.5.4)
-      wasm-feature-detect: 1.8.0
-
-  '@xyo-network/xl1-protocol@5.5.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.0(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4))(ajv@8.20.0)(zod@4.5.4)':
-    dependencies:
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@opentelemetry/api': 1.9.1
-      '@xyo-network/sdk': 7.4.0(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4)
-      ajv: 8.20.0
-      ethers: 6.17.0
-      zod: 4.5.4
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -2106,13 +1850,6 @@ snapshots:
 
   aes-js@4.0.0-beta.5: {}
 
-  agent-base@6.0.2:
-    dependencies:
-      debug: 4.4.3
-    transitivePeerDependencies:
-      - supports-color
-    optional: true
-
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
@@ -2134,24 +1871,6 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  asynckit@0.4.0:
-    optional: true
-
-  axios@1.19.0(debug@4.4.3):
-    dependencies:
-      follow-redirects: 1.16.0(debug@4.4.3)
-      form-data: 4.0.6
-      https-proxy-agent: 5.0.1
-      proxy-from-env: 2.1.0
-    transitivePeerDependencies:
-      - debug
-      - supports-color
-    optional: true
-
-  base64-js@1.5.1: {}
-
-  bn.js@5.2.5: {}
-
   body-parser@1.20.6:
     dependencies:
       bytes: 3.1.2
@@ -2169,11 +1888,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  buffer@6.0.3:
-    dependencies:
-      base64-js: 1.5.1
-      ieee754: 1.2.1
-
   bytes@3.1.2: {}
 
   call-bind-apply-helpers@1.0.2:
@@ -2186,8 +1900,6 @@ snapshots:
       call-bind-apply-helpers: 1.0.2
       get-intrinsic: 1.3.0
 
-  chalk@5.6.2: {}
-
   cliui@8.0.1:
     dependencies:
       string-width: 4.2.3
@@ -2199,11 +1911,6 @@ snapshots:
       color-name: 1.1.4
 
   color-name@1.1.4: {}
-
-  combined-stream@1.0.8:
-    dependencies:
-      delayed-stream: 1.0.0
-    optional: true
 
   content-disposition@0.5.4:
     dependencies:
@@ -2231,9 +1938,6 @@ snapshots:
       ms: 2.1.3
 
   deep-freeze-strict@1.1.1: {}
-
-  delayed-stream@1.0.0:
-    optional: true
 
   depd@2.0.0: {}
 
@@ -2266,14 +1970,6 @@ snapshots:
   es-object-atoms@1.1.2:
     dependencies:
       es-errors: 1.3.0
-
-  es-set-tostringtag@2.1.0:
-    dependencies:
-      es-errors: 1.3.0
-      get-intrinsic: 1.3.0
-      has-tostringtag: 1.0.2
-      hasown: 2.0.4
-    optional: true
 
   esbuild@0.28.2:
     optionalDependencies:
@@ -2389,20 +2085,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  follow-redirects@1.16.0(debug@4.4.3):
-    optionalDependencies:
-      debug: 4.4.3
-    optional: true
-
-  form-data@4.0.6:
-    dependencies:
-      asynckit: 0.4.0
-      combined-stream: 1.0.8
-      es-set-tostringtag: 2.1.0
-      hasown: 2.0.4
-      mime-types: 2.1.35
-    optional: true
-
   forwarded@0.2.0: {}
 
   fresh@0.5.2: {}
@@ -2436,11 +2118,6 @@ snapshots:
 
   has-symbols@1.1.0: {}
 
-  has-tostringtag@1.0.2:
-    dependencies:
-      has-symbols: 1.1.0
-    optional: true
-
   hash-wasm@4.12.0: {}
 
   hasown@2.0.4:
@@ -2463,21 +2140,11 @@ snapshots:
       statuses: 2.0.2
       toidentifier: 1.0.1
 
-  https-proxy-agent@5.0.1:
-    dependencies:
-      agent-base: 6.0.2
-      debug: 4.4.3
-    transitivePeerDependencies:
-      - supports-color
-    optional: true
-
   iconv-lite@0.4.24:
     dependencies:
       safer-buffer: 2.1.2
 
   idb@8.0.3: {}
-
-  ieee754@1.2.1: {}
 
   inherits@2.0.4: {}
 
@@ -2535,8 +2202,6 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  pako@2.1.0: {}
-
   parseurl@1.3.3: {}
 
   path-to-regexp@0.1.13: {}
@@ -2547,9 +2212,6 @@ snapshots:
     dependencies:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
-
-  proxy-from-env@2.1.0:
-    optional: true
 
   qs@6.16.0:
     dependencies:
@@ -2690,8 +2352,6 @@ snapshots:
   uuid@9.0.1: {}
 
   vary@1.1.2: {}
-
-  wasm-feature-detect@1.8.0: {}
 
   webextension-polyfill@0.12.0: {}
 

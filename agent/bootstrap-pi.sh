@@ -1696,6 +1696,54 @@ if $SUDO docker ps --filter name=xl1-producer \
   fi
 fi
 
+
+# THE CLI IS NOT THE ONLY THING THAT GOES STALE.
+#
+# The image is BUILT FROM a recipe -- Dockerfile, entrypoint, role presets --
+# and a fix there moves nothing the CLI version can show. The two are tracked
+# separately on the panel for exactly that reason, and only one of them was
+# ever acted on here.
+#
+# What that cost: the producer-rest role landed upstream three commits ahead
+# of this machine's recipe. The panel said "3 behind", and re-running the
+# wizard -- the documented way to update a node -- offered nothing at all,
+# because the CLI matched. The role could not be reached by any supported
+# path.
+#
+# ls-remote rather than the GitHub API: no rate limit, no JSON to parse, and
+# it asks the same remote the checkout was cloned from rather than a URL
+# written down separately that could drift from it.
+#
+# Same rule as the CLI check above -- only a definite difference offers a
+# rebuild. Either end unreadable leaves a working producer alone, because a
+# GitHub outage is not a reason to tear one down.
+if [ "$PRODUCER_SKIP" = 1 ] && [ -d "$IMAGES_REPO/.git" ]; then
+  # No $SUDO on either: the checkout is the operator's own (measured at
+  # 775 jimtheexplorer, not root), the remote is public HTTPS, and both
+  # calls only read. Wrapping a read-only check in sudo would put a
+  # password prompt in the middle of the wizard for nothing -- and on a
+  # cold credential cache that is a stumble, not a formality.
+  #
+  # safe.directory is still passed, so a machine where the checkout ended
+  # up owned by someone else is answered rather than refused. If it fails
+  # anyway both values come back empty, which is the leave-it-alone case.
+  _recipe_here="$(git -C "$IMAGES_REPO" -c "safe.directory=$IMAGES_REPO" \
+        rev-parse HEAD 2>/dev/null)"
+  _recipe_up="$(git -C "$IMAGES_REPO" -c "safe.directory=$IMAGES_REPO" \
+        ls-remote origin HEAD 2>/dev/null | awk '{print $1; exit}')"
+  if [ -n "$_recipe_here" ] && [ -n "$_recipe_up" ] \
+     && [ "$_recipe_here" != "$_recipe_up" ]; then
+    warn "the image was built from an older recipe" \
+         "${_recipe_here%"${_recipe_here#???????}"} here, ${_recipe_up%"${_recipe_up#???????}"} upstream -- a Dockerfile, entrypoint or role preset has changed, and none of that moves the CLI version."
+    note "New producer roles arrive this way. The node keeps running either"
+    note "way; rebuilding is how the change reaches it."
+    if ask_yn "  Rebuild the image from the current recipe?" "y"; then
+      PRODUCER_SKIP=0
+    else
+      note "Left as it is. Re-run this when you want the update."
+    fi
+  fi
+fi
 if [ "$PRODUCER_SKIP" = 1 ]; then
   ok "the producer is already running here"
   # Adopt it, so the state file agrees from now on.

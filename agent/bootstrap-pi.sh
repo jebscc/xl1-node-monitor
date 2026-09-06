@@ -1440,7 +1440,7 @@ if have ufw; then
   # is a oneshot that applies the rules at boot and finishes, so it can sit at
   # inactive(dead) on a fully firewalled machine. ufw derives its own
   # "Status: active" from ENABLED here, and the file is 0644 so no sudo is needed.
-  _ufw_enabled="$(sed -n "s/^ENABLED[[:space:]]*=[[:space:]]*//p" /etc/ufw/ufw.conf 2>/dev/null | head -1 | tr "A-Z" "a-z" | tr -d [\"])"
+  _ufw_enabled="$(sed -n 's/^ENABLED[[:space:]]*=[[:space:]]*//p' /etc/ufw/ufw.conf 2>/dev/null | head -1 | tr 'A-Z' 'a-z' | tr -d '"')"
   if [ "$_ufw_enabled" = yes ] || [ "$_ufw_enabled" = true ] || [ "$_ufw_enabled" = 1 ]; then
     ok "firewall on: ssh and tailscale in, everything else outbound only"
   else

@@ -1788,21 +1788,56 @@ note "It is written to $PRODUCER_ENV, readable by root only, and is never"
 note "sent anywhere, never logged, and never saved with your other answers."
 printf '\n'
 
+# The shape check, in one place, because two copies of it would drift -- and
+# the copy that drifted would be the one validating a value nobody watched
+# being typed.
+#
+# Shape only. A full checksum needs the 2048-word list, and a wrong phrase
+# fails visibly at startup anyway -- this catches the typo, not the forgery.
+#
+# Taken as a function argument, which is a shell variable rather than a new
+# process, so it never reaches argv. Both readers take it on stdin.
+phrase_shape_ok() {  # phrase_shape_ok <phrase>
+  _pw="$(printf '%s' "$1" | tr -s "[:space:]" " " | tr -d "\r" | wc -w | tr -d " ")"
+  case "$_pw" in 12|15|18|21|24) : ;; *) return 1 ;; esac
+  printf '%s' "$1" | grep -q "^[a-z ]*$" || return 1
+  return 0
+}
+
+# THE PHRASE THIS NODE ALREADY PRODUCES WITH, read from its own config before
+# asking for it again.
+#
+# It lives in $PRODUCER_ENV as XL1_MNEMONIC and is handed to the container on
+# every start, so reading it back is no new exposure. TYPING it again is:
+# more keystrokes of a seed phrase, and a typo produces a different producer
+# identity on a machine that already had one.
+#
+# This block is reached on the REBUILD path -- so before this, rebuilding an
+# image to pick up a new role preset asked the operator for their wallet
+# phrase. That is the wrong price for a docker build, and it is exactly the
+# flow the recipe check above was added to make routine.
+#
+# Validated exactly like a typed one: a file is not more trustworthy than a
+# keyboard just because nobody watched it being written.
 MNEMONIC=""
+if $SUDO test -s "$PRODUCER_ENV" 2>/dev/null; then
+  MNEMONIC="$($SUDO sed -n 's/^XL1_MNEMONIC=//p' "$PRODUCER_ENV" 2>/dev/null | head -1)"
+  if [ -n "$MNEMONIC" ] && phrase_shape_ok "$MNEMONIC"; then
+    # Never the phrase, and not even its word count: this is a terminal
+    # somebody may paste a screenshot of.
+    ok "using the wallet phrase this node already produces with"
+  else
+    MNEMONIC=""
+  fi
+fi
+
 tries=0
 while [ -z "$MNEMONIC" ] && [ "$tries" -lt 5 ]; do
   tries=$((tries + 1))
   MNEMONIC="$(ask_secret "  Wallet phrase (hidden as you type)")"
-  words="$(printf '%s' "$MNEMONIC" | tr -s "[:space:]" " " | tr -d "\r" | wc -w | tr -d " ")"
-  case "$words" in
-    12|15|18|21|24) : ;;
-    *) printf '  %sThat is %s words.%s A BIP39 phrase is 12, 15, 18, 21 or 24.\n' \
-              "$Y" "${words:-0}" "$X"; MNEMONIC="" ;;
-  esac
-  # Shape only. A full checksum needs the 2048-word list, and a wrong phrase
-  # fails visibly at startup anyway -- this catches the typo, not the forgery.
-  if [ -n "$MNEMONIC" ] && printf '%s' "$MNEMONIC" | grep -qv "^[a-z ]*$"; then
-    printf '  %sThat contains something other than lowercase words.%s\n' "$Y" "$X"
+  if [ -n "$MNEMONIC" ] && ! phrase_shape_ok "$MNEMONIC"; then
+    printf '  %sThat is not a BIP39 phrase.%s 12, 15, 18, 21 or 24 lowercase words.\n' \
+           "$Y" "$X"
     MNEMONIC=""
   fi
 done

@@ -66,6 +66,28 @@ fi
 # MAX_IMAGE_AGE_DAYS -- the base image collects security patches even when the
 # CLI version does not change.
 MAX_IMAGE_AGE_DAYS="${XL1_MAX_IMAGE_AGE_DAYS:-30}"
+
+# Would `pnpm xy compile` produce something different from what is in the image?
+# True when the compiled entrypoint is missing, or any recipe source is newer
+# than it. dist/ is gitignored, so `git pull` updates src/ and leaves the last
+# build's dist/ beside it -- which is why "does dist exist?" is not the question.
+entrypoint_stale() {
+  [ -d "$REPO/src" ] || return 1
+  [ -f "$REPO/dist/node/entrypoint.mjs" ] || return 0
+  [ -n "$(find "$REPO/src" -type f -newer "$REPO/dist/node/entrypoint.mjs" -print -quit 2>/dev/null || true)" ]
+}
+# Is the IMAGE older than the entrypoint that would go into it? A separate
+# question from entrypoint_stale, and missing it left the last gap: after a
+# successful compile, dist/ was current with src/ -- so nothing needed
+# recompiling -- while the image had been built four hours EARLIER and still
+# carried the previous entrypoint. "Nothing to compile" is not "nothing to
+# build". Takes the image's build epoch as $1.
+image_behind_entrypoint() {
+  [ -f "$REPO/dist/node/entrypoint.mjs" ] || return 1
+  [ "${1:-0}" -gt 0 ] || return 1
+  [ -n "$(find "$REPO/dist/node/entrypoint.mjs" -newermt "@$1" -print -quit 2>/dev/null || true)" ]
+}
+
 if docker image inspect "xl1:$LATEST" >/dev/null 2>&1; then
   BUILT_AT="$(docker image inspect "xl1:$LATEST" --format '{{.Created}}' 2>/dev/null || true)"
   AGE_DAYS=9999
@@ -76,30 +98,29 @@ if docker image inspect "xl1:$LATEST" >/dev/null 2>&1; then
   # The CLI version and the image's age were the only two reasons to rebuild,
   # and neither notices the third: the RECIPE moving. xl1-docker-images ships
   # its own src/, so upstream can add a whole role -- producer-rest did exactly
-  # this on 2026-09-02 -- without @xyo-network/xl1-cli changing at all. The
-  # version is identical, the image is a day old, and this said "nothing to do"
-  # while the running image had no idea the role existed.
+  # this on 2026-09-02 -- without @xyo-network/xl1-cli changing at all.
   #
-  # That is what made the fix further down unreachable: a compile gate that
-  # correctly detects a stale dist/ is worth nothing behind an outer gate that
-  # exits before reaching it. Both had to move.
+  # The test is "would the entrypoint be recompiled?", NOT "is src newer than
+  # the image?". The second sounds equivalent and is not: this machine had an
+  # image built 21:02:59 from a checkout whose src/ was 21:02:xx, so src was
+  # fractionally OLDER than the image -- while the entrypoint inside it came
+  # from an Aug 21 dist/. An image can be newer than the source and still be
+  # built from something older than both. Build time cannot see that; dist/ can.
   #
-  # Compared against the image's build time rather than dist/'s, because that
-  # is the artifact actually being judged -- dist/ can be newer than the image
-  # and still not be IN it.
-  SRC_NEWER=""
-  if [ -d "$REPO/src" ] && [ "${BUILT_EPOCH:-0}" -gt 0 ]; then
-    SRC_NEWER="$(find "$REPO/src" -type f -newermt "@$BUILT_EPOCH" -print -quit 2>/dev/null || true)"
-  fi
-  if [ "$AGE_DAYS" -lt "$MAX_IMAGE_AGE_DAYS" ] && [ -z "$SRC_NEWER" ]; then
+  # Sharing one condition with the compile step below is the point. Two gates
+  # answering the same question separately is how the first fix ended up
+  # correct and unreachable.
+  if entrypoint_stale; then
+    log "the image recipe changed since xl1:$LATEST was built; rebuilding"
+  elif image_behind_entrypoint "${BUILT_EPOCH:-0}"; then
+    log "xl1:$LATEST predates the compiled entrypoint; rebuilding"
+  elif [ "$AGE_DAYS" -lt "$MAX_IMAGE_AGE_DAYS" ]; then
     log "xl1:$LATEST built ${AGE_DAYS}d ago; nothing to do"
     [ "$RUNNING" = "$LATEST" ] || log "NOTE: built but not promoted -- running $RUNNING, available $LATEST"
     exit 0
+  else
+    log "xl1:$LATEST is ${AGE_DAYS}d old; rebuilding for base image patches"
   fi
-  if [ -n "$SRC_NEWER" ]; then
-    log "the image recipe changed since xl1:$LATEST was built (${SRC_NEWER##*/}); rebuilding"
-  fi
-  log "xl1:$LATEST is ${AGE_DAYS}d old; rebuilding for base image patches"
 fi
 
 # --- source ----------------------------------------------------------------
@@ -179,10 +200,9 @@ log "building xl1:$LATEST (this takes several minutes on a Pi)"
 #
 # `-nt` is false when the timestamps are equal, which is the safe direction: a
 # needless recompile costs minutes, a skipped one ships the wrong binary.
-NEWEST_SRC="$(find "$REPO/src" -type f -newer "$REPO/dist/node/entrypoint.mjs" -print -quit 2>/dev/null || true)"
-if [ ! -f "$REPO/dist/node/entrypoint.mjs" ] || [ -n "$NEWEST_SRC" ]; then
+if entrypoint_stale; then
   if [ -f "$REPO/dist/node/entrypoint.mjs" ]; then
-    log "compiling the image entrypoint (src/ is newer than dist/, e.g. ${NEWEST_SRC##*/})"
+    log "compiling the image entrypoint (src/ is newer than dist/)"
     # Removed rather than overwritten, so a compile that half-succeeds cannot
     # leave a mix of old and new modules that the next run judges up to date.
     rm -rf "$REPO/dist"

@@ -1597,6 +1597,10 @@ def _blind_agent(monkeypatch, tmp_path):
     monkeypatch.setitem(agent._producer_cache, "at", agent.time.monotonic() - 4000)
     monkeypatch.setattr(agent, "PRODUCER_INTERVAL", 900)
     monkeypatch.setattr(agent.os.path, "exists", lambda p: "apt" in str(p))
+    # Same reason as the apt pin above, and found the same way: ufw.conf exists
+    # on the Ubuntu runner and not on Windows, so leaving it alone made these
+    # tests read the runner. They passed locally and failed in CI.
+    monkeypatch.setattr(agent, "UFW_CONF", str(tmp_path / "no-such-ufw.conf"))
     monkeypatch.setattr(agent, "CONTAINER", "xl1-producer")
     monkeypatch.setattr(agent, "IMAGES_REPO", str(tmp_path / "no-such-repo"))
     monkeypatch.setattr(agent, "STANDING_URL", "http://localhost:9/standing")
@@ -3227,6 +3231,10 @@ def test_ufw_not_installed_is_not_protected(monkeypatch):
 def test_nothing_readable_at_all_is_a_failed_reader(monkeypatch):
     """Not a secure machine. The caller marks the reader degraded on None, and
     an empty dict would instead be drawn as a clean bill of health."""
+    # ufw.conf included, or "nothing readable" is not nothing: the CI runner
+    # has one and Windows does not, so without this the test asserted a
+    # property of the machine running it.
+    monkeypatch.setattr(agent, "UFW_CONF", "/nonexistent/ufw.conf")
     monkeypatch.setattr(agent, "run", lambda *a, **k: None)
     monkeypatch.setattr(agent, "_exposed_ports", lambda: None)
     monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)

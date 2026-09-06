@@ -3159,6 +3159,7 @@ def test_a_disabled_firewall_is_false_not_missing(monkeypatch):
     """`systemctl is-active` exits non-zero when inactive and run() returns
     None on any non-zero exit, so asking that way reports a disabled firewall
     as an unreadable one. `show` always exits 0 and puts the answer in stdout."""
+    monkeypatch.setattr(agent, "UFW_CONF", "/nonexistent/ufw.conf")
     monkeypatch.setattr(agent, "run", lambda *a, **k:
                         "LoadState=loaded\nActiveState=inactive")
     monkeypatch.setattr(agent, "_exposed_ports", lambda: [])
@@ -3167,7 +3168,54 @@ def test_a_disabled_firewall_is_false_not_missing(monkeypatch):
     assert agent.read_security_posture()["firewall"] is False
 
 
+def _posture_with_conf(monkeypatch, tmp_path, text, unit):
+    """read_security_posture() with a ufw.conf we control and a unit state we
+    control, so the two sources can be made to disagree on purpose."""
+    conf = tmp_path / "ufw.conf"
+    conf.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(agent, "UFW_CONF", str(conf))
+    monkeypatch.setattr(agent, "run", lambda *a, **k: unit)
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: [])
+    monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
+    monkeypatch.setattr(agent, "_auto_updates", lambda: None)
+    return agent.read_security_posture()
+
+
+def test_a_firewall_whose_oneshot_unit_has_exited_is_still_on(monkeypatch, tmp_path):
+    """ufw.service applies the rules at boot and finishes. On one Pi it lingers
+    as active(exited); on another it goes inactive(dead) having done identical
+    work and left identical rules loaded. Reading ActiveState called the second
+    machine unprotected while `ufw status` on it said "Status: active,
+    Default: deny (incoming)".
+
+    A security card that cries wolf is spent as surely as one that reassures
+    wrongly -- the operator stops believing the colour."""
+    posture = _posture_with_conf(
+        monkeypatch, tmp_path, "ENABLED=yes\n",
+        "LoadState=loaded\nActiveState=inactive")
+    assert posture["firewall"] is True
+
+
+def test_ufw_conf_outranks_an_active_unit_when_it_says_off(monkeypatch, tmp_path):
+    """The same precedence in the other direction, so this is not a rule that
+    always answers yes."""
+    posture = _posture_with_conf(
+        monkeypatch, tmp_path, "ENABLED=no\n",
+        "LoadState=loaded\nActiveState=active")
+    assert posture["firewall"] is False
+
+
+def test_a_commented_enabled_line_is_not_read_as_a_setting(monkeypatch, tmp_path):
+    """ufw.conf ships with commentary. Matching "ENABLED" anywhere on a line
+    would let a comment decide whether a machine reports itself firewalled."""
+    posture = _posture_with_conf(
+        monkeypatch, tmp_path,
+        "# ENABLED=yes would turn it on\nENABLED=no\n",
+        "LoadState=loaded\nActiveState=inactive")
+    assert posture["firewall"] is False
+
 def test_ufw_not_installed_is_not_protected(monkeypatch):
+    monkeypatch.setattr(agent, "UFW_CONF", "/nonexistent/ufw.conf")
     monkeypatch.setattr(agent, "run", lambda *a, **k:
                         "LoadState=not-found\nActiveState=inactive")
     monkeypatch.setattr(agent, "_exposed_ports", lambda: [])

@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.36.1"
+AGENT_VERSION = "1.36.2"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -2491,6 +2491,11 @@ def _auto_updates():
     return False
 
 
+# Where ufw records whether it is on. A module constant so a test can point it
+# at a path that does not exist and exercise the systemd fallback deliberately,
+# rather than reading whatever the machine running the tests happens to have.
+UFW_CONF = "/etc/ufw/ufw.conf"
+
 def read_security_posture():
     """What stands between this machine and the network, measured not assumed.
 
@@ -2506,20 +2511,53 @@ def read_security_posture():
     """
     out = {}
 
+    # ufw.conf is the authority, NOT the systemd unit. `ufw status` reports
+    # "active" from ENABLED in this file, and ufw.service is a oneshot that
+    # applies the rules at boot and finishes: on one Pi it lingers as
+    # active(exited), on another it goes inactive(dead) having done exactly the
+    # same work and left exactly the same rules loaded.
+    #
+    # Reading ActiveState therefore called a firewalled machine unprotected.
+    # The panel said OFF while `ufw status` on the same box said "Status:
+    # active, Default: deny (incoming)". A security card that cries wolf is
+    # spent just as surely as one that reassures wrongly -- the operator stops
+    # believing the colour, which is the only thing it has to sell.
+    #
+    # The file is 0644, so the unprivileged agent can read it; `ufw status`
+    # itself needs root, which is why this reads the source rather than
+    # shelling out.
+    enabled = None
+    try:
+        with open(UFW_CONF, "r", encoding="utf-8",
+                  errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("ENABLED"):
+                    value = line.split("=", 1)[-1].strip().strip(chr(34)).lower()
+                    enabled = value in ("yes", "true", "1")
+                    break
+    except OSError:
+        enabled = None
+
     # `systemctl is-active` EXITS NON-ZERO when the unit is inactive, and run()
     # returns None on any non-zero exit -- so asking that way reports a
     # disabled firewall as an unreadable one. `show` always exits 0 and puts
     # the answer in its output, which is the difference between a fact and a
-    # missing value.
+    # missing value. Still used, but only to tell "not installed" from
+    # "installed and we could not read its config".
     state = run(["systemctl", "show", "ufw",
                  "--property=LoadState,ActiveState"], timeout=10)
+    props = {}
     if state is not None:
         props = dict(
             line.split("=", 1) for line in state.splitlines() if "=" in line)
-        if props.get("LoadState") == "not-found":
-            out["firewall"] = False      # not installed is not protected
-        elif props.get("ActiveState"):
-            out["firewall"] = (props["ActiveState"] == "active")
+
+    if enabled is not None:
+        out["firewall"] = enabled
+    elif props.get("LoadState") == "not-found":
+        out["firewall"] = False      # not installed is not protected
+    elif props.get("ActiveState"):
+        out["firewall"] = (props["ActiveState"] == "active")
 
     exposed = _exposed_ports()
     if exposed is not None:

@@ -1432,9 +1432,21 @@ if have ufw; then
   $SUDO ufw allow in on tailscale0 >/dev/null 2>&1 || true
   $SUDO ufw default deny incoming >/dev/null 2>&1 || true
   $SUDO ufw default allow outgoing >/dev/null 2>&1 || true
-  $SUDO ufw --force enable >/dev/null 2>&1 \
-    && ok "firewall on: ssh and tailscale in, everything else outbound only" \
-    || warn "could not enable the firewall" "not fatal -- the node runs either way; see: sudo ufw status"
+  # Report the STATE, not the exit code. `ufw --force enable` can exit 0 while
+  # nothing comes up, and this printed "firewall on" purely because that command
+  # returned 0 -- a claim made without looking.
+  $SUDO ufw --force enable >/dev/null 2>&1 || true
+  # Read ufw.conf, not the unit, and for the reason the agent reads it: ufw.service
+  # is a oneshot that applies the rules at boot and finishes, so it can sit at
+  # inactive(dead) on a fully firewalled machine. ufw derives its own
+  # "Status: active" from ENABLED here, and the file is 0644 so no sudo is needed.
+  _ufw_enabled="$(sed -n "s/^ENABLED[[:space:]]*=[[:space:]]*//p" /etc/ufw/ufw.conf 2>/dev/null | head -1 | tr "A-Z" "a-z" | tr -d [\"])"
+  if [ "$_ufw_enabled" = yes ] || [ "$_ufw_enabled" = true ] || [ "$_ufw_enabled" = 1 ]; then
+    ok "firewall on: ssh and tailscale in, everything else outbound only"
+  else
+    warn "the firewall is NOT up (ufw.conf says ${_ufw_enabled:-unreadable})" \
+         "the node runs either way, but the Exposure card will show it off; try: sudo ufw --force enable && systemctl status ufw"
+  fi
 else
   # Reached only when the install in step 7 failed, since ufw is on the apt
   # list now. Still not fatal: a node with no firewall works, and stopping the

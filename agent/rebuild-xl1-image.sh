@@ -73,10 +73,31 @@ if docker image inspect "xl1:$LATEST" >/dev/null 2>&1; then
     BUILT_EPOCH="$(date -d "$BUILT_AT" +%s 2>/dev/null || echo 0)"
     [ "$BUILT_EPOCH" -gt 0 ] && AGE_DAYS=$(( ( $(date +%s) - BUILT_EPOCH ) / 86400 ))
   fi
-  if [ "$AGE_DAYS" -lt "$MAX_IMAGE_AGE_DAYS" ]; then
+  # The CLI version and the image's age were the only two reasons to rebuild,
+  # and neither notices the third: the RECIPE moving. xl1-docker-images ships
+  # its own src/, so upstream can add a whole role -- producer-rest did exactly
+  # this on 2026-09-02 -- without @xyo-network/xl1-cli changing at all. The
+  # version is identical, the image is a day old, and this said "nothing to do"
+  # while the running image had no idea the role existed.
+  #
+  # That is what made the fix further down unreachable: a compile gate that
+  # correctly detects a stale dist/ is worth nothing behind an outer gate that
+  # exits before reaching it. Both had to move.
+  #
+  # Compared against the image's build time rather than dist/'s, because that
+  # is the artifact actually being judged -- dist/ can be newer than the image
+  # and still not be IN it.
+  SRC_NEWER=""
+  if [ -d "$REPO/src" ] && [ "${BUILT_EPOCH:-0}" -gt 0 ]; then
+    SRC_NEWER="$(find "$REPO/src" -type f -newermt "@$BUILT_EPOCH" -print -quit 2>/dev/null || true)"
+  fi
+  if [ "$AGE_DAYS" -lt "$MAX_IMAGE_AGE_DAYS" ] && [ -z "$SRC_NEWER" ]; then
     log "xl1:$LATEST built ${AGE_DAYS}d ago; nothing to do"
     [ "$RUNNING" = "$LATEST" ] || log "NOTE: built but not promoted -- running $RUNNING, available $LATEST"
     exit 0
+  fi
+  if [ -n "$SRC_NEWER" ]; then
+    log "the image recipe changed since xl1:$LATEST was built (${SRC_NEWER##*/}); rebuilding"
   fi
   log "xl1:$LATEST is ${AGE_DAYS}d old; rebuilding for base image patches"
 fi
@@ -168,7 +189,19 @@ if [ ! -f "$REPO/dist/node/entrypoint.mjs" ] || [ -n "$NEWEST_SRC" ]; then
   else
     log "compiling the image entrypoint (dist/node is absent)"
   fi
-  docker run --rm -v "$REPO":/w -w /w "node:${NODE_VERSION:-24.14.1}-bookworm-slim" \
+  # CI=true is not cosmetic. The checkout carries a node_modules from whatever
+  # ran there before -- 155MB of it on the machine this was found on -- and pnpm
+  # wants to purge a directory it did not create. Interactively it asks; with no
+  # TTY it refuses outright and aborts the whole compile:
+  #
+  #   ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY
+  #   Aborted removal of modules directory due to no TTY
+  #
+  # This runs under systemd on a weekly timer, where there is never a TTY. Left
+  # out, the compile can only succeed when a human happens to be watching --
+  # the opposite of what a timer is for, and it would have failed silently every
+  # week while reporting that the image was up to date.
+  docker run --rm -e CI=true -v "$REPO":/w -w /w "node:${NODE_VERSION:-24.14.1}-bookworm-slim" \
     sh -c 'corepack enable && pnpm install --frozen-lockfile && pnpm xy compile' \
     || fail "could not compile the entrypoint; the running node is untouched"
   [ -f "$REPO/dist/node/entrypoint.mjs" ] \

@@ -142,8 +142,32 @@ log "building xl1:$LATEST (this takes several minutes on a Pi)"
 # the COPY with a cache-key error that says nothing about a missing compile.
 #
 # Compiled in a container so no Node or pnpm is needed on the host.
-if [ ! -f "$REPO/dist/node/entrypoint.mjs" ]; then
-  log "compiling the image entrypoint (dist/node is absent)"
+#
+# Recompiled when dist/ is absent OR OLDER THAN THE SOURCE, and the second half
+# is not a refinement -- without it this step is skipped on exactly the machines
+# that need it. dist/ is gitignored, so `git pull` updates src/ and leaves a
+# stale dist/ sitting beside it; an "is it absent?" gate then sees a file, skips
+# the compile, and the build copies a months-old entrypoint into a freshly
+# tagged image. It reports success the whole way.
+#
+# That is not hypothetical. On 2026-09-06 a producer had src/ from Sep 5 and
+# dist/ from Aug 21 -- fifteen days apart -- so `XL1_ROLE=producer-rest` was
+# rejected as an unknown role by an image built four hours earlier from a
+# checkout that supported it. Every rebuild since Aug 21 had shipped the same
+# stale artifact.
+#
+# `-nt` is false when the timestamps are equal, which is the safe direction: a
+# needless recompile costs minutes, a skipped one ships the wrong binary.
+NEWEST_SRC="$(find "$REPO/src" -type f -newer "$REPO/dist/node/entrypoint.mjs" -print -quit 2>/dev/null || true)"
+if [ ! -f "$REPO/dist/node/entrypoint.mjs" ] || [ -n "$NEWEST_SRC" ]; then
+  if [ -f "$REPO/dist/node/entrypoint.mjs" ]; then
+    log "compiling the image entrypoint (src/ is newer than dist/, e.g. ${NEWEST_SRC##*/})"
+    # Removed rather than overwritten, so a compile that half-succeeds cannot
+    # leave a mix of old and new modules that the next run judges up to date.
+    rm -rf "$REPO/dist"
+  else
+    log "compiling the image entrypoint (dist/node is absent)"
+  fi
   docker run --rm -v "$REPO":/w -w /w "node:${NODE_VERSION:-24.14.1}-bookworm-slim" \
     sh -c 'corepack enable && pnpm install --frozen-lockfile && pnpm xy compile' \
     || fail "could not compile the entrypoint; the running node is untouched"

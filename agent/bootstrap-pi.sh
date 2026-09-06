@@ -126,6 +126,36 @@ AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 # above it. Defining a variable earlier cannot break anything; the test that
 # every $SUDO comes after it still holds.
 SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
+
+# Defined HERE, before the producer step, and deliberately not inside it. It
+# used to sit in the else branch of `if [ "$PRODUCER_SKIP" = 1 ]`, whose body
+# runs at column 0 and is easy to mistake for top level. On any machine whose
+# producer was already running the branch was skipped, this was never defined,
+# and the anchoring step died a thousand lines later with
+#
+#   bootstrap-pi.sh: line 2979: producer_account: command not found
+#
+# then fell back to account 0 without stopping. Which is the exact failure the
+# function exists to prevent, arriving on precisely the machines most likely to
+# re-run this wizard: the ones already producing.
+# WHICH ACCOUNT THIS NODE ACTUALLY PRODUCES AS, read from the file the
+# container is mounted with rather than from the state file.
+#
+# The preset file is the mechanism -- there is no environment variable for
+# this -- so it, and not an answer recorded months ago, is what the node runs
+# on. The state file lives in a home directory and is simply missing on plenty
+# of working devices.
+#
+# What that cost, before this: a node producing as account 1 whose state file
+# had been lost came back as ACCOUNT_INDEX=0, the block below was skipped
+# because 0 needs no preset, PRESET_ARGS stayed empty, and the container was
+# started WITHOUT the mount -- so it produced as account 0. A different
+# address, a different producer, signing blocks nobody had delegated to, and
+# not one line of output saying the identity had changed.
+producer_account() {
+  $SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
+    "$PRESETS_DIR/roles/producer.json" 2>/dev/null | head -1
+}
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
 STATED_RADIUS="25"; WITH_DOCKER=""; NO_LOCATION=0
@@ -1905,24 +1935,6 @@ done
 # So it asks what it actually needs to know -- whether a specific account is
 # wanted -- and names both reasons. Everyone else keeps 0 without being made
 # to think about derivation paths.
-# WHICH ACCOUNT THIS NODE ACTUALLY PRODUCES AS, read from the file the
-# container is mounted with rather than from the state file.
-#
-# The preset file is the mechanism -- there is no environment variable for
-# this -- so it, and not an answer recorded months ago, is what the node runs
-# on. The state file lives in a home directory and is simply missing on plenty
-# of working devices.
-#
-# What that cost, before this: a node producing as account 1 whose state file
-# had been lost came back as ACCOUNT_INDEX=0, the block below was skipped
-# because 0 needs no preset, PRESET_ARGS stayed empty, and the container was
-# started WITHOUT the mount -- so it produced as account 0. A different
-# address, a different producer, signing blocks nobody had delegated to, and
-# not one line of output saying the identity had changed.
-producer_account() {
-  $SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
-    "$PRESETS_DIR/roles/producer.json" 2>/dev/null | head -1
-}
 _preset_account="$(producer_account)"
 if [ -n "$_preset_account" ] && [ "$_preset_account" != "${ACCOUNT_INDEX:-0}" ]; then
   ACCOUNT_INDEX="$_preset_account"

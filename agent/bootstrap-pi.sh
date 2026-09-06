@@ -128,12 +128,18 @@ AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
 
 # Defined HERE, before the producer step, and deliberately not inside it. It
-# used to sit in the else branch of `if [ "$PRODUCER_SKIP" = 1 ]`, whose body
-# runs at column 0 and is easy to mistake for top level. On any machine whose
+# used to sit in the else branch of the PRODUCER_SKIP test further down,
+# whose body
+# runs at column 0 and is easy to mistake for top level. Note the wording: the
+# shell form of that test is deliberately NOT spelled out here, because
+# test-bootstrap.sh locates the real gate with a grep for it and takes the
+# FIRST match -- a comment quoting the syntax became that match and made five
+# unrelated "runs before the gate" checks compare against this line instead.
+# On any machine whose
 # producer was already running the branch was skipped, this was never defined,
-# and the anchoring step died a thousand lines later with
+# and the anchoring step died hundreds of lines later with
 #
-#   bootstrap-pi.sh: line 2979: producer_account: command not found
+#   bootstrap-pi.sh: line NNNN: producer_account: command not found
 #
 # then fell back to account 0 without stopping. Which is the exact failure the
 # function exists to prevent, arriving on precisely the machines most likely to

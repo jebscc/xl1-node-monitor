@@ -453,6 +453,11 @@ REPORTED_FIELDS = {
     # over three is a different claim from one over three hundred.
     "build_samples", "build_ms_avg", "build_ms_max", "build_over_budget",
     "build_budget_ms",
+    # Inside `security`, which is owner-only. Listed here because they are
+    # still fields the heartbeat carries, and the guard above now sees them.
+    "firewall", "exposed_ports", "ssh_password_auth", "auto_updates",
+    # When unattended-upgrades actually runs, and whether its timer is live.
+    "auto_updates_at", "auto_updates_window", "auto_updates_timer",
     # Whether the block counts were made against the address this node signs
     # with, or fell back to the reward address because the signer was not
     # known. Never the address itself -- counts only.
@@ -553,8 +558,17 @@ def _fields_in_source():
     keys = set(re.findall(r'payload\["%s"\]' % NAME, src))
     # read_throttling returns a dict that host_metrics merges in, so its keys
     # are heartbeat fields too and nothing else here would find them.
+    # read_security_posture is HERE because its keys are reported fields too,
+    # nested one level inside `security`. They were invisible to this guard:
+    # 1.38.0 added three of them and nothing failed, so the version was
+    # bumped by policy rather than because anything checked. A guard that
+    # cannot see a whole category of field is one that reports green about
+    # a question it never asked.
     for fn in ("collect", "container_info", "container_stats", "host_metrics",
-               "read_throttling", "read_swap_devices"):
+               "read_throttling", "read_swap_devices", "read_security_posture",
+               # Returns a dict read_security_posture merges in, so its keys are
+               # fields too -- the same reason read_throttling is listed.
+               "_auto_update_schedule"):
         body = re.search(r"\ndef %s\(.*?(?=\ndef |\Z)" % fn, src, re.S)
         if body:
             keys |= set(re.findall(r'"%s":' % NAME, body.group(0)))

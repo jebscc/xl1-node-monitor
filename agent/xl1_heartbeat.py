@@ -2590,7 +2590,7 @@ def _auto_update_schedule():
         value = value.strip()
         if key == "ActiveState" and value:
             out["auto_updates_timer"] = value
-        elif key == "RandomizedDelayUSec" and value and value != "0":
+        elif key == "RandomizedDelayUSec" and value not in ("", "0"):
             out["auto_updates_window"] = value[:16]
         elif key == "TimersCalendar" and value:
             # { OnCalendar=*-*-* 06:00:00 ; next_elapse=Mon 2026-09-07 ... }

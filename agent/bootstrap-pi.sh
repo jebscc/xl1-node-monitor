@@ -116,6 +116,16 @@ DELEGATION_SPOOL="${DELEGATION_SPOOL:-/var/lib/xl1-attestations}"
 # XL1_REWARD_ADDRESS rather than a general nested-config pattern, and
 # accountPath appears nowhere in its entrypoint. Verified by setting
 # XL1_ACTORS__0__ACCOUNT_PATH=1 and watching the resolved config still say 0.
+#
+# WHICH file matters as much as which line. The entrypoint loads
+# roles/$XL1_ROLE.json, so on a producer-rest node the account belongs in
+# producer-rest.json and writing producer.json changes nothing the node
+# reads. This wrote, and then verified, producer.json unconditionally -- so
+# it confirmed its own write and reported "producing as account N" while the
+# node came back on account 0. Two machines on one phrase then share an
+# address: same signer, same block credit, and only the reward address to
+# tell them apart. Found 2026-09-07, after a Pi that had produced for weeks
+# went quiet and the wizard had reported success every time.
 PRESETS_DIR="${PRESETS_DIR:-/opt/xl1-presets}"
 AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 
@@ -158,9 +168,26 @@ SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
 # started WITHOUT the mount -- so it produced as account 0. A different
 # address, a different producer, signing blocks nobody had delegated to, and
 # not one line of output saying the identity had changed.
+# WHICH ROLE THIS NODE RUNS, because that decides which preset file is the
+# one the node actually reads. Read from the env file the container starts
+# with rather than assumed: this wizard writes `producer`, but an operator
+# who moved to producer-rest has a node loading a different file, and every
+# read and write below has to follow it there.
+producer_role() {
+  _role="$($SUDO sed -n 's/^XL1_ROLE=//p' "$PRODUCER_ENV" 2>/dev/null \
+           | head -1 | tr -d ' \r\n')"
+  [ -n "$_role" ] || _role=producer
+  printf '%s' "$_role"
+}
+
+# The file the node reads, for whichever role it is running.
+producer_preset() {
+  printf '%s' "$PRESETS_DIR/roles/$(producer_role).json"
+}
+
 producer_account() {
   $SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
-    "$PRESETS_DIR/roles/producer.json" 2>/dev/null | head -1
+    "$(producer_preset)" 2>/dev/null | head -1
 }
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
@@ -2140,7 +2167,12 @@ chmod 600 "$tmp_env"
 {
   printf '# XL1 block producer. Root-only: this file contains a wallet phrase.\n'
   printf 'XL1_NETWORK=%s\n' "$XL1_NET"
-  printf 'XL1_ROLE=producer\n'
+  # The role the node ALREADY runs, not `producer` by default. An operator
+  # who moved to producer-rest and re-ran this wizard had it silently put
+  # back -- and because the two roles read different preset files, that
+  # also moves which file the account number has to live in, which is how
+  # one machine ended up signing as another's address.
+  printf 'XL1_ROLE=%s\n' "$(producer_role)"
   printf 'XL1_MNEMONIC=%s\n' "$MNEMONIC"
   printf 'XL1_REWARD_ADDRESS=%s\n' "$REWARD_ADDRESS"
 } > "$tmp_env"
@@ -2231,13 +2263,16 @@ if [ "${ACCOUNT_INDEX:-0}" != 0 ]; then
   $SUDO docker cp "$cid:/opt/xl1/presets/." "$PRESETS_DIR/" >/dev/null 2>&1 \
     || die "could not copy the node image's presets to $PRESETS_DIR"
   $SUDO docker rm "$cid" >/dev/null 2>&1 || true
+  _preset_file="$(producer_preset)"
+  # The file this role loads, not producer.json by habit. See PRESETS_DIR.
+  [ -f "$_preset_file" ] || die "the node runs role $(producer_role), but $_preset_file is not in the image presets"
   $SUDO sed -i "s/\"accountPath\": \"[0-9]*\"/\"accountPath\": \"$ACCOUNT_INDEX\"/" \
-    "$PRESETS_DIR/roles/producer.json"
+    "$_preset_file"
   # Checked rather than assumed: a preset that silently kept 0 would put this
   # node on the same address as whatever else uses the phrase, which is the
   # exact failure the question exists to prevent.
-  $SUDO grep -q "\"accountPath\": \"$ACCOUNT_INDEX\"" "$PRESETS_DIR/roles/producer.json" \
-    || die "could not set the account number in $PRESETS_DIR/roles/producer.json"
+  $SUDO grep -q "\"accountPath\": \"$ACCOUNT_INDEX\"" "$_preset_file" \
+    || die "could not set the account number in $_preset_file"
   PRESET_ARGS="-e XL1_PRESETS_DIR=/presets -v $PRESETS_DIR:/presets"
   ok "producing as account $ACCOUNT_INDEX of the phrase"
 fi

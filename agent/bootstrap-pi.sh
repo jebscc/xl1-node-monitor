@@ -202,6 +202,44 @@ producer_account() {
     "$PRODUCER_ENV" 2>/dev/null | head -1 | tr -d ' \r\n')"
   printf '%s' "$_acct"
 }
+
+# Does the node that is RUNNING agree with the account this machine is
+# configured for?
+#
+# Compared against `producer_account` rather than against whatever this run
+# decided, and called after step 10 whichever path it took -- because the case
+# that needs catching is a node ALREADY running under the wrong identity, and
+# that is exactly the case where step 10 says "already running here" and does
+# nothing. Gating the check behind the rebuild would leave it unable to see the
+# only failure it exists for.
+#
+# The account number is compared, not the address: an address is recognisable
+# only to somebody who already knows the right one, which is why three separate
+# occurrences printed it and went unnoticed.
+verify_producer_account() {
+  _run_acct="$($SUDO docker logs xl1-producer 2>&1 \
+    | sed -n 's/.*\[\([0-9][0-9]*\)\] producer$/\1/p' | head -1)"
+  _want_acct="$(producer_account)"
+
+  if [ -z "$_run_acct" ]; then
+    warn "could not read which account the node is producing as" \
+         "verify by hand: sudo docker logs xl1-producer | grep -A6 producer"
+    return 0
+  fi
+  # Nothing recorded means nothing to compare against -- and saying so is the
+  # point, because this is the state an SD card swap leaves behind and the one
+  # a default would paper over.
+  if [ -z "$_want_acct" ]; then
+    warn "producing as account $_run_acct, but nothing here records which it should be" \
+         "put XL1_ACCOUNT_INDEX=$_run_acct in $PRODUCER_ENV, or a restore has to guess -- and 0 is the guess that collides"
+    return 0
+  fi
+  if [ "$_run_acct" != "$_want_acct" ]; then
+    $SUDO docker stop xl1-producer >/dev/null 2>&1 || true
+    die "this machine is configured for account $_want_acct but the node is running as account $_run_acct -- stopped it rather than let it sign as an identity that is not its own. The preset carries this: check $(producer_preset), and that the container has -v $PRESETS_DIR:/presets"
+  fi
+  ok "producing as account $_run_acct, which is what this machine is configured for"
+}
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
 STATED_RADIUS="25"; WITH_DOCKER=""; NO_LOCATION=0
@@ -2381,29 +2419,6 @@ fi
 # Worth saying out loud even when nothing is wrong: a phrase typed one line
 # above decides this, and the only previous way to learn the answer was to grep
 # a container log an hour later.
-# WHICH ACCOUNT IT ACTUALLY DERIVED, checked against what was asked for.
-#
-# The address alone cannot answer this: it is only recognisable to somebody who
-# already knows what account 1 looks like on this phrase, and the three times
-# this went wrong the address WAS printed and nobody caught it. The node's
-# summary brackets the account number, so the comparison is exact and needs no
-# key handling here.
-#
-# This is the check that closes the hole. Everything above makes losing the
-# index less likely; this one makes producing under the wrong identity
-# impossible to do quietly. The container is stopped before failing, because a
-# node signing as another machine's address is worse than a node not running.
-started_acct="$($SUDO docker logs xl1-producer 2>&1 \
-  | sed -n 's/.*\[\([0-9][0-9]*\)\] producer$/\1/p' | head -1)"
-if [ -n "$started_acct" ] && [ "$started_acct" != "${ACCOUNT_INDEX:-0}" ]; then
-  $SUDO docker stop xl1-producer >/dev/null 2>&1 || true
-  die "this node was set up as account ${ACCOUNT_INDEX:-0} but came back as account $started_acct -- stopped it rather than let it sign as an identity that is not its own. The preset mount is what carries the account: check $(producer_preset) says \"accountPath\": \"${ACCOUNT_INDEX:-0}\", and that the container has -v $PRESETS_DIR:/presets"
-fi
-if [ -z "$started_acct" ]; then
-  warn "could not read which account the node started as" \
-       "the summary format may have changed -- verify by hand: sudo docker logs xl1-producer | grep -A6 producer"
-fi
-
 signing="$($SUDO docker logs xl1-producer 2>&1 \
   | awk '/\[[0-9]+\] producer$/{f=1} f && /address:/{sub(/.*address: */, ""); print; exit}')"
 if [ -n "$signing" ]; then
@@ -2423,6 +2438,13 @@ fi
 
 DONE_PRODUCER=1
 save_state
+fi
+
+# Both paths converge here: rebuilt, or left alone because it was already
+# running. Either way the question is the same one, and it is asked every run.
+if $SUDO docker ps --filter name=xl1-producer --format '{{.Names}}' 2>/dev/null \
+   | grep -q xl1-producer; then
+  verify_producer_account
 fi
 
 # =============================================================================

@@ -1176,7 +1176,7 @@ STAKE_LOG = "[xl1-producer] Producer %s has insufficient stake." % SIGNER
 def _forget_signer(monkeypatch, tmp_path):
     """The cache is module state and the file outlives a test."""
     monkeypatch.setattr(agent, "_producer_addr_cache",
-                        {"value": None, "looked": False, "at": 0.0})
+                        {"value": None, "looked": False, "at": 0.0, "boot": None})
     monkeypatch.setattr(agent, "PRODUCER_ADDR_FILE",
                         str(tmp_path / "producer-address"))
 
@@ -1272,7 +1272,7 @@ def test_the_address_survives_a_restart(monkeypatch, tmp_path):
 
     # Restart: cache cleared, and the log no longer carries the line.
     monkeypatch.setattr(agent, "_producer_addr_cache",
-                        {"value": None, "looked": False, "at": 0.0})
+                        {"value": None, "looked": False, "at": 0.0, "boot": None})
     _stub_run(monkeypatch, [("docker logs", "[BlockRunner] Building block 1")])
     assert agent.read_producer_address("xl1-producer") == SIGNER
 
@@ -1327,7 +1327,99 @@ def test_the_node_is_not_re_asked_on_every_call(monkeypatch, tmp_path):
     monkeypatch.setattr(agent, "run", counting_run)
     for _ in range(5):
         assert agent.read_producer_address("xl1-producer") == SIGNER
-    assert len(calls) == 1, "asked the node %d times for one answer" % len(calls)
+    # The LOG read is the expensive one, and it is what must not repeat. The
+    # start-time inspect added beside it is one field from the daemon and runs
+    # every call ON PURPOSE -- it is how a restart is noticed at all, and
+    # counting it here would forbid the fix rather than the cost.
+    logs = [c for c in calls if "logs" in c]
+    assert len(logs) == 1, "read the log %d times for one answer" % len(logs)
+    assert all("logs" in c or "inspect" in c for c in calls), calls
+
+
+def _boot_and_log(monkeypatch, boot, log):
+    """docker inspect answers `boot`, docker logs answers `log`."""
+    def fake_run(args, timeout=10, **_kw):
+        if "inspect" in args:
+            return boot
+        if "logs" in args:
+            return log
+        return ""
+    monkeypatch.setattr(agent, "run", fake_run)
+
+
+def test_a_restart_forgets_the_address_rather_than_reporting_the_old_one(
+        monkeypatch, tmp_path):
+    """The hour-long timer kept a corrected node reported under the OTHER
+    machine's address for as long as it had left -- on the panel and in the
+    block counts -- which made a fix that had worked look like one that had
+    failed. A container that restarted derived its identity again, so what was
+    remembered describes the node as it used to be."""
+    _forget_signer(monkeypatch, tmp_path)
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+
+    _boot_and_log(monkeypatch, "2026-09-07T01:00:00Z", STAKE_LOG)
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+    # Recreated with a corrected preset: same name, new start time, and the
+    # node now names a different account of the phrase. The timer has NOT
+    # expired -- that is the whole point.
+    new_signer = "30251291ac55017d90a3c892ab5604bdacf9bcde"
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    _boot_and_log(monkeypatch, "2026-09-07T02:00:00Z",
+                  "[xl1-producer] Producer %s has insufficient stake." % new_signer)
+    assert agent.read_producer_address("xl1-producer") == new_signer
+
+
+def test_a_restart_whose_log_is_not_ready_yet_says_nothing_rather_than_the_old(
+        monkeypatch, tmp_path):
+    """The node prints its wallet summary at startup, so the answer is usually
+    there immediately -- but not always. Until it says who it is, the honest
+    answer is "not known": counting_address then falls back to the reward
+    address AND FLAGS IT, which is a stated guess. The old address would be an
+    unstated wrong one."""
+    _forget_signer(monkeypatch, tmp_path)
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+
+    _boot_and_log(monkeypatch, "2026-09-07T01:00:00Z", STAKE_LOG)
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    _boot_and_log(monkeypatch, "2026-09-07T02:00:00Z", "")
+    assert agent.read_producer_address("xl1-producer") is None
+
+
+def test_the_same_container_is_not_re_read_just_because_it_was_inspected(
+        monkeypatch, tmp_path):
+    """A start time that has not changed is not a restart. Treating every
+    inspect as one would put a log read back on every heartbeat, which is the
+    cost the cache exists to avoid."""
+    _forget_signer(monkeypatch, tmp_path)
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    calls = []
+
+    def fake_run(args, timeout=10, **_kw):
+        calls.append(args)
+        return "2026-09-07T01:00:00Z" if "inspect" in args else STAKE_LOG
+
+    monkeypatch.setattr(agent, "run", fake_run)
+    for _ in range(4):
+        assert agent.read_producer_address("xl1-producer") == SIGNER
+    assert len([c for c in calls if "logs" in c]) == 1
+
+
+def test_an_unreadable_start_time_is_not_treated_as_a_restart(
+        monkeypatch, tmp_path):
+    """Absence is not evidence. A daemon that will not answer must not cost the
+    agent an identity it already knows -- the same rule silence gets below."""
+    _forget_signer(monkeypatch, tmp_path)
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+
+    _boot_and_log(monkeypatch, "2026-09-07T01:00:00Z", STAKE_LOG)
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    _boot_and_log(monkeypatch, "", STAKE_LOG)
+    assert agent.read_producer_address("xl1-producer") == SIGNER
 
 
 def test_silence_does_not_erase_what_is_known(monkeypatch, tmp_path):

@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.37.0"
+AGENT_VERSION = "1.37.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -2104,7 +2104,19 @@ _WALLET_PRODUCER = re.compile(
 # a node is unstaked, so it disappears the day staking is enforced.
 _PRODUCER_ADDR = re.compile(r"\bproducer\s+((?:0x)?[0-9a-fA-F]{40})\b",
                             re.IGNORECASE)
-_producer_addr_cache = {"value": None, "looked": False, "at": 0.0}
+_producer_addr_cache = {"value": None, "looked": False, "at": 0.0, "boot": None}
+
+
+def container_started_at(name):
+    """When this container last started, or None.
+
+    One field rather than container_info's eight, because this is asked on
+    the heartbeat path purely to decide whether a much more expensive log
+    read is due.
+    """
+    if not name:
+        return None
+    return run(["docker", "inspect", "-f", "{{.State.StartedAt}}", name]) or None
 
 
 def read_producer_address(name):
@@ -2147,6 +2159,33 @@ def read_producer_address(name):
     # wallet phrase becomes a different producer, and the file written before
     # that change would be believed for ever, counting blocks for an identity
     # the machine no longer has.
+    # A CONTAINER THAT RESTARTED DERIVED ITS IDENTITY AGAIN, so whatever was
+    # remembered describes the node as it used to be. The hour-long timer is
+    # there to keep log reads off the heartbeat path, and it did that job too
+    # well: a node whose preset was corrected went on being reported under the
+    # OTHER machine's address, on the panel and in the block counts, for as
+    # long as the timer had left. It made a fix that had worked look like a
+    # fix that had failed -- twice, on 2026-09-07, costing most of an evening.
+    #
+    # Forgotten rather than merely re-read. Until the node says who it is, the
+    # honest answer is "not known yet": counting_address falls back to the
+    # reward address and flags it, which is a stated guess. A remembered
+    # address from a previous identity is an unstated wrong answer, and this
+    # file prefers the first everywhere else.
+    #
+    # A start time that cannot be read is not evidence of a restart, so an
+    # unreadable one changes nothing.
+    boot = container_started_at(name)
+    if (boot is not None and _producer_addr_cache["boot"] is not None
+            and boot != _producer_addr_cache["boot"]):
+        print("container restarted since the producer address was learned "
+              "(%s -> %s); forgetting %s until the node names itself"
+              % (_producer_addr_cache["boot"], boot, known),
+              file=sys.stderr, flush=True)
+        known = _producer_addr_cache["value"] = None
+    if boot is not None:
+        _producer_addr_cache["boot"] = boot
+
     now = time.monotonic()
     fresh = (known is not None
              and now - _producer_addr_cache["at"] < PRODUCER_ADDR_RECHECK)

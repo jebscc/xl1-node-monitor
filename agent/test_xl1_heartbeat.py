@@ -623,6 +623,83 @@ def test_a_machine_that_is_not_a_pi_is_not_a_failure(monkeypatch):
     assert agent.read_throttling() == {}
 
 
+SHOW_TIMER = "\n".join([
+    "Unit=apt-daily-upgrade.service",
+    "TimersCalendar={ OnCalendar=*-*-* 06:00:00 ; next_elapse=Mon 2026-09-07 06:00:00 EDT }",
+    "NextElapseUSecRealtime=Mon 2026-09-07 06:48:44 EDT",
+    "RandomizedDelayUSec=1h",
+    "ActiveState=active",
+])
+
+
+def _quiet_security(monkeypatch, tmp_path, auto):
+    """Everything except the updates row held still. The firewall read is
+    inline rather than a helper, so it is quietened at its two sources: the
+    conf file it prefers and the systemctl fallback behind it."""
+    monkeypatch.setattr(agent, "UFW_CONF", str(tmp_path / "no-such-ufw.conf"))
+    monkeypatch.setattr(agent, "run", lambda *_a, **_k: "")
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: [])
+    monkeypatch.setattr(agent, "_ssh_password_auth", lambda: False)
+    monkeypatch.setattr(agent, "_auto_updates", lambda: auto)
+
+
+def test_the_update_schedule_is_read_from_the_timer(monkeypatch):
+    """The apt config says updates are ALLOWED to install; the timer is what
+    fires them. Reading only the config would report "on" about a machine
+    whose timer is masked and which has therefore never updated."""
+    monkeypatch.setattr(agent, "run", lambda *_a, **_k: SHOW_TIMER)
+    out = agent._auto_update_schedule()
+    assert out["auto_updates_at"] == "*-*-* 06:00:00"
+    assert out["auto_updates_window"] == "1h"
+    assert out["auto_updates_timer"] == "active"
+
+
+def test_a_stopped_timer_travels_beside_the_schedule(monkeypatch):
+    """The disagreement is the whole reason the timer is read at all, so its
+    state must reach the panel rather than being filtered to the happy case."""
+    monkeypatch.setattr(agent, "run", lambda *_a, **_k:
+                        SHOW_TIMER.replace("ActiveState=active", "ActiveState=inactive"))
+    assert agent._auto_update_schedule()["auto_updates_timer"] == "inactive"
+
+
+def test_an_unreadable_timer_is_absent_rather_than_guessed(monkeypatch):
+    monkeypatch.setattr(agent, "run", lambda *_a, **_k: "")
+    assert agent._auto_update_schedule() is None
+
+
+def test_no_randomised_delay_is_left_out_rather_than_sent_as_zero(monkeypatch):
+    """A window of "0" would render as "up to 0 later", which is noise."""
+    monkeypatch.setattr(agent, "run", lambda *_a, **_k:
+                        SHOW_TIMER.replace("RandomizedDelayUSec=1h", "RandomizedDelayUSec=0"))
+    out = agent._auto_update_schedule()
+    assert "auto_updates_window" not in out
+    assert out["auto_updates_at"] == "*-*-* 06:00:00"
+
+
+def test_the_schedule_is_only_sent_when_updates_are_on(monkeypatch, tmp_path):
+    """On a machine with updates off the schedule answers a question nobody
+    asked, under a row that already says the important thing."""
+    _quiet_security(monkeypatch, tmp_path, False)
+    called = []
+    monkeypatch.setattr(agent, "_auto_update_schedule",
+                        lambda: called.append(1) or {"auto_updates_at": "x"})
+    out = agent.read_security_posture()
+    assert out["auto_updates"] is False
+    assert "auto_updates_at" not in out
+    assert not called, "asked for a schedule that will not be shown"
+
+
+def test_the_schedule_rides_with_updates_that_are_on(monkeypatch, tmp_path):
+    _quiet_security(monkeypatch, tmp_path, True)
+    monkeypatch.setattr(agent, "_auto_update_schedule",
+                        lambda: {"auto_updates_at": "*-*-* 06:00:00",
+                                 "auto_updates_window": "1h",
+                                 "auto_updates_timer": "active"})
+    out = agent.read_security_posture()
+    assert out["auto_updates"] is True
+    assert out["auto_updates_at"] == "*-*-* 06:00:00"
+
+
 def test_reported_fields_are_pinned_to_the_version():
     """A new reported field means a new MINOR version.
 

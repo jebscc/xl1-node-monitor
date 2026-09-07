@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.37.1"
+AGENT_VERSION = "1.38.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -2565,6 +2565,41 @@ def _auto_updates():
     return False
 
 
+def _auto_update_schedule():
+    """When unattended-upgrades actually runs, or None if unreadable.
+
+    READ FROM THE TIMER, NOT THE APT CONFIG. The config in _auto_updates says
+    whether updates are allowed to install; the systemd timer is what fires
+    them. Those can disagree -- a machine can have Unattended-Upgrade "1" and
+    a masked apt-daily-upgrade.timer, and a panel reading only the config
+    would say "on" about something that has never run. So the timer's own
+    state travels beside the schedule.
+
+    The calendar spec is reported verbatim rather than prettified here. It is
+    systemd's syntax and the panel can only render the forms it recognises;
+    sending the raw string means an unusual one is shown as-is instead of
+    being quietly dropped or, worse, mis-summarised.
+    """
+    raw = run(["systemctl", "show", "apt-daily-upgrade.timer",
+               "--property=ActiveState,TimersCalendar,RandomizedDelayUSec"])
+    if not raw:
+        return None
+    out = {}
+    for line in raw.splitlines():
+        key, _, value = line.partition("=")
+        value = value.strip()
+        if key == "ActiveState" and value:
+            out["auto_updates_timer"] = value
+        elif key == "RandomizedDelayUSec" and value and value != "0":
+            out["auto_updates_window"] = value[:16]
+        elif key == "TimersCalendar" and value:
+            # { OnCalendar=*-*-* 06:00:00 ; next_elapse=Mon 2026-09-07 ... }
+            match = re.search(r"OnCalendar=([^;}]+)", value)
+            if match:
+                out["auto_updates_at"] = match.group(1).strip()[:64]
+    return out or None
+
+
 # Where ufw records whether it is on. A module constant so a test can point it
 # at a path that does not exist and exercise the systemd fallback deliberately,
 # rather than reading whatever the machine running the tests happens to have.
@@ -2644,6 +2679,14 @@ def read_security_posture():
     auto = _auto_updates()
     if auto is not None:
         out["auto_updates"] = auto
+
+    # Only when something is set to install. On a machine with updates off the
+    # schedule is an answer to a question nobody asked, and it would sit under
+    # a row that already says the important thing.
+    if auto:
+        schedule = _auto_update_schedule()
+        if schedule:
+            out.update(schedule)
 
     # Nothing readable at all is a failed reader, not a secure machine.
     return out or None

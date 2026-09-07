@@ -186,8 +186,21 @@ producer_preset() {
 }
 
 producer_account() {
-  $SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
-    "$(producer_preset)" 2>/dev/null | head -1
+  _acct="$($SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
+    "$(producer_preset)" 2>/dev/null | head -1)"
+  # SECOND HOME FOR THE SAME FACT, because the preset is derived state: the
+  # block below deletes and recreates $PRESETS_DIR on every run, and it lives
+  # in /opt where it reads as a cache rather than as configuration. Swap the
+  # SD card and it goes with it -- and then "no preset" is indistinguishable
+  # from "account 0", which is the one answer that puts this node on whatever
+  # other machine shares the phrase.
+  #
+  # So the index is also written beside the phrase and the role it belongs
+  # with, in $PRODUCER_ENV, which is the file an operator actually backs up.
+  # The preset still wins when both exist: it is what the node reads.
+  [ -n "$_acct" ] || _acct="$($SUDO sed -n 's/^XL1_ACCOUNT_INDEX=//p' \
+    "$PRODUCER_ENV" 2>/dev/null | head -1 | tr -d ' \r\n')"
+  printf '%s' "$_acct"
 }
 PUBLIC_REPO="${PUBLIC_REPO:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}"
 NODE_ID=""; NODE_LABEL=""; STATED_LOCATION=""; STATED_LAT=""; STATED_LON=""
@@ -1901,6 +1914,10 @@ if $SUDO test -s "$PRODUCER_ENV" 2>/dev/null; then
     # Never the phrase, and not even its word count: this is a terminal
     # somebody may paste a screenshot of.
     ok "using the wallet phrase this node already produces with"
+    # This machine has produced before. That matters below: a device with a
+    # history but no recorded account number has LOST the number, which is a
+    # different situation from a new device that simply wants the first one.
+    PHRASE_WAS_ON_DISK=1
   else
     MNEMONIC=""
   fi
@@ -1986,6 +2003,41 @@ if [ -n "$_preset_account" ] && [ "$_preset_account" != "${ACCOUNT_INDEX:-0}" ];
   note "This node is set up to produce as account $ACCOUNT_INDEX -- read from the"
   note "preset it runs on, which outranks anything this wizard remembered."
 fi
+# DO NOT GUESS WHEN THE ANSWER WAS LOST.
+#
+# A device that has produced before, whose preset is gone and whose env does
+# not name an account, cannot be assumed to be account 0. It is a device whose
+# index went missing -- an SD card swap, a restore, a wiped /opt -- and 0 is
+# precisely the wrong guess, because it is the account every OTHER node
+# defaults to as well. That is how one Pi came back signing as the other's
+# address, three times.
+#
+# Ask instead. The operator knows; this script does not, and saying so costs a
+# question where guessing costs an identity.
+if [ -z "$_preset_account" ] && [ -z "${ACCOUNT_INDEX:-}" ] \
+   && [ "${PHRASE_WAS_ON_DISK:-0}" = 1 ]; then
+  printf '\n'
+  warn "this node has produced before, but nothing here says as which account" \
+       "the preset that records it is gone -- an SD card swap or a wiped /opt does that"
+  note "Answering 0 is a real answer and is accepted. It is asked rather than"
+  note "assumed because 0 is also what a second machine on the same phrase"
+  note "would pick, and then both sign as one address with nothing saying so."
+  printf '\n'
+  tries=0
+  while [ "$tries" -lt 5 ]; do
+    tries=$((tries + 1))
+    ACCOUNT_INDEX="$(ask "  Account number this node produces as" "")"
+    case "$ACCOUNT_INDEX" in
+      ''|*[!0-9]*) printf '  %sThat is not a number.%s\n' "$Y" "$X"; ACCOUNT_INDEX="" ;;
+      *) [ "$ACCOUNT_INDEX" -le 99 ] && break
+         printf '  %s%s is beyond what any wallet shows.%s\n' "$Y" "$ACCOUNT_INDEX" "$X"
+         ACCOUNT_INDEX="" ;;
+    esac
+  done
+  [ -n "$ACCOUNT_INDEX" ] || die "no account number given, and this node's was lost. Nothing was changed."
+  ok "this node will produce as account $ACCOUNT_INDEX"
+fi
+
 ACCOUNT_INDEX="${ACCOUNT_INDEX:-0}"
 printf '\n'
 note "One wallet phrase holds many addresses. A wallet extension shows them as"
@@ -2175,6 +2227,10 @@ chmod 600 "$tmp_env"
   printf 'XL1_ROLE=%s\n' "$(producer_role)"
   printf 'XL1_MNEMONIC=%s\n' "$MNEMONIC"
   printf 'XL1_REWARD_ADDRESS=%s\n' "$REWARD_ADDRESS"
+  # Beside the phrase it derives from, in the file operators back up. The node
+  # does not read this -- the preset is still the mechanism -- but it is what
+  # lets a restore know which account this machine is, instead of guessing.
+  printf 'XL1_ACCOUNT_INDEX=%s\n' "${ACCOUNT_INDEX:-0}"
 } > "$tmp_env"
 
 # EVERYTHING THIS WRITER DOES NOT OWN IS CARRIED OVER -- the same rule the
@@ -2187,7 +2243,7 @@ chmod 600 "$tmp_env"
 # commented-out documentation in an operator's file is not preserved.
 if $SUDO test -f "$PRODUCER_ENV"; then
   $SUDO grep -E "^[A-Za-z_][A-Za-z0-9_]*=" "$PRODUCER_ENV" 2>/dev/null \
-    | grep -vE '^(XL1_NETWORK|XL1_ROLE|XL1_MNEMONIC|XL1_REWARD_ADDRESS)=' \
+    | grep -vE '^(XL1_NETWORK|XL1_ROLE|XL1_MNEMONIC|XL1_REWARD_ADDRESS|XL1_ACCOUNT_INDEX)=' \
     >> "$tmp_env" || true
 fi
 $SUDO install -o root -g root -m 600 "$tmp_env" "$PRODUCER_ENV"
@@ -2325,6 +2381,29 @@ fi
 # Worth saying out loud even when nothing is wrong: a phrase typed one line
 # above decides this, and the only previous way to learn the answer was to grep
 # a container log an hour later.
+# WHICH ACCOUNT IT ACTUALLY DERIVED, checked against what was asked for.
+#
+# The address alone cannot answer this: it is only recognisable to somebody who
+# already knows what account 1 looks like on this phrase, and the three times
+# this went wrong the address WAS printed and nobody caught it. The node's
+# summary brackets the account number, so the comparison is exact and needs no
+# key handling here.
+#
+# This is the check that closes the hole. Everything above makes losing the
+# index less likely; this one makes producing under the wrong identity
+# impossible to do quietly. The container is stopped before failing, because a
+# node signing as another machine's address is worse than a node not running.
+started_acct="$($SUDO docker logs xl1-producer 2>&1 \
+  | sed -n 's/.*\[\([0-9][0-9]*\)\] producer$/\1/p' | head -1)"
+if [ -n "$started_acct" ] && [ "$started_acct" != "${ACCOUNT_INDEX:-0}" ]; then
+  $SUDO docker stop xl1-producer >/dev/null 2>&1 || true
+  die "this node was set up as account ${ACCOUNT_INDEX:-0} but came back as account $started_acct -- stopped it rather than let it sign as an identity that is not its own. The preset mount is what carries the account: check $(producer_preset) says \"accountPath\": \"${ACCOUNT_INDEX:-0}\", and that the container has -v $PRESETS_DIR:/presets"
+fi
+if [ -z "$started_acct" ]; then
+  warn "could not read which account the node started as" \
+       "the summary format may have changed -- verify by hand: sudo docker logs xl1-producer | grep -A6 producer"
+fi
+
 signing="$($SUDO docker logs xl1-producer 2>&1 \
   | awk '/\[[0-9]+\] producer$/{f=1} f && /address:/{sub(/.*address: */, ""); print; exit}')"
 if [ -n "$signing" ]; then

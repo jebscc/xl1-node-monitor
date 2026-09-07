@@ -203,6 +203,23 @@ producer_account() {
   printf '%s' "$_acct"
 }
 
+# How often the node looks for work to do, when this machine has chosen a value
+# rather than taking the image's.
+#
+# Second of the two settings that live in the preset, and so the second to come
+# back at the image default after any rebuild -- silently, because a preset is
+# deleted and re-copied every run. The account index was the first. Both are now
+# recorded in $PRODUCER_ENV, which is a file operators back up, and re-applied
+# below.
+#
+# Empty means "no opinion": the image's own value stands. Nothing is invented
+# here, because a default this script made up would be one more figure nobody
+# chose, reverting to something else again on the next image.
+producer_check_interval() {
+  $SUDO sed -n 's/^XL1_BLOCK_CHECK_INTERVAL_MS=//p' "$PRODUCER_ENV" 2>/dev/null \
+    | head -1 | tr -d ' \r\n'
+}
+
 # Does the node that is RUNNING agree with the account this machine is
 # configured for?
 #
@@ -2252,6 +2269,11 @@ if [ -n "$PRODUCER_UNIT_NAME" ]; then
   fi
 fi
 
+# Read before the writer below needs it AND before the preset block applies
+# it: one read, one value, no chance of the file recording something the
+# preset did not get.
+CHECK_INTERVAL_MS="$(producer_check_interval)"
+
 tmp_env="$(mktemp)"
 chmod 600 "$tmp_env"
 {
@@ -2269,6 +2291,10 @@ chmod 600 "$tmp_env"
   # does not read this -- the preset is still the mechanism -- but it is what
   # lets a restore know which account this machine is, instead of guessing.
   printf 'XL1_ACCOUNT_INDEX=%s\n' "${ACCOUNT_INDEX:-0}"
+  # Only when this machine has one. An absent line means the image's value
+  # stands, which is different from recording a number this script chose.
+  [ -n "${CHECK_INTERVAL_MS:-}" ] \
+    && printf 'XL1_BLOCK_CHECK_INTERVAL_MS=%s\n' "$CHECK_INTERVAL_MS"
 } > "$tmp_env"
 
 # EVERYTHING THIS WRITER DOES NOT OWN IS CARRIED OVER -- the same rule the
@@ -2281,7 +2307,7 @@ chmod 600 "$tmp_env"
 # commented-out documentation in an operator's file is not preserved.
 if $SUDO test -f "$PRODUCER_ENV"; then
   $SUDO grep -E "^[A-Za-z_][A-Za-z0-9_]*=" "$PRODUCER_ENV" 2>/dev/null \
-    | grep -vE '^(XL1_NETWORK|XL1_ROLE|XL1_MNEMONIC|XL1_REWARD_ADDRESS|XL1_ACCOUNT_INDEX)=' \
+    | grep -vE '^(XL1_NETWORK|XL1_ROLE|XL1_MNEMONIC|XL1_REWARD_ADDRESS|XL1_ACCOUNT_INDEX|XL1_BLOCK_CHECK_INTERVAL_MS)=' \
     >> "$tmp_env" || true
 fi
 $SUDO install -o root -g root -m 600 "$tmp_env" "$PRODUCER_ENV"
@@ -2348,27 +2374,52 @@ fi
 # runs as a non-root user and cannot write into a root-owned mount, which fails
 # as "permission denied" and reads like a Docker problem rather than a
 # permissions one.
+# EVERYTHING THIS MACHINE HAS CHOSEN THAT THE PRESET HOLDS, re-applied after
+# the copy. Exactly two things live here -- verified by diffing a running host's
+# preset against the one in the image -- and both used to revert on every
+# rebuild without a word.
+#
+# Gated on EITHER override, not on the account alone. Gating on the account was
+# a bug of its own: a node on account 0 that had tuned its check interval never
+# reached this block at all, so its value could not be restored and it silently
+# went back to the image's on the next run.
 PRESET_ARGS=""
-if [ "${ACCOUNT_INDEX:-0}" != 0 ]; then
+if [ "${ACCOUNT_INDEX:-0}" != 0 ] || [ -n "$CHECK_INTERVAL_MS" ]; then
   $SUDO rm -rf "$PRESETS_DIR"
   $SUDO mkdir -p "$PRESETS_DIR"
   cid="$($SUDO docker create xl1:local 2>/dev/null)"
-  [ -n "$cid" ] || die "could not read the node image's presets, so the account number cannot be set"
+  [ -n "$cid" ] || die "could not read the node image's presets, so this machine's settings cannot be applied"
   $SUDO docker cp "$cid:/opt/xl1/presets/." "$PRESETS_DIR/" >/dev/null 2>&1 \
     || die "could not copy the node image's presets to $PRESETS_DIR"
   $SUDO docker rm "$cid" >/dev/null 2>&1 || true
   _preset_file="$(producer_preset)"
   # The file this role loads, not producer.json by habit. See PRESETS_DIR.
   [ -f "$_preset_file" ] || die "the node runs role $(producer_role), but $_preset_file is not in the image presets"
-  $SUDO sed -i "s/\"accountPath\": \"[0-9]*\"/\"accountPath\": \"$ACCOUNT_INDEX\"/" \
-    "$_preset_file"
-  # Checked rather than assumed: a preset that silently kept 0 would put this
-  # node on the same address as whatever else uses the phrase, which is the
-  # exact failure the question exists to prevent.
-  $SUDO grep -q "\"accountPath\": \"$ACCOUNT_INDEX\"" "$_preset_file" \
-    || die "could not set the account number in $_preset_file"
+
+  if [ "${ACCOUNT_INDEX:-0}" != 0 ]; then
+    $SUDO sed -i "s/\"accountPath\": \"[0-9]*\"/\"accountPath\": \"$ACCOUNT_INDEX\"/" \
+      "$_preset_file"
+    # Checked rather than assumed: a preset that silently kept 0 would put this
+    # node on the same address as whatever else uses the phrase, which is the
+    # exact failure the question exists to prevent.
+    $SUDO grep -q "\"accountPath\": \"$ACCOUNT_INDEX\"" "$_preset_file" \
+      || die "could not set the account number in $_preset_file"
+    ok "producing as account $ACCOUNT_INDEX of the phrase"
+  fi
+
+  if [ -n "$CHECK_INTERVAL_MS" ]; then
+    $SUDO sed -i "s/\"blockProductionCheckInterval\"[[:space:]]*:[[:space:]]*[0-9]*/\"blockProductionCheckInterval\": $CHECK_INTERVAL_MS/" \
+      "$_preset_file"
+    # Verified in the same file it was written to, for the same reason the
+    # account is: a sed that matched nothing leaves the image's value in place
+    # and says nothing, and the node then checks for work on a schedule nobody
+    # chose. That is not visible anywhere except in blocks not produced.
+    $SUDO grep -q "\"blockProductionCheckInterval\": $CHECK_INTERVAL_MS" "$_preset_file" \
+      || die "could not set the block check interval in $_preset_file"
+    ok "checking for work every ${CHECK_INTERVAL_MS}ms"
+  fi
+
   PRESET_ARGS="-e XL1_PRESETS_DIR=/presets -v $PRESETS_DIR:/presets"
-  ok "producing as account $ACCOUNT_INDEX of the phrase"
 fi
 
 if [ -n "$PRODUCER_UNIT_NAME" ]; then

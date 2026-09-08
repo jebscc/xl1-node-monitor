@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.38.0"
+AGENT_VERSION = "1.39.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -900,6 +900,11 @@ def host_metrics():
             if total:
                 data["disk_used_percent"] = round((total - free) / total * 100, 1)
                 data["disk_free_gb"] = round(free / 1073741824.0, 1)
+                # The size of the volume, so a percentage has something to be a
+                # percentage OF. 47% of a 58 GB card and 47% of an 8 GB one are
+                # different situations, and the panel could not tell them apart
+                # while it only had the ratio and the remainder.
+                data["disk_total_gb"] = round(total / 1073741824.0, 1)
         except Exception:
             pass
 

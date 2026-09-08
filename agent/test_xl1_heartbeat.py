@@ -531,7 +531,7 @@ REPORTED_FIELDS = {
     # Host vitals. The Pi-only ones are absent elsewhere by design, not by
     # failure: Windows has no load average and no vcgencmd.
     "load_1", "load_5", "load_15", "cpu_cores",
-    "swap_used_mb", "swap_total_mb", "disk_free_gb",
+    "swap_used_mb", "swap_total_mb", "disk_free_gb", "disk_total_gb",
     "zram_used_mb", "zram_total_mb", "swapfile_used_mb", "swapfile_total_mb",
     "undervolted_now", "undervolted_ever", "throttled_now", "throttled_ever",
     "freq_capped_now", "freq_capped_ever", "soft_temp_now", "soft_temp_ever",
@@ -3526,3 +3526,30 @@ def test_it_reads_the_shape_the_node_actually_serves(monkeypatch):
     # counts stay at the top level in the same document, so both roots have to
     # be handled -- getting one right is what hid this.
     assert got["publishes_rejected"] == 0
+
+
+def test_disk_total_is_reported_and_agrees_with_the_percentage():
+    """The volume's size, beside the ratio and the remainder.
+
+    Without it the panel could say "47% used" and "18.9 GB free" but not how
+    big the card is, which is the number that makes the other two mean
+    something. The three have to agree: free / (1 - used) is the total, and a
+    total that disagreed would be worse than none.
+    """
+    d = agent.host_metrics()
+    total = d.get("disk_total_gb")
+    free = d.get("disk_free_gb")
+    pct = d.get("disk_used_percent")
+    if total is None:            # no readable volume on this runner
+        assert free is None and pct is None
+        return
+    assert total >= free, (total, free)
+    # Derived the way the panel derives it when an older agent sends no total.
+    #
+    # Tolerance is relative, not absolute: disk_used_percent is rounded to one
+    # decimal, and free/(1-p) magnifies that rounding by 1/(1-p)^2 -- a quarter
+    # of a gigabyte on a 476 GB volume, and far less on a Pi's card. Half a
+    # percent covers it, and the panel rounds to whole GB above 10 anyway, so
+    # an error this size cannot change what is printed.
+    derived = free / (1 - pct / 100)
+    assert abs(derived - total) < total * 0.005, (free, pct, total, derived)

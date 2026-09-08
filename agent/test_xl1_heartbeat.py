@@ -3528,6 +3528,27 @@ def test_it_reads_the_shape_the_node_actually_serves(monkeypatch):
     assert got["publishes_rejected"] == 0
 
 
+def test_every_disk_branch_reports_the_total():
+    """The volume size has to be set wherever the other two are.
+
+    host_metrics reads the disk twice: statvfs on POSIX, shutil everywhere
+    else. disk_total_gb was first added to the shutil branch alone -- the one
+    a Pi never reaches -- so the field shipped, published, and reported
+    nothing on every machine that has it. CI caught it only because its runner
+    happens to take the other branch, which is luck rather than a check.
+
+    Counting is enough here and a live call is not: whichever branch this
+    runner takes, the other one is unreachable from it.
+    """
+    src = (Path(__file__).parent / "xl1_heartbeat.py").read_text(encoding="utf-8")
+    pct = src.count('data["disk_used_percent"]')
+    tot = src.count('data["disk_total_gb"]')
+    assert pct >= 2, "expected both disk readers to still be there, found %d" % pct
+    assert tot == pct, (
+        "%d branches set disk_used_percent but %d set disk_total_gb -- a node "
+        "taking the odd one out reports a percentage of nothing" % (pct, tot))
+
+
 def test_disk_total_is_reported_and_agrees_with_the_percentage():
     """The volume's size, beside the ratio and the remainder.
 

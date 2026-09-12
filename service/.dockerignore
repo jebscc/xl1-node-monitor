@@ -22,4 +22,3 @@ pnpm-debug.log*
 # Not needed to run the service
 LICENSE
 README.md
-eslint.config.mjs

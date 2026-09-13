@@ -36,6 +36,27 @@ services:
     volumes:
       # Host-side, so a rebuild cannot discard anchored payloads.
       - /var/lib/xl1-attestations:/attestations
+    # ONE SOURCE FOR THE SECRETS, and it is the file bootstrap-pi.sh writes.
+    #
+    # These used to arrive by substitution -- XYO_WALLET_MNEMONIC and
+    # XL1_ANCHOR_TOKEN read out of a `.env` beside this file. That is a SECOND
+    # copy of the same two secrets, and on 2026-09-12 the copies drifted: the
+    # service came up holding a token from August while the agent sent the
+    # current one, so every attestation was refused with a 401 and anchoring
+    # stopped for 21 hours. Nothing looked wrong -- the container was healthy,
+    # both ports were published, and the agent logs the refusal once.
+    #
+    # env_file is read by the docker CLIENT, and this file is root-only, so
+    # compose must be run with sudo here. That is a feature: without it the
+    # command fails loudly instead of starting a service with no key.
+    #
+    # Optional, so an operator who keeps their secrets elsewhere can point
+    # ANCHOR_ENV at their own file rather than being forced onto this layout.
+    # If neither exists the service starts unsigned and says so, which is what
+    # it did before.
+    env_file:
+      - path: ${ANCHOR_ENV:-/etc/xl1-anchor.env}
+        required: false
     environment:
       XL1_SERVICE_PORT: "8090"
       # 0.0.0.0 INSIDE the container, deliberately. The service binds loopback
@@ -60,10 +81,12 @@ services:
       # reports stake as null, which is what it did before this existed.
       XL1_SEQUENCE_EVM_RPC_URL: ${XL1_SEQUENCE_EVM_RPC_URL:-}
       XL1_MAINNET_EVM_RPC_URL: ${XL1_MAINNET_EVM_RPC_URL:-}
-      # Attestation signing. Empty by default; see the note at the top about
-      # which key belongs here and why the token is not optional alongside it.
-      XYO_WALLET_MNEMONIC: ${XYO_WALLET_MNEMONIC:-}
-      XL1_ANCHOR_TOKEN: ${XL1_ANCHOR_TOKEN:-}
+      # Attestation signing is NOT listed here on purpose. `environment`
+      # overrides `env_file`, so a line like `XL1_ANCHOR_TOKEN: ${VAR:-}`
+      # would blank the token from the env file whenever the shell variable
+      # happened to be unset -- silently, and only at the moment somebody
+      # deployed from a different terminal. The secrets come from env_file
+      # above and from nowhere else.
       # An anchored payload is written here before the caller is answered. The
       # chain keeps only a hash, so a response lost in transit would otherwise
       # take the only copy with it -- which has happened. Mounted below so it

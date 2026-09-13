@@ -184,6 +184,36 @@ producer_role() {
 producer_preset() {
   printf '%s' "$PRESETS_DIR/roles/$(producer_role).json"
 }
+# WHAT THE NODE IS ALLOWED TO SEE, which is not everything in the file.
+#
+# $PRODUCER_ENV does two jobs: it is the file an operator backs up, and it is
+# handed to the container with --env-file. Two of its keys belong to the first
+# job only -- the comment where they are written says exactly that, "the node
+# does not read this -- the preset is still the mechanism" -- and handing them
+# over is not harmless. The entrypoint turns them into a top-level run config
+# and xl1-cli 5.3.2 refuses the whole thing:
+#
+#   CliConfigError: Invalid configuration
+#   Unrecognized keys: "accountIndex", "blockCheckIntervalMs"
+#
+# The producer then crash-loops on exit 78, EX_CONFIG, with a preset that is
+# perfectly valid sitting mounted beside it.
+#
+# IT ONLY BITES A CONTAINER CREATED AFTER THOSE KEYS STARTED BEING WRITTEN.
+# Two Pis set up before that kept producing for a week; the third would not
+# start at all, on identical images and an identical CLI. Every existing node
+# is one `docker rm` away from it, so this is not only about new machines.
+#
+# The keys stay in the file. They are why a restore can tell which account a
+# machine is, which is worth more than the line that removes them here.
+RECORD_ONLY_KEYS='XL1_ACCOUNT_INDEX|XL1_BLOCK_CHECK_INTERVAL_MS'
+
+producer_runtime_env() { # <src> <dest>: the env file, minus what the node rejects
+  # umask, not a later chmod: the phrase is in here, and a file that is
+  # briefly world-readable is world-readable.
+  $SUDO sh -c "umask 077; grep -vE '^($RECORD_ONLY_KEYS)=' '$1' > '$2'"
+}
+
 
 producer_account() {
   _acct="$($SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
@@ -2436,14 +2466,29 @@ if [ -n "$PRODUCER_UNIT_NAME" ]; then
     warn "this node produces as account $ACCOUNT_INDEX, which needs the preset mount" \
          "the unit's ExecStart must carry -e XL1_PRESETS_DIR=/presets -v $PRESETS_DIR:/presets, or the node comes back as account 0 -- a different address"
   fi
+  # A unit reads its OWN --env-file, so nothing above can filter it. Said here
+  # rather than fixed, because editing somebody's unit is not this script's
+  # business -- but a restart is exactly when this bites.
+  if $SUDO grep -qE "^($RECORD_ONLY_KEYS)=." "$PRODUCER_ENV" 2>/dev/null; then
+    warn "$PRODUCER_ENV carries keys the node rejects, and this unit loads that file whole" \
+         "the container will not start -- \"Unrecognized keys\", exit 78. Point the unit's --env-file at a copy without XL1_ACCOUNT_INDEX or XL1_BLOCK_CHECK_INTERVAL_MS; both settings already live in the preset."
+  fi
 else
   $SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true
+  # See RECORD_ONLY_KEYS: the file on disk is not what the node may be given.
+  _run_env="$PRODUCER_ENV.runtime"
+  producer_runtime_env "$PRODUCER_ENV" "$_run_env" \
+    || die "could not prepare the container environment from $PRODUCER_ENV"
   # shellcheck disable=SC2086
   $SUDO docker run -d --name xl1-producer --restart unless-stopped \
     -e NODE_OPTIONS="--max-old-space-size=$NODE_HEAP_MB" $PRESET_ARGS \
     --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
-    --env-file "$PRODUCER_ENV" xl1:local >/dev/null \
-    || die "the producer would not start. Check: sudo docker logs xl1-producer"
+    --env-file "$_run_env" xl1:local >/dev/null \
+    || { $SUDO rm -f "$_run_env"; die "the producer would not start. Check: sudo docker logs xl1-producer"; }
+  # The phrase is in it. docker has already copied the values into the
+  # container's own config, so this has no reason to outlive the command --
+  # and a second copy of the phrase on disk is the thing to avoid, not tidy up.
+  $SUDO rm -f "$_run_env"
   ok "heap capped at ${NODE_HEAP_MB}M, logs rotate at 10M x 3"
 fi
 

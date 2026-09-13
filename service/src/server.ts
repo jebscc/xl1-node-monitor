@@ -1110,16 +1110,24 @@ const fieldDaysCache: Record<string, { at: number, value: unknown }> = {}
  * the same chain and reaches the same answer. Nothing derivable from XL1 gets
  * written down and served as though it were.
  *
- * THE DAY BOUNDARY COMES FROM THE BLOCK, NOT FROM ARITHMETIC. Each
- * BlockBoundWitness carries `$epoch` in milliseconds, so a block is filed
- * under the UTC date it was built on. Dividing a block count by a nominal
- * block time -- which is what the panel had to do before -- drifts with the
- * chain: at 50s a "day" is 1,725 blocks, at 34s it is 2,540, and neither
- * number stays right for a week.
+ * THE DAY BOUNDARY COMES FROM THE BLOCK, NOT FROM ARITHMETIC. Dividing a
+ * block count by a nominal block time -- which is what the panel had to do
+ * before -- drifts with the chain: at 50s a "day" is 1,725 blocks, at 34s it
+ * is 2,540, and neither number stays right across a week.
  *
- * $epoch is metadata and excluded from _dataHash, so it is the producer's
- * clock rather than a consensus value. For "which day did this block land on"
- * that is the right precision and the wrong thing to bet money on.
+ * THE TIME IS A PAYLOAD, NOT A FIELD ON THE BOUND WITNESS. The protocol
+ * documents `$epoch` on BlockBoundWitness; this SDK does not return it. A
+ * real block's bound witness carries schema, addresses, payload_hashes,
+ * payload_schemas, previous_hashes, $signatures, block, chain, previous,
+ * protocol, step_hashes, _hash, _dataHash -- `$signatures` survives and
+ * `$epoch` does not. Written against the documented field, every block failed
+ * the finite check, nothing was ever bucketed, and the endpoint answered 200
+ * with an empty list: the shape of a week in which nobody produced.
+ *
+ * What is actually there is a `network.xyo.time` payload inside the same
+ * tuple, carrying `epoch` in milliseconds alongside the Ethereum block it was
+ * witnessed against. It costs no extra call, and it is a payload the block
+ * committed to rather than metadata outside the hash.
  */
 app.get('/field-days', async (req, res) => {
   const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
@@ -1144,6 +1152,7 @@ app.get('/field-days', async (req, res) => {
     const byDay = new Map<string, Map<string, number>>()
     const dayTotal = new Map<string, number>()
     let scanned = 0
+    let undated = 0
     let truncated = false
     let reachedCutoff = false
 
@@ -1161,13 +1170,22 @@ app.get('/field-days', async (req, res) => {
         // Blocks arrive as tuples of [boundwitness, ...payloads]; the
         // boundwitness is found by schema rather than by position, because a
         // block whose shape shifts would otherwise be silently skipped.
-        const parts = (Array.isArray(blk) ? blk : [blk]) as
-          { schema?: string, addresses?: string[], $epoch?: number }[]
-        const bw = parts.find((x) => x?.schema === 'network.xyo.boundwitness')
+        // A block is [boundWitness, payloads[]]. The bound witness is found
+        // by schema rather than by position; the payloads are flattened out
+        // of the nested array beside it.
+        const parts = (Array.isArray(blk) ? blk : [blk]) as unknown[]
+        const flat = parts.flatMap((x) => (Array.isArray(x) ? x : [x])) as
+          { schema?: string, addresses?: string[], epoch?: number }[]
+        const bw = flat.find((x) => x?.schema === 'network.xyo.boundwitness')
         scanned += 1
         if (!bw) continue
-        const epoch = Number(bw.$epoch)
-        if (!Number.isFinite(epoch)) continue
+        // See the note above: the time lives in a payload, not on the bound
+        // witness. Skipped rather than guessed when it is absent -- filing a
+        // block under the wrong day is worse than not counting it, and the
+        // count is reported so a gap is visible.
+        const time = flat.find((x) => x?.schema === 'network.xyo.time')
+        const epoch = Number(time?.epoch)
+        if (!Number.isFinite(epoch)) { undated += 1; continue }
         if (epoch < cutoff) { reachedCutoff = true; break }
         const date = new Date(epoch).toISOString().slice(0, 10)
         const row = byDay.get(date) ?? new Map<string, number>()
@@ -1185,11 +1203,23 @@ app.get('/field-days', async (req, res) => {
       if (scanned >= FIELD_DAYS_MAX_BLOCKS) truncated = true
     }
 
-    // Oldest first, and the partial day at the far end is dropped: the scan
-    // stopped mid-way through it, so its counts are a fraction of a day
-    // presented beside whole ones.
+    // Oldest first. The far day is dropped ONLY when the scan stopped on the
+    // block ceiling, because that is the case where it stopped mid-day and
+    // the counts are a fraction of one presented beside whole ones.
+    //
+    // THIS WAS BACKWARDS AND COST A WHOLE DAY. Dropping on reachedCutoff is
+    // exactly wrong: the cutoff is midnight UTC, so a scan that reaches it
+    // has walked past the START of the oldest day and that day is complete.
+    // days=2 returned two days instead of three and days=7 would have
+    // returned six -- a week's card quietly missing its far end, with the
+    // dates on screen making it look deliberate.
     const dates = [...byDay.keys()].sort()
-    if (reachedCutoff && dates.length) dates.shift()
+    if (truncated && dates.length) dates.shift()
+
+    // The NEAR day is partial by definition -- today is still being built --
+    // and that is left in on purpose. Share is a ratio against that day's own
+    // block count, so a part-day compares honestly with a whole one; it is
+    // the COUNTS that would mislead, and the card shows share.
 
     const out = dates.map((date) => ({
       date,
@@ -1201,7 +1231,10 @@ app.get('/field-days', async (req, res) => {
         .sort((a, b) => b.blocks - a.blocks),
     }))
 
-    const value = { network, days: out, scanned, truncated,
+    // `undated` is reported rather than swallowed: it was zero in testing,
+    // and if it ever is not, the days below are missing blocks and the reader
+    // should know before reading a share off them.
+    const value = { network, days: out, scanned, undated, truncated,
                     complete: reachedCutoff, at: new Date().toISOString() }
     fieldDaysCache[key] = { at: Date.now(), value }
     return res.json(value)

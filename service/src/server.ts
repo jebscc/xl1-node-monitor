@@ -1067,17 +1067,47 @@ app.get('/explorer/block/:number', (req, res) => {
 // a model rather than measuring one. The share and the field are measured; the
 // prediction is left out.
 //
-// One RPC call. blocksByNumber batches to 2000, so a 1000-block window (about
-// five hours at the current rate) is a single request plus one balance lookup
-// per producer found.
+// blocksByNumber batches to 2000, so anything larger is several requests --
+// which is why the window was capped there. It is batched now, because the
+// panel offers 1,000 / 2,000 / 5,000 / 10,000 and the old cap answered the
+// top three with the same 2,000-block tally under different labels.
+//
+// ONE SCAN, MANY TALLIES. A 10,000-block scan already contains the answer for
+// every smaller window, so `steps` asks for several at once and the deepest
+// one decides the cost. Four separate requests would have pulled 18,000
+// blocks to learn what 10,000 already said.
+//
+// WHAT IT COSTS, measured against the live gateway on 2026-09-12: 3.2 kB a
+// block, and about 1.15s per 2,000-block batch. So 10,000 blocks is five
+// requests, 31 MB and roughly six seconds. That is why 25,000 and up were
+// refused: 100,000 would be 308 MB pulled over a home connection into a Pi
+// with 905 MB of RAM, on the machine whose actual job is producing blocks.
 const peerCache: Record<string, { value: unknown; at: number }> = {}
 const PEER_CACHE_MS = 10 * 60 * 1000
+/** What blocksByNumber will return in one request. */
+const PEER_BATCH = 2000
+/**
+ * The deepest scan this will do, and it is a judgement rather than a limit
+ * of the protocol. 10,000 blocks is about five days and 31 MB; 25,000 is
+ * twelve days and 77 MB; 100,000 is forty-eight days and 308 MB. This
+ * process shares a Raspberry Pi with a block producer, and the smallest of
+ * those machines has 905 MB of RAM.
+ */
+const PEER_WINDOW_MAX = 10000
 
 app.get('/peers', async (req, res) => {
   const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
   const requested = Number(req.query.window)
-  const window = Math.min(2000, Math.max(50, Number.isFinite(requested) ? requested : 1000))
-  const key = `${network}:${window}`
+  const window = Math.min(PEER_WINDOW_MAX,
+    Math.max(50, Number.isFinite(requested) ? requested : 1000))
+  // Extra depths to tally from the same scan. Anything deeper than the window
+  // is dropped rather than silently served short -- the old cap did that and
+  // three dropdown entries showed identical numbers.
+  const steps = String(req.query.steps ?? '')
+    .split(',').map((x) => Number(x.trim()))
+    .filter((n) => Number.isFinite(n) && n >= 50 && n <= window)
+    .sort((a, b) => a - b)
+  const key = `${network}:${window}:${steps.join('-')}`
 
   const cached = peerCache[key]
   if (cached && Date.now() - cached.at < PEER_CACHE_MS) return res.json(cached.value)
@@ -1086,22 +1116,42 @@ app.get('/peers', async (req, res) => {
     const { connection: { viewer } } = await getReadGateway(network)
     const head = Number(await viewer.block.currentBlockNumber())
     const count = Math.min(window, head + 1)
-    const batch = await viewer.block.blocksByNumber(
-      toXL1BlockNumber(head, { name: 'peer scan start block' }), count)
+    // SEQUENTIAL, not parallel. Five simultaneous 6 MB responses is 30 MB of
+    // buffers arriving at once on a machine that is also building blocks;
+    // one at a time costs a few seconds more and a fifth of the peak.
+    const batches: unknown[] = []
+    for (let taken = 0; taken < count; taken += PEER_BATCH) {
+      const from = head - taken
+      const size = Math.min(PEER_BATCH, count - taken)
+      if (from < 0) break
+      batches.push(await viewer.block.blocksByNumber(
+        toXL1BlockNumber(from, { name: 'peer scan start block' }), size))
+    }
+    const batch = batches.flatMap((b) => (Array.isArray(b) ? b : [b]))
 
-    const blocks: Record<string, number> = {}
-    let inspected = 0
+    // Newest first, one entry per block, so a prefix of this array IS the
+    // tally for a shorter window. Only the signer lists are kept: the raw
+    // batches are 6 MB each and holding five of them on a Pi is how a chart
+    // costs the node a block.
+    const perBlock: string[][] = []
     for (const blk of (Array.isArray(batch) ? batch : [batch])) {
       const parts = Array.isArray(blk) ? blk : [blk]
       const bw = parts.find((p: { schema?: string }) => p?.schema === 'network.xyo.boundwitness') as
         { addresses?: string[] } | undefined
       if (!bw) continue
-      inspected++
       // A block can carry several signers; each is credited once per block.
-      for (const a of new Set((bw.addresses ?? []).map(normalizeAddress))) {
-        blocks[a] = (blocks[a] ?? 0) + 1
-      }
+      perBlock.push([...new Set((bw.addresses ?? []).map(normalizeAddress))])
     }
+
+    const tally = (depth: number) => {
+      const out: Record<string, number> = {}
+      for (const signers of perBlock.slice(0, depth)) {
+        for (const a of signers) out[a] = (out[a] ?? 0) + 1
+      }
+      return out
+    }
+    const blocks = tally(perBlock.length)
+    const inspected = perBlock.length
 
     // Balances decide the expected share, so they are read for every producer
     // found rather than only for ours -- a share is meaningless without the
@@ -1127,6 +1177,24 @@ app.get('/peers', async (req, res) => {
       // inflate everyone else's expected share.
       totalBalance: producers.reduce((t, p) => t + (p.balance ?? 0), 0),
       balancesRead: producers.filter((p) => p.balance !== null).length,
+      // The shorter windows, off the same scan. Named by the depth asked
+      // for, and absent entirely when none were -- a caller that did not ask
+      // should not have to know this exists.
+      ...(steps.length ? {
+        steps: Object.fromEntries(steps.map((depth) => {
+          const counts = tally(depth)
+          const rows = Object.entries(counts)
+            .map(([address, n]) => ({ address, blocks: n }))
+            .sort((a, b) => b.blocks - a.blocks)
+          return [String(depth), {
+            // What was actually inspected, which is less than asked for when
+            // the chain is younger than the window.
+            blocksInspected: Math.min(depth, perBlock.length),
+            producers: rows,
+            totalBlocks: rows.reduce((t, r) => t + r.blocks, 0),
+          }]
+        })),
+      } : {}),
       at: new Date().toISOString(),
     }
     peerCache[key] = { value, at: Date.now() }

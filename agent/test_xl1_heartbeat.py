@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import xl1_heartbeat as agent  # noqa: E402
+import xl1_heartbeat as agent
 
 
 # Real output from the Pi on 2026-08-22, when the tag had moved off the
@@ -417,7 +417,7 @@ def test_implausible_versions_rejected(value):
 def test_over_long_registry_version_is_dropped_not_forwarded(monkeypatch, capsys):
     """A 40-char version would fail the backend's max_length and 422 the whole
     heartbeat -- the node would read OFFLINE and alert, over bad metadata."""
-    import io as _io, json as _json
+    import json as _json
 
     class _Resp:
         status = 200
@@ -496,6 +496,9 @@ REPORTED_FIELDS = {
     # standings can be drawn. Collected since 1.37.0; see fetch_peers for why
     # that reverses an earlier rule rather than merely extending it.
     "field_producers",
+    # One ranked field per scan depth, so the panel's window dropdown costs
+    # no extra request to this machine. Added with agent 1.40.0.
+    "field_windows",
     # container
     "container_status", "container_started_at", "container_error", "exit_code",
     "exited_at", "health_status", "image", "restart_count", "running",
@@ -2174,12 +2177,147 @@ def test_the_field_now_carries_addresses_and_says_so(monkeypatch):
     """
     _stub_peers(monkeypatch, _peers_body(50, 25, 15, 10))
     _, _, _, field = agent.fetch_peers("xl1-producer")
-    assert set(field) == {"leader", "median", "top3", "producers"}, field
+    # `windows` joined these on 2026-09-12 with agent 1.40.0: one ranked
+    # field per scan depth, so the panel can offer 1,000 / 2,000 / 5,000 /
+    # 10,000 without a second request reaching this machine. It is None here
+    # because this stub answers without a `steps` block, which is the shape
+    # an older xl1-service sends -- the agent must keep working against one.
+    assert set(field) == {"leader", "median", "top3", "producers", "windows"}, field
+    assert field["windows"] is None, "no steps in the answer means no windows"
     rows = field["producers"]
     assert [r["blocks"] for r in rows] == sorted(
         (r["blocks"] for r in rows), reverse=True), "the table must arrive ranked"
     assert all(r["address"] == r["address"].lower() for r in rows)
     assert abs(sum(r["share"] for r in rows) - 100.0) < 0.5
+
+
+def _with_steps(body, **steps):
+    """A /peers answer that also carries per-depth tallies."""
+    out = dict(body)
+    out["steps"] = {
+        str(depth): {
+            "blocksInspected": depth,
+            "totalBlocks": sum(blocks),
+            "producers": [{"address": "%040x" % (i + 1), "blocks": b}
+                          for i, b in enumerate(blocks)],
+        }
+        for depth, blocks in steps.items()
+    }
+    return out
+
+
+def test_the_windows_arrive_ranked_and_with_shares(monkeypatch):
+    """One field per scan depth, so the panel dropdown costs no request here.
+
+    A 10,000-block scan already contains the 1,000-block answer. Asking the
+    service four times would pull 18,000 blocks to learn what 10,000 said,
+    on a machine that is also producing them.
+    """
+    _stub_peers(monkeypatch, _with_steps(
+        _peers_body(50, 25, 15, 10), **{"1000": (50, 25, 15, 10), "10000": (600, 300, 60, 40)}))
+
+    _, _, _, field = agent.fetch_peers("xl1-producer")
+    windows = field["windows"]
+
+    assert sorted(windows) == ["1000", "10000"]
+    for w in windows.values():
+        rows = w["producers"]
+        assert [r["blocks"] for r in rows] == sorted(
+            (r["blocks"] for r in rows), reverse=True), "each window arrives ranked"
+        assert abs(sum(r["share"] for r in rows) - 100.0) < 0.5
+        # The real number of producers, so a capped list can say it is capped.
+        assert w["total"] == len(rows)
+    # The deep window is a different reading, not a copy of the short one:
+    # 50% of the last thousand blocks, 60% of the last ten thousand.
+    assert windows["1000"]["producers"][0]["share"] == 50.0
+    assert windows["10000"]["producers"][0]["share"] == 60.0
+
+
+def test_a_malformed_step_costs_that_step_and_nothing_else(monkeypatch):
+    """The rule the rest of this function already follows.
+
+    Every row here describes somebody else's machine. One bad entry in one
+    depth must not take away the share, the count, or the other depths --
+    losing a new figure is a gap, losing an old one is a regression.
+    """
+    body = _with_steps(_peers_body(50, 25, 15, 10), **{"1000": (50, 25, 15, 10)})
+    body["steps"]["2000"] = {"totalBlocks": 0, "producers": []}      # nothing to divide by
+    body["steps"]["5000"] = "not a dict at all"
+    _stub_peers(monkeypatch, body)
+
+    count, share, _, field = agent.fetch_peers("xl1-producer")
+
+    assert sorted(field["windows"]) == ["1000"]
+    assert count is not None and share is not None
+    assert field["producers"], "the original field survives a bad step"
+
+
+def test_it_asks_for_every_depth_in_one_scan(monkeypatch):
+    """The URL, because the saving is in asking once rather than four times."""
+    seen = {}
+
+    class _Resp:
+        status = 200
+        def read(self): return json.dumps(_peers_body(10)).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def _open(url, timeout=0):
+        seen["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", _open)
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "0x" + "0" * 40)
+    monkeypatch.setattr(agent, "PEERS_STEPS", [1000, 2000, 5000, 10000])
+    monkeypatch.setitem(agent._peers_cache, "value", None)
+    monkeypatch.setitem(agent._peers_cache, "at", 0.0)
+
+    agent.fetch_peers("xl1-producer")
+
+    assert "steps=1000%2C2000%2C5000%2C10000" in seen["url"], seen["url"]
+    # And the window is the DEEPEST step, since the rest come free with it.
+    assert "window=10000" in seen["url"], seen["url"]
+
+
+def test_no_steps_configured_asks_for_none(monkeypatch):
+    """An operator who sets XL1_PEERS_STEPS empty gets the old single scan."""
+    seen = {}
+
+    class _Resp:
+        status = 200
+        def read(self): return json.dumps(_peers_body(10)).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen",
+                        lambda url, timeout=0: (seen.update(url=url), _Resp())[1])
+    monkeypatch.setattr(agent, "REWARD_ADDRESS", "0x" + "0" * 40)
+    monkeypatch.setattr(agent, "PEERS_STEPS", [])
+    monkeypatch.setattr(agent, "PEERS_WINDOW", 1000)
+    monkeypatch.setitem(agent._peers_cache, "value", None)
+    monkeypatch.setitem(agent._peers_cache, "at", 0.0)
+
+    agent.fetch_peers("xl1-producer")
+
+    assert "steps=" not in seen["url"], seen["url"]
+    assert "window=1000" in seen["url"], seen["url"]
+
+
+def test_a_capped_window_still_reports_the_real_count(monkeypatch):
+    """Because the panel writes "100 of 140", and cannot without the 140.
+
+    peer_count answers this for the top-level field and speaks only for the
+    deepest window. A shallower depth has no such figure anywhere else in
+    the heartbeat, so a capped list would go out looking like a whole one.
+    """
+    blocks = tuple(range(200, 0, -1))          # 200 producers, cap is 100
+    _stub_peers(monkeypatch, _with_steps(_peers_body(*blocks), **{"1000": blocks}))
+
+    _, _, _, field = agent.fetch_peers("xl1-producer")
+    w = field["windows"]["1000"]
+
+    assert len(w["producers"]) == agent.MAX_FIELD_ROWS
+    assert w["total"] == 200
 
 
 def test_the_field_list_is_capped(monkeypatch):

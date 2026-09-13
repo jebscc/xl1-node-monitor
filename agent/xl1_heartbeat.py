@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.39.0"
+AGENT_VERSION = "1.40.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -143,6 +143,19 @@ OS_PENDING_INTERVAL = int(os.environ.get("XL1_OS_PENDING_INTERVAL", "900"))
 # field. One scan of a wide window, so it runs far slower than the heartbeat.
 PEERS_URL = os.environ.get("XL1_PEERS_URL", "http://127.0.0.1:8090/peers")
 PEERS_WINDOW = int(os.environ.get("XL1_PEERS_WINDOW", "1000"))
+# The depths the panel offers in its dropdown, tallied from ONE scan of the
+# deepest -- a 10,000-block scan already contains the 1,000-block answer, and
+# asking four times would pull 18,000 blocks to learn what 10,000 said.
+#
+# The ceiling is a judgement about this machine, not a protocol limit.
+# Measured 2026-09-12: 3.2 kB a block, so 10,000 blocks is 31 MB and about six
+# seconds. 25,000 would be 77 MB and 100,000 would be 308 MB pulled over a home
+# connection into a Pi with 905 MB of RAM -- on the machine whose actual job is
+# producing blocks. The chart is not worth the block.
+PEERS_STEPS = [
+    int(x) for x in os.environ.get("XL1_PEERS_STEPS", "1000,2000,5000,10000").split(",")
+    if x.strip().isdigit()
+]
 
 # How many producers the field list may carry. A SAFETY VALVE, not a display
 # choice: the page is meant to show every active producer, so this only exists
@@ -707,7 +720,8 @@ def _windows_memory():
         st.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
         if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
             return (None, None, None, None)
-        mb = lambda b: round(b / 1048576.0, 1)
+        def mb(b):
+            return round(b / 1048576.0, 1)
         # TotalPageFile is RAM + page file on Windows, so the page file alone is
         # the difference. Reported as swap because that is what it is used for.
         swap_total = max(0, st.ullTotalPageFile - st.ullTotalPhys)
@@ -1678,6 +1692,48 @@ def _peers_none(why):
     return None, None, None, None
 
 
+def _peer_windows(steps):
+    """Ranked producers per scan depth, or None if the service sent none.
+
+    The rows are shaped exactly like `field_producers`, so the panel draws one
+    with the code that already draws the other -- a second shape for the same
+    table is a second thing to keep in step.
+
+    They are wrapped in a `total` rather than sent bare, though, and that is
+    the one place the shapes differ. The list is capped at MAX_FIELD_ROWS and
+    the panel says so in words ("8 of 140") whenever the cap bites, which it
+    can only do if it is told the real number. `peer_count` supplies that for
+    the top-level field and speaks only for the deepest window; a shallower
+    depth has no such figure, and without one a capped list would present
+    itself as the whole field. Truncation stated, never silent.
+    """
+    if not isinstance(steps, dict):
+        return None
+    out = {}
+    for depth, row in steps.items():
+        if not isinstance(row, dict):
+            continue
+        total = row.get("totalBlocks")
+        producers = row.get("producers")
+        if not isinstance(producers, list) or not isinstance(total, int) or total <= 0:
+            continue
+        ranked = []
+        for p in producers:
+            if not isinstance(p, dict):
+                continue
+            blocks = p.get("blocks")
+            if not isinstance(blocks, (int, float)) or isinstance(blocks, bool):
+                continue
+            ranked.append({"address": str(p.get("address", "")).lower(),
+                           "blocks": blocks,
+                           "share": round(100.0 * blocks / total, 2)})
+        if ranked:
+            ranked.sort(key=lambda r: -r["blocks"])
+            out[str(depth)] = {"total": len(ranked),
+                               "producers": ranked[:MAX_FIELD_ROWS]}
+    return out or None
+
+
 def fetch_peers(name):
     """(peer_count, our_share_percent, window, field_shape) for the field.
 
@@ -1727,8 +1783,13 @@ def fetch_peers(name):
     if cached is not None and now - _peers_cache["at"] < PEERS_INTERVAL:
         return cached
     try:
-        url = PEERS_URL + "?" + urllib.parse.urlencode(
-            {"network": NODE_NETWORK, "window": PEERS_WINDOW})
+        # The window is the DEEPEST step when steps are configured, because
+        # every shallower tally comes out of the same scan for free.
+        want = max([PEERS_WINDOW] + PEERS_STEPS) if PEERS_STEPS else PEERS_WINDOW
+        params = {"network": NODE_NETWORK, "window": want}
+        if PEERS_STEPS:
+            params["steps"] = ",".join(str(x) for x in sorted(PEERS_STEPS))
+        url = PEERS_URL + "?" + urllib.parse.urlencode(params)
         with urllib.request.urlopen(url, timeout=120) as resp:
             if not (200 <= resp.status < 300):
                 return _peers_none("HTTP %s from %s" % (resp.status, PEERS_URL))
@@ -1785,6 +1846,11 @@ def fetch_peers(name):
                 "median": round(
                     shares[mid] if len(shares) % 2 else (shares[mid - 1] + shares[mid]) / 2, 2),
                 "top3": round(sum(shares[:3]), 2),
+                # One ranked list per depth, so the panel can offer a window
+                # without another request reaching this machine. Built in the
+                # same guard as the rest: a malformed step costs that step and
+                # not the reading.
+                "windows": _peer_windows(body.get("steps")),
                 # Biggest first, so the table reads as a ranking without the
                 # page having to sort it. Rows whose count is not a number are
                 # skipped rather than raising -- the same rule the shares above
@@ -3094,6 +3160,7 @@ def collect():
         payload["field_leader_share"] = peer_field.get("leader")
         payload["field_median_share"] = peer_field.get("median")
         payload["field_producers"] = peer_field.get("producers")
+        payload["field_windows"] = peer_field.get("windows")
         payload["field_top3_share"] = peer_field.get("top3")
     _degraded_note(degraded, "peers",
                    bool(PEERS_URL) and bool(name) and peer_count is None)
@@ -3692,7 +3759,7 @@ def main():
         # so calling it every cycle costs nothing until one is due.
         try:
             attest(find_container(), payload)
-        except Exception as e:                       # noqa: BLE001
+        except Exception as e:
             # Attestation is an extra, not the job. It must never be able to
             # stop the thing that reports whether this node is alive.
             _warn_once("attest-failed", "attestation attempt failed: %s" % e)

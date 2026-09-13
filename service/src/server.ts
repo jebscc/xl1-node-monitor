@@ -1095,6 +1095,123 @@ const PEER_BATCH = 2000
  */
 const PEER_WINDOW_MAX = 10000
 
+// A day of blocks is ~1,700 at this chain's pace, so a week is ~12,000. The
+// ceiling is a safety rail, not the answer: the scan stops on $epoch, and when
+// it stops on this instead it says so and the caller relabels the period.
+const FIELD_DAYS_MAX_BLOCKS = 25000
+const FIELD_DAYS_CACHE_MS = 10 * 60 * 1000
+const fieldDaysCache: Record<string, { at: number, value: unknown }> = {}
+
+/** Who produced, bucketed by the day it actually happened.
+ *
+ * WHY THIS IS NOT A STORED TABLE. Every figure here is on a public chain. A
+ * snapshot kept in a database would be this host's claim about last Tuesday,
+ * and a reader would have to trust it; a scan is re-runnable by anyone with
+ * the same chain and reaches the same answer. Nothing derivable from XL1 gets
+ * written down and served as though it were.
+ *
+ * THE DAY BOUNDARY COMES FROM THE BLOCK, NOT FROM ARITHMETIC. Each
+ * BlockBoundWitness carries `$epoch` in milliseconds, so a block is filed
+ * under the UTC date it was built on. Dividing a block count by a nominal
+ * block time -- which is what the panel had to do before -- drifts with the
+ * chain: at 50s a "day" is 1,725 blocks, at 34s it is 2,540, and neither
+ * number stays right for a week.
+ *
+ * $epoch is metadata and excluded from _dataHash, so it is the producer's
+ * clock rather than a consensus value. For "which day did this block land on"
+ * that is the right precision and the wrong thing to bet money on.
+ */
+app.get('/field-days', async (req, res) => {
+  const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
+  const days = Math.min(30, Math.max(2, Number(req.query.days) || 7))
+  const key = `${network}:${days}`
+
+  const cached = fieldDaysCache[key]
+  if (cached && Date.now() - cached.at < FIELD_DAYS_CACHE_MS) return res.json(cached.value)
+
+  try {
+    const { connection: { viewer } } = await getReadGateway(network)
+    const head = Number(await viewer.block.currentBlockNumber())
+    // Midnight UTC, `days` ago. The oldest bucket is therefore a WHOLE day
+    // rather than a partial one -- a half-day bucket looks like a producer
+    // halving its output, which is the one reading this chart must not invite.
+    const cutoff = Date.UTC(
+      new Date().getUTCFullYear(), new Date().getUTCMonth(),
+      new Date().getUTCDate() - days)
+
+    // date -> address -> blocks, and date -> blocks counted, because a share
+    // without its denominator cannot be checked.
+    const byDay = new Map<string, Map<string, number>>()
+    const dayTotal = new Map<string, number>()
+    let scanned = 0
+    let truncated = false
+    let reachedCutoff = false
+
+    // SEQUENTIAL, for the same reason /peers is: this runs on a Raspberry Pi
+    // that is also building blocks, and several 6 MB responses arriving at
+    // once is how a chart costs its owner one.
+    for (let from = head; from >= 0 && scanned < FIELD_DAYS_MAX_BLOCKS;) {
+      const size = Math.min(PEER_BATCH, from + 1, FIELD_DAYS_MAX_BLOCKS - scanned)
+      const got = await viewer.block.blocksByNumber(
+        toXL1BlockNumber(from, { name: 'field-days start block' }), size)
+      const batch = Array.isArray(got) ? got : [got]
+      if (!batch.length) break
+
+      for (const blk of batch) {
+        // Blocks arrive as tuples of [boundwitness, ...payloads]; the
+        // boundwitness is found by schema rather than by position, because a
+        // block whose shape shifts would otherwise be silently skipped.
+        const parts = (Array.isArray(blk) ? blk : [blk]) as
+          { schema?: string, addresses?: string[], $epoch?: number }[]
+        const bw = parts.find((x) => x?.schema === 'network.xyo.boundwitness')
+        scanned += 1
+        if (!bw) continue
+        const epoch = Number(bw.$epoch)
+        if (!Number.isFinite(epoch)) continue
+        if (epoch < cutoff) { reachedCutoff = true; break }
+        const date = new Date(epoch).toISOString().slice(0, 10)
+        const row = byDay.get(date) ?? new Map<string, number>()
+        // One credit per block per signer: a block with several signers is
+        // still one block, and crediting each of them twice would inflate a
+        // co-signed field against a solo one.
+        for (const a of new Set((bw.addresses ?? []).map(normalizeAddress))) {
+          row.set(a, (row.get(a) ?? 0) + 1)
+        }
+        byDay.set(date, row)
+        dayTotal.set(date, (dayTotal.get(date) ?? 0) + 1)
+      }
+      if (reachedCutoff) break
+      from -= size
+      if (scanned >= FIELD_DAYS_MAX_BLOCKS) truncated = true
+    }
+
+    // Oldest first, and the partial day at the far end is dropped: the scan
+    // stopped mid-way through it, so its counts are a fraction of a day
+    // presented beside whole ones.
+    const dates = [...byDay.keys()].sort()
+    if (reachedCutoff && dates.length) dates.shift()
+
+    const out = dates.map((date) => ({
+      date,
+      // `depth` names the denominator, matching what the panel already reads
+      // from a scan window: blocks counted, not blocks that exist.
+      depth: dayTotal.get(date) ?? 0,
+      producers: [...(byDay.get(date) ?? new Map())]
+        .map(([address, blocks]) => ({ address, blocks }))
+        .sort((a, b) => b.blocks - a.blocks),
+    }))
+
+    const value = { network, days: out, scanned, truncated,
+                    complete: reachedCutoff, at: new Date().toISOString() }
+    fieldDaysCache[key] = { at: Date.now(), value }
+    return res.json(value)
+  } catch (e) {
+    // Said, not swallowed: an empty list would read as a week in which nobody
+    // produced anything.
+    return res.status(502).json({ error: String(e).slice(0, 300) })
+  }
+})
+
 app.get('/peers', async (req, res) => {
   const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
   const requested = Number(req.query.window)

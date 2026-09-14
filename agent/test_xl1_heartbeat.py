@@ -455,7 +455,7 @@ REPORTED_FIELDS = {
     "build_budget_ms",
     # Inside `security`, which is owner-only. Listed here because they are
     # still fields the heartbeat carries, and the guard above now sees them.
-    "firewall", "exposed_ports", "ssh_password_auth", "auto_updates",
+    "firewall", "exposed_ports", "tailnet_ports", "ssh_password_auth", "auto_updates",
     # When unattended-upgrades actually runs, and whether its timer is live.
     "auto_updates_at", "auto_updates_window", "auto_updates_timer",
     # Whether the block counts were made against the address this node signs
@@ -655,7 +655,7 @@ def _quiet_security(monkeypatch, tmp_path, auto):
     conf file it prefers and the systemctl fallback behind it."""
     monkeypatch.setattr(agent, "UFW_CONF", str(tmp_path / "no-such-ufw.conf"))
     monkeypatch.setattr(agent, "run", lambda *_a, **_k: "")
-    monkeypatch.setattr(agent, "_exposed_ports", lambda: [])
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: ([], []))
     monkeypatch.setattr(agent, "_ssh_password_auth", lambda: False)
     monkeypatch.setattr(agent, "_auto_updates", lambda: auto)
 
@@ -3472,13 +3472,13 @@ def test_the_first_anchor_does_not_wait_for_the_host_to_be_an_hour_old(monkeypat
 def test_a_loopback_publish_is_not_exposed(monkeypatch):
     monkeypatch.setattr(agent, "run", lambda *a, **k:
                         "xl1-service-anchor-1\t127.0.0.1:8090->8090/tcp")
-    assert agent._exposed_ports() == []
+    assert agent._exposed_ports() == ([], [])
 
 
 def test_a_publish_to_every_interface_is_exposed(monkeypatch):
     monkeypatch.setattr(agent, "run", lambda *a, **k:
                         "xl1-service-anchor-1\t0.0.0.0:8090->8090/tcp")
-    assert agent._exposed_ports() == ["xl1-service-anchor-1 0.0.0.0:8090->8090/tcp"]
+    assert agent._exposed_ports() == (["xl1-service-anchor-1 0.0.0.0:8090->8090/tcp"], [])
 
 
 def test_an_ipv6_publish_is_not_read_as_loopback(monkeypatch):
@@ -3486,7 +3486,7 @@ def test_an_ipv6_publish_is_not_read_as_loopback(monkeypatch):
     mapping, which then matches nothing and is quietly called contained. The
     port is on the network and the panel says it is not."""
     monkeypatch.setattr(agent, "run", lambda *a, **k: "svc\t:::8090->8090/tcp")
-    assert agent._exposed_ports() == ["svc :::8090->8090/tcp"]
+    assert agent._exposed_ports() == (["svc :::8090->8090/tcp"], [])
 
 
 def test_an_ipv6_loopback_publish_is_contained(monkeypatch):
@@ -3495,13 +3495,94 @@ def test_an_ipv6_loopback_publish_is_contained(monkeypatch):
     no loopback form and reports a contained port as exposed. The port before
     the LAST colon is the only split that survives IPv6."""
     monkeypatch.setattr(agent, "run", lambda *a, **k: "svc	[::1]:8090->8090/tcp")
-    assert agent._exposed_ports() == []
+    assert agent._exposed_ports() == ([], [])
 
 
 def test_a_container_port_that_is_not_published_is_not_exposed(monkeypatch):
     """`8090/tcp` with no arrow is reachable only inside the container."""
     monkeypatch.setattr(agent, "run", lambda *a, **k: "xl1-producer\t8090/tcp")
-    assert agent._exposed_ports() == []
+    assert agent._exposed_ports() == ([], [])
+
+
+def _ports_and_ifaces(docker_line, ip_line=None):
+    """A `run` stub that answers docker and `ip addr` differently.
+
+    Both readers go through the same run(), and a stub that returns one
+    string for everything fed the docker output to the interface parser.
+    That happened to be harmless -- no "inet" token in it -- which is the
+    kind of accident a test should not rest on.
+    """
+    def fake(argv, *a, **k):
+        if argv and argv[0] == "ip":
+            return ip_line
+        return docker_line
+    return fake
+
+
+# A TAILNET BIND IS NOT AN OPEN PORT, and this is the port that proved it.
+#
+# Measured from a second machine on the same LAN on 2026-09-14: ssh answered
+# and 8090 did not, because the anchor service is published to the Pi's
+# Tailscale address and to loopback, and to nothing else. It has to be
+# published there -- XL1_SERVICE_URL on Render is that address, and /chain
+# reads block heights through it -- so counting it as an exposure warned
+# every day about the one publish that cannot go away. A card that cries
+# wolf about the required case is not read when a real 0.0.0.0 turns up
+# beside it.
+
+def test_a_publish_to_the_tailnet_is_reported_apart(monkeypatch):
+    monkeypatch.setattr(agent, "run", _ports_and_ifaces(
+        "xl1-service-anchor-1\t100.100.100.100:8090->8090/tcp",
+        "3: tailscale0    inet 100.100.100.100/32 scope global tailscale0"))
+    exposed, tailnet = agent._exposed_ports()
+    assert exposed == []
+    assert tailnet == ["xl1-service-anchor-1 100.100.100.100:8090->8090/tcp"]
+
+
+def test_a_cgnat_address_that_is_not_on_the_interface_is_still_exposed(monkeypatch):
+    """THE REASON THIS READS THE INTERFACE INSTEAD OF MATCHING A RANGE.
+
+    100.64.0.0/10 is carrier-grade NAT space and Tailscale is only its
+    best-known occupant. An ISP handing out CGNAT addresses on the LAN would
+    make a genuinely exposed port read as a private mesh -- the worst
+    direction for this mistake to go. The interface cannot be argued with.
+    """
+    monkeypatch.setattr(agent, "run", _ports_and_ifaces(
+        "svc\t100.100.100.100:8090->8090/tcp",
+        "3: tailscale0    inet 100.100.200.200/32 scope global tailscale0"))
+    exposed, tailnet = agent._exposed_ports()
+    assert exposed == ["svc 100.100.100.100:8090->8090/tcp"]
+    assert tailnet == []
+
+
+def test_no_tailscale_interface_leaves_every_port_exposed(monkeypatch):
+    """Fails towards the warning. A port wrongly called exposed is noise; a
+    port wrongly called private is a hole nobody looks at again."""
+    monkeypatch.setattr(agent, "run", _ports_and_ifaces(
+        "svc\t100.100.100.100:8090->8090/tcp", None))
+    exposed, tailnet = agent._exposed_ports()
+    assert exposed == ["svc 100.100.100.100:8090->8090/tcp"]
+    assert tailnet == []
+
+
+def test_loopback_is_neither_exposed_nor_tailnet(monkeypatch):
+    """It is not on any network, so it belongs in neither list."""
+    monkeypatch.setattr(agent, "run", _ports_and_ifaces(
+        "svc\t127.0.0.1:8090->8090/tcp",
+        "3: tailscale0    inet 100.100.100.100/32 scope global tailscale0"))
+    assert agent._exposed_ports() == ([], [])
+
+
+def test_the_tailnet_list_travels_even_when_empty(monkeypatch):
+    """Empty and absent are different answers.
+
+    "No tailnet binds" is a finding; "this agent is too old to look" is not,
+    and the panel draws a different row for each.
+    """
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: ([], []))
+    monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
+    monkeypatch.setattr(agent, "_auto_updates", lambda: None)
+    assert agent.read_security_posture()["tailnet_ports"] == []
 
 
 def test_docker_that_will_not_answer_is_not_an_empty_list(monkeypatch):
@@ -3509,7 +3590,7 @@ def test_docker_that_will_not_answer_is_not_an_empty_list(monkeypatch):
     looked. Collapsing them reports a machine as contained on the strength of a
     command that failed."""
     monkeypatch.setattr(agent, "run", lambda *a, **k: None)
-    assert agent._exposed_ports() is None
+    assert agent._exposed_ports() == (None, None)
 
 
 def test_a_disabled_firewall_is_false_not_missing(monkeypatch):
@@ -3519,7 +3600,7 @@ def test_a_disabled_firewall_is_false_not_missing(monkeypatch):
     monkeypatch.setattr(agent, "UFW_CONF", "/nonexistent/ufw.conf")
     monkeypatch.setattr(agent, "run", lambda *a, **k:
                         "LoadState=loaded\nActiveState=inactive")
-    monkeypatch.setattr(agent, "_exposed_ports", lambda: [])
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: ([], []))
     monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
     monkeypatch.setattr(agent, "_auto_updates", lambda: None)
     assert agent.read_security_posture()["firewall"] is False
@@ -3532,7 +3613,7 @@ def _posture_with_conf(monkeypatch, tmp_path, text, unit):
     conf.write_text(text, encoding="utf-8")
     monkeypatch.setattr(agent, "UFW_CONF", str(conf))
     monkeypatch.setattr(agent, "run", lambda *a, **k: unit)
-    monkeypatch.setattr(agent, "_exposed_ports", lambda: [])
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: ([], []))
     monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
     monkeypatch.setattr(agent, "_auto_updates", lambda: None)
     return agent.read_security_posture()
@@ -3575,7 +3656,7 @@ def test_ufw_not_installed_is_not_protected(monkeypatch):
     monkeypatch.setattr(agent, "UFW_CONF", "/nonexistent/ufw.conf")
     monkeypatch.setattr(agent, "run", lambda *a, **k:
                         "LoadState=not-found\nActiveState=inactive")
-    monkeypatch.setattr(agent, "_exposed_ports", lambda: [])
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: ([], []))
     monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
     monkeypatch.setattr(agent, "_auto_updates", lambda: None)
     assert agent.read_security_posture()["firewall"] is False
@@ -3589,7 +3670,7 @@ def test_nothing_readable_at_all_is_a_failed_reader(monkeypatch):
     # property of the machine running it.
     monkeypatch.setattr(agent, "UFW_CONF", "/nonexistent/ufw.conf")
     monkeypatch.setattr(agent, "run", lambda *a, **k: None)
-    monkeypatch.setattr(agent, "_exposed_ports", lambda: None)
+    monkeypatch.setattr(agent, "_exposed_ports", lambda: (None, None))
     monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
     monkeypatch.setattr(agent, "_auto_updates", lambda: None)
     assert agent.read_security_posture() is None

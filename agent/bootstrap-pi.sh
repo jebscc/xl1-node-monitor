@@ -1736,6 +1736,51 @@ AUEOF
   fi
 }
 
+# WITHOUT THIS, "security updates install themselves" IS FALSE HERE.
+#
+# Raspberry Pi OS rebuilds Debian packages -- security fixes included -- and
+# serves them from archive.raspberrypi.com at a higher priority than Debian's
+# own. The distro's default Origins-Pattern lists only origin=Debian, so on
+# this OS unattended-upgrades matches nothing: measured on both reference
+# machines, it ran daily, returned success, and logged "No packages found
+# that can be upgraded unattended" against 52 and 56 pending packages.
+#
+# The WHOLE archive, not a security-only pattern, because Raspberry Pi OS has
+# no -security suite to point at. That is the trade and it is worth stating:
+# this installs everything the OS ships, not only fixes. The alternative on
+# this platform is installing nothing while the panel says otherwise.
+#
+# Docker and Tailscale are deliberately absent. Upgrading a container runtime
+# under a running producer is a person's decision, not a timer's.
+#
+# Its own file, sorting after the distro's 50unattended-upgrades, so the next
+# apt upgrade of that package cannot conflict with it. apt appends list
+# values across files, verified on the reference machine before this was
+# written rather than assumed.
+ensure_rpi_origins() {
+  $SUDO grep -qs 'Raspberry Pi Foundation' /etc/apt/apt.conf.d/52xl1-rpi-origins && return 0
+  $SUDO tee /etc/apt/apt.conf.d/52xl1-rpi-origins >/dev/null <<'RPIEOF'
+// Set by the Explorer Grid setup. Raspberry Pi OS serves its own rebuilds
+// of Debian packages -- security fixes included -- from
+// archive.raspberrypi.com, at a higher priority than Debian's own. The
+// distro default allows origin=Debian only, so without this line
+// unattended-upgrades matches nothing on this OS and logs "No packages
+// found that can be upgraded unattended" every day.
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Raspberry Pi Foundation";
+};
+RPIEOF
+  # Read back, like every other setting here: apt parses this file, and a
+  # syntax error would be silent until the next unattended run did nothing.
+  if $SUDO apt-config dump --no-empty Unattended-Upgrade::Origins-Pattern 2>/dev/null \
+     | grep -qs 'Raspberry Pi Foundation'; then
+    ok "and it can see the Raspberry Pi archive, where the fixes actually are"
+  else
+    warn "automatic updates cannot see the Raspberry Pi archive" \
+         "they will run daily and install nothing: see /etc/apt/apt.conf.d/52xl1-rpi-origins"
+  fi
+}
+
 auto_updates_on() {
   # Same file, and the same reading, as the agent reports from.
   _au="$($SUDO grep -hs "Unattended-Upgrade" /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null \
@@ -1748,6 +1793,10 @@ if auto_updates_on; then
   ok "security updates already install themselves"
   # Whoever turned them on, this machine still must not reboot itself.
   ensure_no_auto_reboot
+  # And whoever turned them on, on this OS they were pointed at an archive
+  # with nothing in it. Repairing that is the difference between the claim
+  # above being true and being a daily no-op.
+  ensure_rpi_origins
 else
   printf '\n'
   note "Nothing on this machine installs security updates. The panel counts"
@@ -1773,16 +1822,10 @@ else
       printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' \
         | $SUDO tee /etc/apt/apt.conf.d/20auto-upgrades >/dev/null
       ensure_no_auto_reboot
-      # OUR OWN drop-in rather than an edit to the distro's 50unattended-
+      # OUR OWN drop-ins rather than edits to the distro's 50unattended-
       # upgrades: that file is the distro's to change, and sorting after it
-      # means this wins without a merge conflict on the next apt upgrade.
-      #
-      # And deliberately NOT setting Origins-Pattern. The distro's own list
-      # is right for the distro, and this one matters: Raspberry Pi OS does
-      # not put security fixes in a separate -security suite the way stock
-      # Debian does -- the agent measured that and says so where it counts
-      # them. A hand-written security-only origin would install nothing here
-      # and look like it was working.
+      # means these win without a merge conflict on the next apt upgrade.
+      ensure_rpi_origins
       # Read back rather than assumed, like the account preset above: a
       # security setting that silently did not apply is worse than one
       # nobody switched on, because the panel will now say it is handled.

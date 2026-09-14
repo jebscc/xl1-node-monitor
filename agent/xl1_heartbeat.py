@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.40.0"
+AGENT_VERSION = "1.41.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -2544,6 +2544,32 @@ def _published_host_ip(mapping):
     return host.rsplit(":", 1)[0]
 
 
+def _tailnet_addresses():
+    """The addresses on this machine's Tailscale interface, as a set.
+
+    READ FROM THE INTERFACE, NOT MATCHED AGAINST A RANGE. 100.64.0.0/10 is
+    carrier-grade NAT space and Tailscale is only its best-known occupant --
+    an ISP that hands out CGNAT addresses on the LAN would make a genuinely
+    exposed port read as a private mesh, which is the worst direction for
+    this particular mistake.
+
+    Empty on a machine with no tailnet, and empty when the interface cannot
+    be read. Both leave every published port in the exposed list: a port
+    wrongly called exposed is noise, and a port wrongly called private is a
+    hole nobody looks at.
+    """
+    found = set()
+    for dev in ("tailscale0", "tailscale1"):
+        raw = run(["ip", "-o", "addr", "show", "dev", dev], timeout=5)
+        if not raw:
+            continue
+        for line in raw.splitlines():
+            parts = line.split()
+            for i, token in enumerate(parts):
+                if token in ("inet", "inet6") and i + 1 < len(parts):
+                    found.add(parts[i + 1].split("/")[0].strip().lower())
+    return found
+
 def _exposed_ports():
     """Container ports published to anything but this machine, or None.
 
@@ -2554,13 +2580,24 @@ def _exposed_ports():
     second container, or drop the bind prefix, and the port is on the network
     while every visible signal still says the firewall is on.
 
-    Returns a list of "name port" strings, empty when nothing is exposed, and
-    None when docker could not be asked -- which is not the same as nothing.
+    A PORT ON THE TAILNET IS NOT ON A NETWORK THE OPERATOR DOES NOT CONTROL,
+    and it is reported separately rather than not at all. The anchor service
+    on the reference machine is published to its Tailscale address because
+    the site reads block heights through it; measured from the LAN, that port
+    does not answer. Counting it as an exposure warned every day about the
+    one published port that has to be there, which is how a card stops being
+    read before a real 0.0.0.0 publish turns up beside it.
+
+    Returns (exposed, tailnet): two lists of "name mapping" strings, both
+    empty when nothing is published, and (None, None) when docker could not
+    be asked -- which is not the same as nothing.
     """
     out = run(["docker", "ps", "--format", "{{.Names}}	{{.Ports}}"], timeout=15)
     if out is None:
-        return None
+        return None, None
+    tailnet_ips = _tailnet_addresses()
     exposed = []
+    tailnet = []
     for line in out.splitlines():
         if "	" not in line:
             continue
@@ -2574,8 +2611,11 @@ def _exposed_ports():
             # interface and are exactly what this exists to catch.
             if bare.startswith("127.") or bare in ("::1", "localhost"):
                 continue
+            if bare.lower() in tailnet_ips:
+                tailnet.append("%s %s" % (name.strip(), mapping.strip()))
+                continue
             exposed.append("%s %s" % (name.strip(), mapping.strip()))
-    return exposed
+    return exposed, tailnet
 
 
 def _ssh_password_auth():
@@ -2744,9 +2784,14 @@ def read_security_posture():
     elif props.get("ActiveState"):
         out["firewall"] = (props["ActiveState"] == "active")
 
-    exposed = _exposed_ports()
+    exposed, tailnet = _exposed_ports()
     if exposed is not None:
         out["exposed_ports"] = exposed
+    # Sent even when empty, unlike exposed_ports above: "no tailnet binds"
+    # and "this agent is too old to look" are different answers, and the
+    # panel draws a different row for each.
+    if tailnet is not None:
+        out["tailnet_ports"] = tailnet
 
     ssh_pw = _ssh_password_auth()
     if ssh_pw is not None:

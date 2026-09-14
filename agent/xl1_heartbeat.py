@@ -43,7 +43,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.41.0"
+AGENT_VERSION = "1.41.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -2544,6 +2544,75 @@ def _published_host_ip(mapping):
     return host.rsplit(":", 1)[0]
 
 
+# SIOCGIFADDR. The ioctl that asks a socket for an interface's IPv4
+# address, from before netlink existed and still the answer when netlink is
+# not available -- which it is not inside this agent's unit.
+_SIOCGIFADDR = 0x8915
+
+# LINUX ONLY, and imported here rather than at the top of the file. The agent
+# runs on a Pi, but its test suite runs wherever the developer is -- and on
+# Windows a module-level `import fcntl` fails at collection, taking all 249
+# tests with it before one of them runs. Caught doing exactly that.
+try:
+    import fcntl as _fcntl
+except ImportError:                      # pragma: no cover - not Linux
+    _fcntl = None
+
+
+def _iface_ipv4(dev):
+    """One interface's IPv4 address, or None.
+
+    THROUGH AN AF_INET SOCKET, not a subprocess. `ip addr` needs AF_NETLINK
+    and the unit's RestrictAddressFamilies does not grant it, so shelling out
+    returned nothing on the machine while working perfectly by hand. AF_INET
+    is on that list, and this needs no more than a socket to ask a question
+    about.
+
+    None for an interface that does not exist, which is the ordinary case on
+    a machine with no tailnet.
+    """
+    if _fcntl is None:
+        return None
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            packed = _fcntl.ioctl(
+                sock.fileno(), _SIOCGIFADDR,
+                struct.pack("256s", dev.encode("ascii")[:15]))
+        return socket.inet_ntoa(packed[20:24])
+    except (OSError, ValueError, UnicodeEncodeError):
+        return None
+
+
+def _iface_ipv6():
+    """Every IPv6 address on a tailscale interface, as a set.
+
+    A PLAIN FILE, for the same reason: no netlink, no subprocess. The format
+    is one address per line as 32 hex characters with no separators, then the
+    index, prefix, scope, flags and the interface name.
+    """
+    out = set()
+    try:
+        with open("/proc/net/if_inet6", "r", errors="replace") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 6 or not parts[5].startswith("tailscale"):
+                    continue
+                raw = parts[0]
+                if len(raw) != 32:
+                    continue
+                groups = [raw[i:i + 4] for i in range(0, 32, 4)]
+                try:
+                    # Through inet_ntop so the stored form matches what docker
+                    # prints: compressed, lower case, one spelling per address.
+                    packed = bytes.fromhex(raw)
+                    out.add(socket.inet_ntop(socket.AF_INET6, packed).lower())
+                except (ValueError, OSError):
+                    out.add(":".join(groups).lower())
+    except OSError:
+        return out
+    return out
+
+
 def _tailnet_addresses():
     """The addresses on this machine's Tailscale interface, as a set.
 
@@ -2560,14 +2629,10 @@ def _tailnet_addresses():
     """
     found = set()
     for dev in ("tailscale0", "tailscale1"):
-        raw = run(["ip", "-o", "addr", "show", "dev", dev], timeout=5)
-        if not raw:
-            continue
-        for line in raw.splitlines():
-            parts = line.split()
-            for i, token in enumerate(parts):
-                if token in ("inet", "inet6") and i + 1 < len(parts):
-                    found.add(parts[i + 1].split("/")[0].strip().lower())
+        v4 = _iface_ipv4(dev)
+        if v4:
+            found.add(v4)
+    found |= _iface_ipv6()
     return found
 
 def _exposed_ports():

@@ -3504,19 +3504,69 @@ def test_a_container_port_that_is_not_published_is_not_exposed(monkeypatch):
     assert agent._exposed_ports() == ([], [])
 
 
-def _ports_and_ifaces(docker_line, ip_line=None):
-    """A `run` stub that answers docker and `ip addr` differently.
+# THE SANDBOX AND THE CODE HAVE TO AGREE, AND NOTHING MADE THEM.
+#
+# xl1-heartbeat.service runs the agent with
+#
+#     RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+#
+# AF_NETLINK is not on that list, and `ip` talks to the kernel over a netlink
+# socket. So a reader that shells out to `ip` returns nothing inside the
+# service and works perfectly in any shell -- which is what happened: on a
+# live machine every tailnet-published port was reported as exposed, while
+# the suite stayed green because it stubbed the subprocess, and running the
+# function by hand as the service user "proved" it worked.
+#
+# Confirmed on the machine, under the real restriction:
+#
+#     Cannot open netlink socket: Address family not supported by protocol
+#
+# This reads both files and refuses to let them disagree.
 
-    Both readers go through the same run(), and a stub that returns one
-    string for everything fed the docker output to the interface parser.
-    That happened to be harmless -- no "inet" token in it -- which is the
-    kind of accident a test should not rest on.
+def test_the_agent_asks_the_kernel_only_in_ways_its_unit_allows():
+    unit = (Path(__file__).parent / "xl1-heartbeat.service").read_text(encoding="utf-8")
+    restrict = [l for l in unit.splitlines()
+                if l.strip().startswith("RestrictAddressFamilies=")]
+    assert restrict, (
+        "the unit no longer restricts address families -- this guard is "
+        "stale, and the reason it exists has probably not gone away")
+    if "AF_NETLINK" in restrict[0]:
+        return                      # the sandbox grants it; nothing to check
+
+    src = (Path(__file__).parent / "xl1_heartbeat.py").read_text(encoding="utf-8")
+    called = [l.strip() for l in src.splitlines()
+              if 'run([' in l and '"ip"' in l]
+    assert not called, (
+        "the agent shells out to `ip`, which needs AF_NETLINK, and the unit "
+        "does not grant it -- the call returns nothing inside the service "
+        "and works everywhere else: " + "; ".join(called))
+
+
+def test_an_interface_that_does_not_exist_reads_as_nothing():
+    """The real ioctl, not a stub of it.
+
+    Nothing here is mocked: this calls the same code the service calls, and
+    an absent interface is the ordinary case on a machine with no tailnet.
+    On a platform without fcntl it returns None by the same path, which is
+    why the suite can be collected off Linux at all.
     """
-    def fake(argv, *a, **k):
-        if argv and argv[0] == "ip":
-            return ip_line
-        return docker_line
-    return fake
+    assert agent._iface_ipv4("definitely-not-an-interface") is None
+
+
+def _ports_and_ifaces(monkeypatch, docker_line, tailnet_v4=None):
+    """Docker's output, and the addresses on the tailnet interface.
+
+    STUBBED AT THE READER, NOT AT `run`. The first version of these tests
+    stubbed run(["ip", ...]) -- a call that cannot work in production at
+    all, because the unit sets RestrictAddressFamilies without AF_NETLINK
+    and `ip` cannot open its netlink socket. The tests passed, it worked by
+    hand, and on the machine every tailnet port was reported as exposed
+    until somebody looked. A stub of a subprocess proves the parsing and
+    says nothing about whether the subprocess can run.
+    """
+    monkeypatch.setattr(agent, "run", lambda *a, **k: docker_line)
+    monkeypatch.setattr(agent, "_iface_ipv4", lambda dev: tailnet_v4)
+    monkeypatch.setattr(agent, "_iface_ipv6", lambda: set())
 
 
 # A TAILNET BIND IS NOT AN OPEN PORT, and this is the port that proved it.
@@ -3531,9 +3581,9 @@ def _ports_and_ifaces(docker_line, ip_line=None):
 # beside it.
 
 def test_a_publish_to_the_tailnet_is_reported_apart(monkeypatch):
-    monkeypatch.setattr(agent, "run", _ports_and_ifaces(
+    _ports_and_ifaces(monkeypatch,
         "xl1-service-anchor-1\t100.100.100.100:8090->8090/tcp",
-        "3: tailscale0    inet 100.100.100.100/32 scope global tailscale0"))
+        tailnet_v4="100.100.100.100")
     exposed, tailnet = agent._exposed_ports()
     assert exposed == []
     assert tailnet == ["xl1-service-anchor-1 100.100.100.100:8090->8090/tcp"]
@@ -3547,9 +3597,9 @@ def test_a_cgnat_address_that_is_not_on_the_interface_is_still_exposed(monkeypat
     make a genuinely exposed port read as a private mesh -- the worst
     direction for this mistake to go. The interface cannot be argued with.
     """
-    monkeypatch.setattr(agent, "run", _ports_and_ifaces(
+    _ports_and_ifaces(monkeypatch,
         "svc\t100.100.100.100:8090->8090/tcp",
-        "3: tailscale0    inet 100.100.200.200/32 scope global tailscale0"))
+        tailnet_v4="100.100.200.200")
     exposed, tailnet = agent._exposed_ports()
     assert exposed == ["svc 100.100.100.100:8090->8090/tcp"]
     assert tailnet == []
@@ -3558,8 +3608,9 @@ def test_a_cgnat_address_that_is_not_on_the_interface_is_still_exposed(monkeypat
 def test_no_tailscale_interface_leaves_every_port_exposed(monkeypatch):
     """Fails towards the warning. A port wrongly called exposed is noise; a
     port wrongly called private is a hole nobody looks at again."""
-    monkeypatch.setattr(agent, "run", _ports_and_ifaces(
-        "svc\t100.100.100.100:8090->8090/tcp", None))
+    _ports_and_ifaces(monkeypatch,
+        "svc\t100.100.100.100:8090->8090/tcp",
+        tailnet_v4=None)
     exposed, tailnet = agent._exposed_ports()
     assert exposed == ["svc 100.100.100.100:8090->8090/tcp"]
     assert tailnet == []
@@ -3567,9 +3618,9 @@ def test_no_tailscale_interface_leaves_every_port_exposed(monkeypatch):
 
 def test_loopback_is_neither_exposed_nor_tailnet(monkeypatch):
     """It is not on any network, so it belongs in neither list."""
-    monkeypatch.setattr(agent, "run", _ports_and_ifaces(
+    _ports_and_ifaces(monkeypatch,
         "svc\t127.0.0.1:8090->8090/tcp",
-        "3: tailscale0    inet 100.100.100.100/32 scope global tailscale0"))
+        tailnet_v4="100.100.100.100")
     assert agent._exposed_ports() == ([], [])
 
 

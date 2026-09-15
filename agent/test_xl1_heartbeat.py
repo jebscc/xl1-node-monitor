@@ -456,6 +456,9 @@ REPORTED_FIELDS = {
     # Inside `security`, which is owner-only. Listed here because they are
     # still fields the heartbeat carries, and the guard above now sees them.
     "firewall", "exposed_ports", "tailnet_ports", "ssh_password_auth", "auto_updates",
+    # Ports open on the HOST, which the docker reader above cannot see at
+    # all -- rpcbind sat on 0.0.0.0:111 beside an all-clear because of it.
+    "host_ports",
     # When unattended-upgrades actually runs, and whether its timer is live.
     "auto_updates_at", "auto_updates_window", "auto_updates_timer",
     # Whether the block counts were made against the address this node signs
@@ -3844,3 +3847,175 @@ def test_disk_total_is_reported_and_agrees_with_the_percentage():
     # an error this size cannot change what is printed.
     derived = free / (1 - pct / 100)
     assert abs(derived - total) < total * 0.005, (free, pct, total, derived)
+
+
+# ---------------------------------------------------------------------------
+# HOST LISTENERS: the half of the exposure card that docker cannot see.
+#
+# rpcbind held 0.0.0.0:111 -- TCP and UDP, v4 and v6 -- while the exposure
+# card showed an all-clear, because _exposed_ports asks docker and only
+# docker, and no container had published it. The row was honest about saying
+# "every container port"; the card is headed EXPOSURE, and an all-clear there
+# is read as nothing listening outward.
+#
+# The fixtures under fixtures/ are a REAL CAPTURE of /proc/net from the Pi 4,
+# taken 2026-09-14, and the expected output was checked against `ss -lntu` on
+# that machine at the same moment: 16 sockets, exact agreement.
+#
+# THE ADDRESSES IN IT ARE REWRITTEN, the layout and encoding are not. This
+# file is published, and the capture held the producer's LAN address, both
+# of its tailnet addresses and its full open-port list -- the exact content
+# `security` is owner-only to keep out of public view, for a machine whose
+# rough location the same site draws on a map. Nothing the parser is being
+# tested on depends on which addresses they are. Invented rows
+# would have proved only that the parser agrees with whoever invented them --
+# and the format is easy to get wrong in a way that still parses, because
+# addresses are little-endian per 32-bit word.
+
+PROCNET = Path(__file__).parent / "fixtures"
+
+
+def _capture(tmp_path, extra_tcp=(), extra_udp=(), drop=()):
+    """The real capture, optionally with rows added or a table removed."""
+    out = tmp_path / "net"
+    out.mkdir(exist_ok=True)
+    for name in ("tcp", "tcp6", "udp", "udp6"):
+        if name in drop:
+            continue
+        text = (PROCNET / ("procnet-" + name)).read_text(encoding="utf-8")
+        rows = extra_tcp if name.startswith("tcp") else extra_udp
+        if rows and not name.endswith("6"):
+            text = text.rstrip("\n") + "\n" + "\n".join(rows) + "\n"
+        (out / name).write_text(text, encoding="utf-8")
+    return out
+
+
+def _row(hex_addr, port, state="0A"):
+    """One /proc/net line, in the column order the kernel writes."""
+    return ("  99: %s:%04X 00000000:0000 %s 00000000:00000000 "
+            "00:00000000 00000000     0        0 99999 1 0000 100 0 0 10 0"
+            % (hex_addr, port, state))
+
+
+def _listeners(tmp_path, monkeypatch, published=(), **kw):
+    monkeypatch.setattr(agent, "PROC_NET_DIR", str(_capture(tmp_path, **kw)))
+    monkeypatch.setattr(agent, "_tailnet_addresses",
+                        lambda: {"100.64.0.1", "fd7a:115c:a1e0::1"})
+    return agent._host_listeners(published=published)
+
+
+def test_the_real_machine_reduces_to_what_can_be_named(tmp_path, monkeypatch):
+    """Sixteen sockets in, two lines out, and both of them explained.
+
+    THIS IS THE WHOLE DESIGN ARGUMENT. Listing every non-loopback socket gave
+    eight entries on a healthy Pi -- ssh, mDNS and tailscale each twice, plus
+    two ephemeral sockets -- and a row that is always full is one people stop
+    reading, which is exactly how rpcbind survived next to an all-clear.
+    """
+    assert _listeners(tmp_path, monkeypatch, published={8090}) == [
+        "tcp/22 ssh", "udp/5353 mdns"]
+
+
+def test_rpcbind_would_have_been_caught(tmp_path, monkeypatch):
+    """The case this exists for, on both protocols.
+
+    0.0.0.0 is 00000000 in the table, which is also what an empty field looks
+    like -- so this doubles as a check that a wildcard bind is read as a bind
+    and not skipped as a blank.
+    """
+    found = _listeners(tmp_path, monkeypatch, published={8090},
+                       extra_tcp=[_row("00000000", 111)],
+                       extra_udp=[_row("00000000", 111, state="07")])
+    assert "tcp/111 rpcbind" in found
+    assert "udp/111 rpcbind" in found
+
+
+def test_a_published_container_port_is_not_counted_twice(tmp_path, monkeypatch):
+    """Docker binds through docker-proxy, so /proc sees it too.
+
+    Not exercised by the capture alone: 8090 is bound to the tailnet address
+    and to loopback there, both of which are already excluded for other
+    reasons. A publish to 0.0.0.0 is the case that actually collides, and it
+    would otherwise appear on the docker row AND as an unexplained listener.
+    """
+    rows = [_row("00000000", 9999)]
+    assert "tcp/9999" in _listeners(tmp_path, monkeypatch, extra_tcp=rows)
+    assert "tcp/9999" not in _listeners(tmp_path, monkeypatch,
+                                        published={9999}, extra_tcp=rows)
+
+
+def test_what_cannot_be_reached_from_the_network_is_left_out(tmp_path, monkeypatch):
+    """Loopback, the docker bridge, and the tailnet each for their own reason.
+
+    The capture already contains all three: 127.0.0.1:53, 172.17.0.1:53 and
+    the anchor service on 100.90.149.28. None may appear.
+    """
+    found = _listeners(tmp_path, monkeypatch, published={8090})
+    assert not [f for f in found if f.endswith("/53") or "53 dns" in f]
+    assert not [f for f in found if "8090" in f]
+
+
+def test_an_ephemeral_udp_socket_is_not_a_service(tmp_path, monkeypatch):
+    """Above the floor is where the kernel hands out sockets.
+
+    Tailscale alone keeps two, so without this the row is permanently
+    non-empty on a normal machine. A registered-range port is still reported:
+    the line is drawn at the dynamic range, not at "UDP is noisy".
+    """
+    found = _listeners(tmp_path, monkeypatch, published={8090},
+                       extra_udp=[_row("00000000", 50124, state="07"),
+                                  _row("00000000", 1900, state="07")])
+    assert not [f for f in found if "50124" in f]
+    assert "udp/1900" in found
+
+
+def test_only_listening_tcp_counts(tmp_path, monkeypatch):
+    """An established connection is not an open port.
+
+    State 01 is ESTABLISHED. The capture contains outbound tailnet
+    connections already; this adds one on a wildcard address, which is the
+    shape that would slip past a check that only looked at the address.
+    """
+    found = _listeners(tmp_path, monkeypatch, published={8090},
+                       extra_tcp=[_row("00000000", 4242, state="01")])
+    assert not [f for f in found if "4242" in f]
+
+
+def test_v4_and_v6_are_one_service_listening_twice(tmp_path, monkeypatch):
+    """ssh is on both in the capture, and appears once."""
+    found = _listeners(tmp_path, monkeypatch, published={8090})
+    assert found.count("tcp/22 ssh") == 1
+
+
+def test_no_proc_net_is_unknown_and_not_clear(tmp_path, monkeypatch):
+    """None, never []. The panel draws those differently and must.
+
+    An empty list says "nothing else is listening", which is a claim. A
+    reader that could not look has not earned it.
+    """
+    assert _listeners(tmp_path, monkeypatch,
+                      drop=("tcp", "tcp6", "udp", "udp6")) is None
+
+
+def test_addresses_are_little_endian_per_word():
+    """Read left to right, every one of these is a different valid address.
+
+    Which is the danger: the wrong answer parses, renders, and looks like a
+    plausible machine on the network.
+    """
+    assert agent._proc_net_addr("0100007F") == "127.0.0.1"
+    assert agent._proc_net_addr("1C955A64") == "100.90.149.28"
+    assert agent._proc_net_addr("00000000") == "0.0.0.0"
+    assert agent._proc_net_addr("0" * 32) == "::"
+    assert agent._proc_net_addr("nonsense") is None
+    assert agent._proc_net_addr("00") is None
+
+
+def test_the_docker_mapping_parser_takes_the_host_side():
+    """`->` separates host port from container port, and they differ often."""
+    assert agent._published_host_ports(
+        ["anchor 100.90.149.28:8090->8090/tcp"]) == {8090}
+    assert agent._published_host_ports(
+        ["x 0.0.0.0:15432->5432/tcp"]) == {15432}
+    assert agent._published_host_ports([]) == set()
+    assert agent._published_host_ports(None) == set()

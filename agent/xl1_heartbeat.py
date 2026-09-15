@@ -44,7 +44,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.41.1"
+AGENT_VERSION = "1.42.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -2637,6 +2637,188 @@ def _tailnet_addresses():
     return found
 
 
+# Where the kernel hands out source ports. A service somebody chose to run
+# listens on a port somebody chose; anything above this is where a socket
+# lands rather than where it was put. See _host_listeners for why that line
+# has to be drawn somewhere.
+EPHEMERAL_PORT_FLOOR = int(os.environ.get("XL1_EPHEMERAL_PORT_FLOOR", "32768"))
+
+# A constant so the tests can point at a captured copy of a real machine's
+# tables instead of monkeypatching `open`. Patching the builtin reaches every
+# read in the process, including the ones the test itself makes, and the
+# failure looks like the code under test rather than the harness.
+PROC_NET_DIR = "/proc/net"
+
+# Named by PORT NUMBER, which is a convention and not a measurement. The
+# agent runs as xl1agent and cannot read another user's /proc/<pid>/fd, so
+# the process behind a socket is genuinely not knowable from here -- and
+# saying "ssh" when the panel means "whatever is on 22" would be the panel
+# claiming to have looked. The card says so in as many words.
+WELL_KNOWN_LISTENERS = {
+    22: "ssh",
+    53: "dns",
+    80: "http",
+    111: "rpcbind",
+    443: "https",
+    445: "smb",
+    631: "cups",
+    5353: "mdns",
+    41641: "tailscale",
+}
+
+TCP_LISTEN = "0A"
+
+
+def _proc_net_addr(hex_addr):
+    """A /proc/net address to its printable form, or None.
+
+    LITTLE-ENDIAN PER 32-BIT WORD, which is the whole reason this is a
+    function and not two lines inline. `0100007F` is 127.0.0.1, not 1.0.0.127,
+    and an IPv6 address is four words each reversed on its own -- read the
+    32 hex characters left to right and you get a different address that
+    still parses, which is the kind of wrong that looks right in a panel.
+    """
+    try:
+        raw = bytes.fromhex(hex_addr)
+    except ValueError:
+        return None
+    try:
+        if len(raw) == 4:
+            return socket.inet_ntoa(raw[::-1])
+        if len(raw) == 16:
+            packed = b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4))
+            return socket.inet_ntop(socket.AF_INET6, packed).lower()
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def _proc_net_rows(path):
+    """(address, port, state, has_peer) for one /proc/net table."""
+    try:
+        with open(path, "r", errors="replace") as fh:
+            lines = fh.read().split(chr(10))
+    except OSError:
+        return
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        local, rem, state = parts[1], parts[2], parts[3]
+        host, _, port = local.rpartition(":")
+        addr = _proc_net_addr(host)
+        if addr is None:
+            continue
+        try:
+            port = int(port, 16)
+        except ValueError:
+            continue
+        yield addr, port, state, not rem.endswith("0000")
+
+
+def _published_host_ports(mappings):
+    """The host-side port of each docker mapping, as a set of ints.
+
+    `name 100.90.149.28:8090->8090/tcp` publishes host port 8090. Docker binds
+    that socket on the host through docker-proxy, so it appears in /proc as
+    well -- and without this the anchor service would be listed twice, once
+    on its own row and once as an unexplained host listener.
+    """
+    out = set()
+    for entry in mappings or ():
+        for found in re.findall(r":(\d+)->", str(entry)):
+            try:
+                out.add(int(found))
+            except ValueError:
+                pass
+    return out
+
+
+def _host_listeners(published=()):
+    """Ports open on the HOST itself, beyond the containers. A list, or None.
+
+    WHY THIS EXISTS. _exposed_ports below asks docker, and only docker. For
+    as long as that was the whole of the exposure card, `rpcbind` sat on
+    0.0.0.0:111 -- TCP and UDP, v4 and v6 -- while the panel showed an
+    all-clear, because no container had published it. The row was honest
+    about saying "every container port"; the card is headed EXPOSURE, and a
+    reader takes an all-clear there to mean nothing is listening outward.
+
+    READ FROM /proc, NOT FROM `ss`. `ss` asks the kernel over a netlink
+    socket and the unit sets RestrictAddressFamilies without AF_NETLINK, so
+    it would return nothing inside the service and work perfectly by hand --
+    exactly how `ip addr` produced a whole release that reported every
+    tailnet port as exposed. These are plain world-readable files.
+
+    WHAT IS LEFT OUT, AND WHY EACH ONE:
+
+      loopback          127.0.0.0/8 and ::1 reach nothing off this machine
+      the docker bridge 172.16/12 host addresses answer only to containers
+      tailnet addresses they have their own row, and counting them twice
+                        would resurrect the daily false alarm that row fixed
+      published ports   docker already reports those; the host sees the same
+                        socket through docker-proxy and would double-count
+      ephemeral UDP     above EPHEMERAL_PORT_FLOOR is where the kernel hands
+                        out sockets, not where a service is put
+
+    That last one is a real trade-off and not a free win: a service bound to
+    a high UDP port is invisible here. Measured against the alternative --
+    Tailscale alone keeps two of them, so the row would show a permanent
+    pair of unexplainable entries, and a row that is always non-empty is one
+    people stop reading. It is stated on the card rather than hidden.
+
+    Each entry is "proto/port" plus a well-known name where there is one, so
+    the panel can tell what it can account for from what it cannot. v4 and
+    v6 collapse together: they are one service listening twice, and showing
+    both taught nothing and doubled the list.
+    """
+    tailnet = _tailnet_addresses()
+    published = set(published or ())
+    seen = set()
+    read_any = False
+
+    for name, proto in (("tcp", "tcp"), ("tcp6", "tcp"),
+                        ("udp", "udp"), ("udp6", "udp")):
+        path = os.path.join(PROC_NET_DIR, name)
+        if not os.path.exists(path):
+            continue
+        read_any = True
+        for addr, port, state, has_peer in _proc_net_rows(path):
+            if proto == "tcp":
+                if state != TCP_LISTEN:
+                    continue
+            else:
+                # UDP has no listening state. An unconnected socket is one
+                # that is bound and receiving, which is what a scan finds.
+                if has_peer:
+                    continue
+                if port >= EPHEMERAL_PORT_FLOOR:
+                    continue
+            if addr.startswith("127.") or addr == "::1":
+                continue
+            if addr in tailnet:
+                continue
+            if addr.startswith("172."):
+                try:
+                    if 16 <= int(addr.split(".")[1]) <= 31:
+                        continue
+                except (IndexError, ValueError):
+                    pass
+            if port in published:
+                continue
+            seen.add((proto, port))
+
+    if not read_any:
+        return None                     # /proc/net missing: unknown, not clear
+
+    out = []
+    for proto, port in sorted(seen, key=lambda r: (r[1], r[0])):
+        known = WELL_KNOWN_LISTENERS.get(port)
+        out.append("%s/%d %s" % (proto, port, known) if known
+                   else "%s/%d" % (proto, port))
+    return out
+
+
 def _exposed_ports():
     """Container ports published to anything but this machine, or None.
 
@@ -2859,6 +3041,16 @@ def read_security_posture():
     # panel draws a different row for each.
     if tailnet is not None:
         out["tailnet_ports"] = tailnet
+
+    # THE HALF THE DOCKER READER CANNOT SEE. Everything above asks docker, so
+    # a host service answers to nobody here: rpcbind held 0.0.0.0:111 while
+    # this card showed an all-clear. Sent even when empty, like tailnet_ports
+    # and for the same reason -- "nothing else is listening" is an answer, and
+    # an absent key would leave the panel drawing the last one it was told.
+    host_ports = _host_listeners(_published_host_ports(exposed) |
+                                 _published_host_ports(tailnet))
+    if host_ports is not None:
+        out["host_ports"] = host_ports
 
     ssh_pw = _ssh_password_auth()
     if ssh_pw is not None:

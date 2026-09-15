@@ -19,6 +19,7 @@ import json
 import os
 import re
 import socket
+import struct
 import subprocess
 import threading
 import sys
@@ -2634,6 +2635,7 @@ def _tailnet_addresses():
             found.add(v4)
     found |= _iface_ipv6()
     return found
+
 
 def _exposed_ports():
     """Container ports published to anything but this machine, or None.

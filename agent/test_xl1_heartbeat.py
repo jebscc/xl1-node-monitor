@@ -3525,8 +3525,8 @@ def test_a_container_port_that_is_not_published_is_not_exposed(monkeypatch):
 
 def test_the_agent_asks_the_kernel_only_in_ways_its_unit_allows():
     unit = (Path(__file__).parent / "xl1-heartbeat.service").read_text(encoding="utf-8")
-    restrict = [l for l in unit.splitlines()
-                if l.strip().startswith("RestrictAddressFamilies=")]
+    restrict = [line for line in unit.splitlines()
+                if line.strip().startswith("RestrictAddressFamilies=")]
     assert restrict, (
         "the unit no longer restricts address families -- this guard is "
         "stale, and the reason it exists has probably not gone away")
@@ -3534,8 +3534,8 @@ def test_the_agent_asks_the_kernel_only_in_ways_its_unit_allows():
         return                      # the sandbox grants it; nothing to check
 
     src = (Path(__file__).parent / "xl1_heartbeat.py").read_text(encoding="utf-8")
-    called = [l.strip() for l in src.splitlines()
-              if 'run([' in l and '"ip"' in l]
+    called = [line.strip() for line in src.splitlines()
+              if 'run([' in line and '"ip"' in line]
     assert not called, (
         "the agent shells out to `ip`, which needs AF_NETLINK, and the unit "
         "does not grant it -- the call returns nothing inside the service "

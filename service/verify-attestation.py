@@ -34,7 +34,18 @@ def canonical_hash(payload):
     PayloadBuilder.hash rather than taken from documentation -- the two agree
     exactly, which is what makes this file worth having.
     """
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    # `ensure_ascii=False` IS LOAD-BEARING. Python escapes non-ASCII by
+    # default, so a title containing an accent is re-serialised here as
+    # "Caf\u00e9" while the SDK hashed the raw UTF-8 bytes of "Café". The
+    # hashes then differ and this file reports a good attestation as edited.
+    # It cost nothing for node attestations, which are addresses, ISO
+    # timestamps and numbers -- but the Frontier adventure anchor puts a
+    # player's own title and summary in the payload, and one accent, curly
+    # quote or emoji was enough. Found 2026-09-14 by a test that hashes an
+    # awkward payload both ways; ASCII payloads are byte-identical either
+    # way, so no attestation that verified before verifies differently now.
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

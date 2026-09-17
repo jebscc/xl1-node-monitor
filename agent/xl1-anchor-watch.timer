@@ -1,0 +1,19 @@
+[Unit]
+Description=Check every few minutes that the XL1 anchor service is serving
+
+[Timer]
+# Soon after boot, because the failure that started this was a boot failure:
+# dockerd restored the container before its address existed, the bind failed,
+# and the node did not anchor again until somebody noticed.
+OnBootSec=90s
+# Five minutes. The heartbeat agent attests roughly every couple of hours, so
+# the cost of being wrong for one interval is small, and three consecutive
+# failures -- fifteen minutes -- is the bar for touching anything. Fast enough
+# that a morning wedge is fixed before breakfast rather than by lunchtime.
+OnUnitActiveSec=5min
+# No Persistent=true: a check that "missed" its slot while the machine was off
+# has nothing to catch up on. The state it reads is the state right now.
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

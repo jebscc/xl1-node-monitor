@@ -1,0 +1,26 @@
+[Unit]
+Description=Keep the XL1 anchor service serving, and recreate it when it is not
+Documentation=https://github.com/jebscc/MyAdventureWebsite/blob/main/pi-agent/ensure-anchor.sh
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+# Ordered after tailscaled because the Pi 4's anchor container binds the
+# Tailscale address, and on the boot of 2026-09-16 that address did not exist
+# until five minutes after dockerd had finished starting. Ordering is not
+# enough on its own -- tailscaled is "started" long before it has an address --
+# so the script waits for the address as well. Both, because the ordering
+# makes the common case instant and the wait makes the slow case correct.
+After=tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/xl1-heartbeat/ensure-anchor.sh
+
+# Root because it drives Docker and reads /etc/xl1-anchor.env, which is
+# root-only on purpose: a keyless anchor service should fail loudly rather
+# than come up signing nothing.
+#
+# Long enough for the address wait (300s) plus a compose recreate plus the
+# 20s confirmation, and no longer. A watchdog that can hang is not one.
+TimeoutStartSec=900
+Nice=5

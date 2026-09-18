@@ -29,7 +29,9 @@
  */
 import 'dotenv/config'
 
-import { getGateway } from './src/getGateway.ts'
+import { GatewayBuilder, NetworkDataLakeUrls } from '@xyo-network/xl1-sdk'
+import type { SimpleXyoGatewayRunner } from '@xyo-network/xl1-sdk'
+import { createRestDataLakeViewer } from '@xyo-network/xl1-sdk/providers'
 import { getSignerAccount } from './src/getSignerAccount.ts'
 import { anchorRecord } from './src/anchorRecord.ts'
 
@@ -60,10 +62,29 @@ const run = async () => {
   console.log(`  address ${account.address}`)
 
   console.log(`\n== anchoring one record on ${NETWORK} ==`)
-  // getGateway reads XL1_NETWORK itself and wires the datalake endpoint for
-  // that network -- which is what files the off-chain bytes. Same function
-  // the operator tools use, so this cannot drift from them.
-  const gateway = await getGateway()
+  /* BUILT THE WAY THE SERVICE BUILDS IT, which took a failed run to learn.
+   *
+   * The first version called src/getGateway.ts, which resolves its RPC from
+   * XYO_CHAIN_RPC_URL and falls back to http://localhost:8080/rpc. Nothing
+   * listens there on a Pi, so the run died on "xyoViewer_currentBlock: fetch
+   * failed" while the service beside it was anchoring happily -- because the
+   * /anchor route uses a different builder, keyed on the network:
+   * XL1_SEQUENCE_RPC_URL. A verifier reaching a different chain endpoint from
+   * the thing it is verifying proves nothing about the thing.
+   *
+   * The datalake endpoint is what files the off-chain bytes; without it the
+   * hash would anchor with nothing behind it. */
+  const rpcUrl = process.env[`XL1_${NETWORK.toUpperCase()}_RPC_URL`]
+    ?? process.env.XYO_CHAIN_RPC_URL
+  if (!rpcUrl) {
+    console.error(`No RPC URL for ${NETWORK}. Set XL1_${NETWORK.toUpperCase()}_RPC_URL.`)
+    process.exit(2)
+  }
+  const dataLake = NetworkDataLakeUrls[NETWORK as keyof typeof NetworkDataLakeUrls]
+  const builder = new GatewayBuilder().name(NETWORK).rpcUrl(rpcUrl)
+  const gateway = await (dataLake ? builder.dataLakeEndpoint(dataLake) : builder)
+    .account(account)
+    .buildRunner() as SimpleXyoGatewayRunner
   const stamp = new Date().toISOString()
   const done = await anchorRecord(
     gateway, NETWORK, 'headless verification', `run at ${stamp}`)
@@ -78,19 +99,50 @@ const run = async () => {
 
   const tx = await viewer.transaction.byHash(
     done.txHash as Parameters<typeof viewer.transaction.byHash>[0])
-  const first = Array.isArray(tx) ? tx[0] : tx
-  ok('the chain has the transaction', Boolean(first),
-    first ? '' : 'submitted but not readable back')
 
-  // THE BAND WHERE THE BUGS LIVE. A hash on chain with no payload behind it is
-  // a digest nobody can resolve -- see the note in anchorRecord.
-  const hydrated = JSON.stringify(tx ?? {})
-  ok('AND THE OFF-CHAIN PAYLOAD CAME BACK WITH IT',
-    hydrated.includes(done.contentHash),
-    hydrated.includes(done.contentHash) ? '' : 'the bytes were never filed')
-  ok('and the record round-trips to what we sent',
-    hydrated.includes('headless verification'),
-    'the salt must carry our own title back')
+  /* THE BOUND WITNESS SITS BESIDE AN ARRAY OF THE PAYLOADS IT WITNESSES, so a
+   * shallow read finds the witness and misses everything else -- the same
+   * nesting server.ts flattens before it counts mints. */
+  const flat = (x: unknown): unknown[] => (Array.isArray(x) ? x.flatMap(flat) : [x])
+  const parts = flat(tx) as Record<string, unknown>[]
+  const bw = parts.find(p => p?.schema === 'network.xyo.boundwitness')
+  ok('the chain has the transaction', Boolean(bw),
+    bw ? '' : 'submitted but not readable back')
+
+  /* AND THE OFF-CHAIN PAYLOAD IS NOT IN THERE, which took a run to learn.
+   *
+   * byHash returns the witness and the ON-CHAIN payload -- here the
+   * network.xyo.hash -- and nothing else. The network.xyo.id payload carrying
+   * the record is named in payload_schemas and must be fetched from the
+   * datalake by its hash.
+   *
+   * The first version of this check looked for the contentHash anywhere in the
+   * response and passed. The on-chain hash payload IS the content hash, so the
+   * assertion was satisfied by the one thing that says nothing about whether
+   * the bytes were filed. A green check for the wrong reason is worse than a
+   * red one, and it is the failure this whole script exists to catch. */
+  const schemas = (bw?.payload_schemas ?? []) as string[]
+  const hashes = (bw?.payload_hashes ?? []) as string[]
+  const idAt = schemas.indexOf('network.xyo.id')
+  ok('the transaction names the off-chain payload', idAt >= 0,
+    `payload_schemas ${JSON.stringify(schemas)}`)
+
+  const lakeUrl = NetworkDataLakeUrls[NETWORK as keyof typeof NetworkDataLakeUrls]
+  if (idAt >= 0 && lakeUrl) {
+    const lake = await createRestDataLakeViewer(lakeUrl)
+    // BY HASH, never .next(): a remote datalake is a content-addressed blob
+    // store and does not paginate.
+    const got = await lake.get([hashes[idAt] as never])
+    const filed = flat(got).find(
+      (x): x is Record<string, unknown> =>
+        Boolean(x) && (x as Record<string, unknown>).schema === 'network.xyo.id')
+    ok('AND THE DATALAKE HAS THE BYTES BEHIND IT', Boolean(filed),
+      filed ? '' : 'the hash is anchored with nothing to resolve to')
+    const salt = String(filed?.salt ?? '')
+    ok('and the record round-trips to what we sent',
+      salt.includes('headless verification'),
+      salt ? `salt ${salt.slice(0, 50)}...` : 'no salt came back')
+  }
 
   console.log(`\n== the watermarks, before blaming "sequence is slow" ==`)
   const head = await viewer.finalization?.headNumber?.()

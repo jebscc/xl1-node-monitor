@@ -20,6 +20,7 @@ import {
   XYO_STEP_REWARD_ADDRESS,
 } from '@xyo-network/xl1-sdk'
 
+import { confirmAnchored } from './confirmAnchored.ts'
 import { getSignerAccount } from './getSignerAccount.ts'
 
 const PORT = Number(process.env.XL1_SERVICE_PORT ?? 8090)
@@ -131,11 +132,12 @@ const anchor = async (title: string, summary: string, network?: string) => {
   const hashPayload: HashPayload = { schema: HashSchema, hash: contentHash }
 
   const [txHash] = await gateway.addPayloadsToChain([hashPayload], [idPayload])
-  await gateway.confirmSubmittedTransaction(txHash, { logger: console })
+  const confirmed = await confirmAnchored(gateway, net, txHash)
 
   const account = await getSignerAccount()
   return {
     txHash,
+    confirmed,
     explorerUrl: explorerFor(net).transaction(txHash),
     network: net,
     networkLabel: cfg.label,
@@ -272,8 +274,12 @@ const mintedToInBlock = (parts: unknown[], target: string): bigint => {
 }
 
 const producerStats = async (
-  network: string, address: string, window: number, since?: number,
-  range?: { from: number; to: number }, floor = 0,
+  network: string, address: string, window: number, since: number | undefined,
+  // NO DEFAULT. There is one caller and it fails closed above this when
+  // XL1_INDEXER_FLOOR_BLOCK is unset, so a `floor = 0` here was unreachable --
+  // and unreachable defaults are how the second caller silently gets the
+  // behaviour the first one refuses. Required, so the compiler asks.
+  range: { from: number; to: number } | undefined, floor: number,
 ) => {
   const key = `${network}:${normalizeAddress(address)}:${window}:`
     + (range ? `r${range.from}-${range.to}` : (since ?? 'window'))
@@ -1562,10 +1568,11 @@ app.post('/attest', async (req, res) => {
     const gateway = await getGateway(net)
     const hashPayload: HashPayload = { schema: HashSchema, hash: contentHash }
     const [txHash] = await gateway.addPayloadsToChain([hashPayload], [idPayload])
-    await gateway.confirmSubmittedTransaction(txHash, { logger: console })
+    const confirmed = await confirmAnchored(gateway, net, txHash)
     const account = await getSignerAccount()
     const answer = {
       anchored: true,
+      confirmed,
       network: net, contentHash, record, payload: idPayload,
       txHash,
       explorerUrl: explorerFor(net).transaction(txHash),

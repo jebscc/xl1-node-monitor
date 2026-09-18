@@ -133,9 +133,16 @@ const run = async () => {
     // BY HASH, never .next(): a remote datalake is a content-addressed blob
     // store and does not paginate.
     const got = await lake.get([hashes[idAt] as never])
-    const filed = flat(got).find(
-      (x): x is Record<string, unknown> =>
-        Boolean(x) && (x as Record<string, unknown>).schema === 'network.xyo.id')
+    /* SCHEMA IS A TAG, NOT A VALIDATOR. `schema === '...'` says what a payload
+     * calls itself; it does not say the payload has the shape this script is
+     * about to read. Anything may publish that string. Checked structurally
+     * as well, which here means: it claims the schema AND it actually carries
+     * a salt to compare. */
+    const isIdPayload = (x: unknown): x is { schema: string, salt: string } => {
+      const p = x as Record<string, unknown> | null
+      return Boolean(p) && p?.schema === 'network.xyo.id' && typeof p?.salt === 'string'
+    }
+    const filed = flat(got).find(isIdPayload)
     ok('AND THE DATALAKE HAS THE BYTES BEHIND IT', Boolean(filed),
       filed ? '' : 'the hash is anchored with nothing to resolve to')
     const salt = String(filed?.salt ?? '')
@@ -146,9 +153,36 @@ const run = async () => {
 
   console.log(`\n== the watermarks, before blaming "sequence is slow" ==`)
   const head = await viewer.finalization?.headNumber?.()
-  const headNum = typeof head === 'bigint' ? Number(head) : Number(head)
+  const headNum = Number(head)
   ok('finalization reports a head', Number.isFinite(headNum) && headNum > 0,
     Number.isFinite(headNum) ? `head ${headNum}` : 'no finalization on this gateway')
+
+  /* AND IT IS COMPARED TO SOMETHING, which is the whole point.
+   *
+   * The first version asserted only that a head existed and was positive --
+   * true on any live chain, whether or not this transaction was in it. The
+   * checklist asks for the comparison: head >= the block carrying the tx. Past
+   * it, "sequence finalization is just slow" stops being an available excuse
+   * and an empty read is a bug. Short of it, waiting is the right answer.
+   *
+   * The block comes from blockByTransactionHash, the same viewer the /tx route
+   * uses -- the bound witness itself does not carry its own block number. */
+  const inBlock = await viewer.block.blockByTransactionHash(
+    done.txHash as Parameters<typeof viewer.block.blockByTransactionHash>[0])
+  // The first element, exactly as the /tx route reads it -- a path already
+  // exercised against this chain. Searching every entry for any numeric
+  // `block` would find a different field the day one appears.
+  const head0 = (Array.isArray(inBlock) ? inBlock[0] : inBlock) as
+    { block?: number } | undefined
+  const blockOf = typeof head0?.block === 'number' ? head0.block : undefined
+  ok('the chain says which block carries it', typeof blockOf === 'number',
+    typeof blockOf === 'number' ? `block ${blockOf}` : 'no block for this tx')
+  if (typeof blockOf === 'number' && Number.isFinite(headNum)) {
+    ok('AND FINALIZATION HAS REACHED IT', headNum >= blockOf,
+      headNum >= blockOf
+        ? `head ${headNum} >= block ${blockOf}`
+        : `head ${headNum} is short of block ${blockOf} -- waiting is correct here`)
+  }
 
   finish()
 }

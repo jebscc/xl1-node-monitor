@@ -8,7 +8,6 @@ import { asSchema } from '@xyo-network/payload-model'
 import { ExplorerLinks, MainNetwork, SequenceNetwork, toXL1BlockNumber } from '@xyo-network/xl1-protocol'
 import type { NetworkId } from '@xyo-network/xl1-protocol'
 import {
-  DefaultNetworks,
   defaultRewardRatio,
   GatewayBuilder,
   HashSchema,

@@ -38,6 +38,11 @@ import { anchorRecord } from './src/anchorRecord.ts'
 const NETWORK = process.env.XL1_NETWORK ?? 'sequence'
 
 let failures = 0
+/* THREE OUTCOMES, NEVER TWO. "I could not find out" is not "the answer is
+   no", and when the alarming reading is the one you invent, somebody rebuilds
+   a healthy producer chasing a fault that was never there. */
+const cannotTell = (what: string, why: string) =>
+  console.log(`  ----  ${what} -- could not tell: ${why}`)
 const ok = (what: string, cond: boolean, detail = '') => {
   if (cond) { console.log(`  ok    ${what}${detail ? ` -- ${detail}` : ''}`); return }
   failures += 1
@@ -167,16 +172,33 @@ const run = async () => {
    *
    * The block comes from blockByTransactionHash, the same viewer the /tx route
    * uses -- the bound witness itself does not carry its own block number. */
-  const inBlock = await viewer.block.blockByTransactionHash(
-    done.txHash as Parameters<typeof viewer.block.blockByTransactionHash>[0])
+  /* POLLED, BECAUSE THE INDEX LAGS THE CONFIRMATION. Measured: a transaction
+   * confirmed at 22:4x had no answer from blockByTransactionHash seconds
+   * later and a perfectly good one a minute after that. Asking once turned a
+   * race into a red line saying "no block for this tx", which is the same
+   * mistake as reporting "could not ask" as "the answer is no". */
+  let inBlock: unknown
+  for (let i = 0; i < 6; i += 1) {
+    inBlock = await viewer.block.blockByTransactionHash(
+      done.txHash as Parameters<typeof viewer.block.blockByTransactionHash>[0])
+    const got = (Array.isArray(inBlock) ? inBlock[0] : inBlock) as { block?: number } | null
+    if (typeof got?.block === 'number') break
+    await new Promise(r => setTimeout(r, 5000))
+  }
   // The first element, exactly as the /tx route reads it -- a path already
   // exercised against this chain. Searching every entry for any numeric
   // `block` would find a different field the day one appears.
   const head0 = (Array.isArray(inBlock) ? inBlock[0] : inBlock) as
     { block?: number } | undefined
   const blockOf = typeof head0?.block === 'number' ? head0.block : undefined
-  ok('the chain says which block carries it', typeof blockOf === 'number',
-    typeof blockOf === 'number' ? `block ${blockOf}` : 'no block for this tx')
+  if (typeof blockOf !== 'number') {
+    // NOT a failure: the transaction confirmed, and the block index simply has
+    // not caught up inside half a minute. Saying so beats inventing a verdict.
+    cannotTell('which block carries it',
+      'blockByTransactionHash had no answer within 30s of confirmation')
+  } else {
+    ok('the chain says which block carries it', true, `block ${blockOf}`)
+  }
   if (typeof blockOf === 'number' && Number.isFinite(headNum)) {
     ok('AND FINALIZATION HAS REACHED IT', headNum >= blockOf,
       headNum >= blockOf

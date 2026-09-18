@@ -51,7 +51,23 @@ const DEFAULT_NETWORK = process.env.XL1_NETWORK ?? 'sequence'
 // Explorer URLs come from the SDK, never string concatenation. The paths are
 // the explorer's to change, and ours had already drifted: we built /tx/<hash>
 // where the SDK builds /transaction/<hash>.
-const EXPLORER_ORIGIN = process.env.XL1_EXPLORER_URL ?? 'https://explore.xyo.network'
+//
+// AND THE ORIGIN IS PER NETWORK, which this got wrong for as long as it got
+// the paths right. One constant served both chains, so every SEQUENCE link
+// this service handed out -- and it is the only thing that builds the block
+// link a producer reports in its heartbeat, which the portal then shows --
+// was built on the MAINNET explorer's origin. Sequence is its own deployment.
+// The SDK has said so all along in SequenceNetwork.explorerUrl, which was
+// already imported into this file for other reasons.
+//
+// The env var still wins when it is set, because a private explorer is a
+// real thing to point at; it simply is no longer the only answer.
+const EXPLORER_ORIGINS: Record<string, string> = {
+  mainnet: MainNetwork.explorerUrl,
+  sequence: SequenceNetwork.explorerUrl,
+}
+const explorerOrigin = (network: string): string =>
+  process.env.XL1_EXPLORER_URL ?? EXPLORER_ORIGINS[network] ?? MainNetwork.explorerUrl
 
 // evmRpcUrl is the chain's BACKING EVM, which is where staking lives -- not
 // somewhere on XL1. `chain.id` doubles as the staking contract's address there,
@@ -78,7 +94,7 @@ const explorerLinks: Record<string, ExplorerLinks> = {}
 const explorerFor = (network: string): ExplorerLinks => {
   // NetworkId is a branded union of the known ids. Every caller here has
   // already been checked against NETWORKS, so the id is one of them.
-  explorerLinks[network] ??= new ExplorerLinks(EXPLORER_ORIGIN, network as NetworkId)
+  explorerLinks[network] ??= new ExplorerLinks(explorerOrigin(network), network as NetworkId)
   return explorerLinks[network]
 }
 

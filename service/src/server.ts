@@ -942,14 +942,30 @@ app.get('/transaction', async (req, res) => {
   const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
   try {
     const { connection: { viewer } } = await getReadGateway(network)
-    const v = viewer as unknown as {
-      transaction?: { byHash?: (h: string) => Promise<unknown> }
-      block?: { blockByTransactionHash?: (h: string) => Promise<unknown> }
+    /* NO CAST OVER THE VIEWER. This used to reach the two methods through
+     * `viewer as unknown as { transaction?: { byHash?: ... } }`, which was
+     * defending against an SDK shape that no longer exists: 5.5.3 declares
+     * both, fully typed, returning `... | null`.
+     *
+     * The cast was not free. Optional chaining over invented types means that
+     * if the SDK ever renames either method the calls quietly answer
+     * `undefined`, this endpoint reports `found: false` for every transaction
+     * that exists, and nothing goes red -- and this endpoint is what writes
+     * `chain_found` against every attestation. A green build hiding a dead
+     * verification is the worst shape available here.
+     *
+     * The viewer itself IS optional (`XyoViewer | undefined`), so that one is
+     * checked rather than assumed. */
+    if (!viewer) {
+      return res.status(503).json({ error: 'no viewer on this gateway connection' })
     }
 
     let tx: { _hash?: string, from?: string, fees?: Record<string, string> } | null = null
     try {
-      const got = await v.transaction?.byHash?.(hash)
+      // Still tolerant of an array: the comment below is an observation, and
+      // an observation outranks a type when the two disagree.
+      const got = await viewer.transaction.byHash(hash as Parameters<
+        typeof viewer.transaction.byHash>[0])
       // byHash answers with the bound witness first, like the other viewers.
       const first = Array.isArray(got) ? got[0] : got
       if (first && typeof first === 'object') tx = first as typeof tx
@@ -967,7 +983,8 @@ app.get('/transaction', async (req, res) => {
     // reader following the link; it is not part of the finding.
     let block: number | null = null
     try {
-      const b = await v.block?.blockByTransactionHash?.(hash)
+      const b = await viewer.block.blockByTransactionHash(hash as Parameters<
+        typeof viewer.block.blockByTransactionHash>[0])
       const bw = (Array.isArray(b) ? b[0] : b) as { block?: number } | undefined
       if (typeof bw?.block === 'number') block = bw.block
     } catch { block = null }

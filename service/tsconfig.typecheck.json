@@ -17,5 +17,5 @@
   // never typechecked -- a broken string literal in one reached a commit
   // while `tsc` reported success, because it was not looking at the file.
   // The Dockerfile runs this to catch exactly that before a deploy.
-  "include": ["src", "new-attestor.ts", "delegate-attestor.ts"]
+  "include": ["src", "new-attestor.ts", "delegate-attestor.ts", "verify-headless.ts"]
 }

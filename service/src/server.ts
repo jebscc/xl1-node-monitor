@@ -19,6 +19,7 @@ import {
   XYO_STEP_REWARD_ADDRESS,
 } from '@xyo-network/xl1-sdk'
 
+import { anchorRecord } from './anchorRecord.ts'
 import { confirmAnchored } from './confirmAnchored.ts'
 import { getSignerAccount } from './getSignerAccount.ts'
 
@@ -118,29 +119,17 @@ const anchor = async (title: string, summary: string, network?: string) => {
   const cfg = NETWORKS[net]
   const gateway = await getGateway(net)
 
-  // Off-chain payload (validated 'network.xyo.id' schema, per XYO sample); the
-  // adventure record is embedded as salt. On-chain we anchor only its hash.
-  const record = {
-    app: 'the-living-frontier',
-    title: String(title ?? '').slice(0, 160),
-    summary: String(summary ?? '').slice(0, 500),
-    ts: new Date().toISOString(),
-  }
-  const idPayload = { schema: asSchema('network.xyo.id', true), salt: JSON.stringify(record) }
-  const contentHash = await PayloadBuilder.hash(idPayload)
-  const hashPayload: HashPayload = { schema: HashSchema, hash: contentHash }
-
-  const [txHash] = await gateway.addPayloadsToChain([hashPayload], [idPayload])
-  const confirmed = await confirmAnchored(gateway, net, txHash)
-
+  // The record itself is built by anchorRecord, which takes the gateway so the
+  // headless verifier can drive the SAME function from a seed phrase.
+  const done = await anchorRecord(gateway, net, title, summary)
   const account = await getSignerAccount()
   return {
-    txHash,
-    confirmed,
-    explorerUrl: explorerFor(net).transaction(txHash),
+    txHash: done.txHash,
+    confirmed: done.confirmed,
+    explorerUrl: explorerFor(net).transaction(done.txHash),
     network: net,
     networkLabel: cfg.label,
-    contentHash,
+    contentHash: done.contentHash,
     address: account.address,
   }
 }

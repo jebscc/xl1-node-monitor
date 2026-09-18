@@ -24,12 +24,18 @@ COPY tsconfig.json tsconfig.typecheck.json ./
 COPY src ./src
 
 # Operator tools, run by hand rather than by the service: creating the
-# attestation key and binding it to the producer. They live in the image
-# because that is where node_modules is -- the host checkout has none, the
-# service being containerised -- so `docker run <image> tsx <tool>` is the only
-# place they can resolve their imports without installing a second copy of the
-# dependency tree on the Pi.
-COPY new-attestor.ts delegate-attestor.ts ./
+# attestation key, binding it to the producer, and proving the anchoring path
+# end to end. They live in the image because that is where node_modules is --
+# the host checkout has none, the service being containerised -- so
+# `docker exec <container> npx tsx <tool>` is the only place they can resolve
+# their imports without installing a second copy of the dependency tree on the
+# Pi. Measured on 2026-09-18: running verify-headless.ts meant copying it in
+# with `docker cp` first, and its own import of src/anchorRecord.ts failed
+# against an image built before that file existed.
+#
+# verify-headless.ts SPENDS GAS when run. Being in the image costs nothing --
+# nothing runs it on start, and the service never calls it.
+COPY new-attestor.ts delegate-attestor.ts verify-headless.ts ./
 
 # tsx strips types without checking them, so a type or scope error surfaces
 # only when the offending line runs -- which for a route handler means a 500 in

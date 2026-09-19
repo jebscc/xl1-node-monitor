@@ -17,34 +17,34 @@ importers:
     dependencies:
       '@ariestools/sdk':
         specifier: 8.2.0
-        version: 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
+        version: 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@xylabs/assert':
         specifier: 8.0.2
-        version: 8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)
+        version: 8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.6.5)
       '@xylabs/delay':
         specifier: 8.0.2
-        version: 8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)
+        version: 8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.6.5)
       '@xylabs/typeof':
         specifier: 8.0.2
-        version: 8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)
+        version: 8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.6.5)
       '@xyo-network/account-model':
         specifier: 7.0.15
-        version: 7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+        version: 7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       '@xyo-network/payload-builder':
         specifier: 7.0.15
-        version: 7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+        version: 7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       '@xyo-network/payload-model':
         specifier: 7.0.15
-        version: 7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+        version: 7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       '@xyo-network/sdk':
-        specifier: 7.4.1
-        version: 7.4.1(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4)
+        specifier: 7.4.2
+        version: 7.4.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)
       '@xyo-network/xl1-protocol':
-        specifier: 5.5.3
-        version: 5.5.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.1(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4))(ajv@8.20.0)(zod@4.5.4)
+        specifier: 5.5.4
+        version: 5.5.4(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(zod@4.6.5)
       '@xyo-network/xl1-sdk':
-        specifier: 5.5.3
-        version: 5.5.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.1(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4))(ajv@8.20.0)(async-mutex@0.5.0)(ethers@6.17.0)(typescript@5.6.3)(zod@4.5.4)
+        specifier: 5.5.4
+        version: 5.5.4(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(async-mutex@0.5.0)(ethers@6.17.0)(typescript@5.6.3)(zod@4.6.5)
       ajv:
         specifier: 8.20.0
         version: 8.20.0
@@ -55,8 +55,8 @@ importers:
         specifier: 4.21.2
         version: 4.21.2
       zod:
-        specifier: ^4.5.4
-        version: 4.5.4
+        specifier: ^4.6.5
+        version: 4.6.5
     devDependencies:
       '@types/node':
         specifier: 22.10.5
@@ -73,8 +73,8 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@ariestools/json-rpc-engine@8.2.0':
-    resolution: {integrity: sha512-H25R3yRb6BjgoemEgW3qlRA6t6YdDRb08MIHQbH0G6+kFJNdvlFZbUKLz5MNnpPezAAJ48XTF1mhw3cykbJVXQ==}
+  '@ariestools/json-rpc-engine@8.3.0':
+    resolution: {integrity: sha512-H7HIYs9i13ktEZ6kksWsQCbXsoqbfXZ8PxRdyQS84Q3v90tUdLp2feEhXNL+QpYoQWdtHQcTZH7MWTLrToHcgg==}
     engines: {node: '>=18'}
 
   '@ariestools/sdk@8.0.8':
@@ -296,18 +296,34 @@ packages:
   '@ethereumjs/common@3.2.0':
     resolution: {integrity: sha512-pksvzI0VyLgmuEF2FA/JR/4/y6hcPq8OUail3/AvycBaW1d5VSauOZzqGvJ3RTmR4MU35lWE8KseKOsEhrFRBA==}
 
+  '@ethereumjs/common@4.4.0':
+    resolution: {integrity: sha512-Fy5hMqF6GsE6DpYTyqdDIJPJgUtDn4dL120zKw+Pswuo+iLyBsEYuSyzMw6NVzD2vDzcBG9fE4+qX4X2bPc97w==}
+
   '@ethereumjs/rlp@4.0.1':
     resolution: {integrity: sha512-tqsQiBQDQdmPWE1xkkBq4rlSW5QZpLOUJ5RJh2/9fug+q9tnUhuZoVLk7s0scUIKTOzEtR72DFBXI4WiZcMpvw==}
     engines: {node: '>=14'}
+    hasBin: true
+
+  '@ethereumjs/rlp@5.0.2':
+    resolution: {integrity: sha512-DziebCdg4JpGlEqEdGgXmjqcFoJi+JGulUXwEjsZGAscAQ7MyD/7LE/GVCP29vEQxKc7AAwjT3A2ywHp2xfoCA==}
+    engines: {node: '>=18'}
     hasBin: true
 
   '@ethereumjs/tx@4.2.0':
     resolution: {integrity: sha512-1nc6VO4jtFd172BbSnTnDQVr9IYBFl1y4xPzZdtkrkKIncBCkdbgfdRV+MiTkJYAtTxvV12GRZLqBFT1PNK6Yw==}
     engines: {node: '>=14'}
 
+  '@ethereumjs/tx@5.4.0':
+    resolution: {integrity: sha512-SCHnK7m/AouZ7nyoR0MEXw1OO/tQojSbp88t8oxhwes5iZkZCtfFdUrJaiIb72qIpH2FVw6s1k1uP7LXuH7PsA==}
+    engines: {node: '>=18'}
+
   '@ethereumjs/util@8.1.0':
     resolution: {integrity: sha512-zQ0IqbdX8FZ9aw11vP+dZkKDkS+kgIvQPHnSAXzP9pLu+Rfu3D3XEeLbicvoXJTYnhZiPmsZUxgdzXwNKxRPbA==}
     engines: {node: '>=14'}
+
+  '@ethereumjs/util@9.1.0':
+    resolution: {integrity: sha512-XBEKsYqLGXLah9PNJbgdkigthkG7TAGvlD/sH12beMXEyHDyigfcbdvHhmLyDWgDyOJn4QwiQUaF7yeuhnjdog==}
+    engines: {node: '>=18'}
 
   '@metamask/json-rpc-engine@10.5.0':
     resolution: {integrity: sha512-16ZjhuMGH5YUE7MLTKLclpHl7M5DZxrtAQu8AjEs1r3aRQnzslItDvjm3qk2lhm1kFddHtmDfh/ktcxaFpRkiw==}
@@ -360,10 +376,6 @@ packages:
     resolution: {integrity: sha512-caTaaBUcwBGbUNf3r0uT48upX4nECRbKhQ9pPOfW4sIkfcIUUDV4S9DZxq/5fuNPVt5KWpyd5xIIz0sP+iWLlg==}
     engines: {node: '>=16.0.0'}
 
-  '@metamask/utils@11.11.0':
-    resolution: {integrity: sha512-0nF2CWjWQr/m0Y2t2lJnBTU1/CZPPTvKvcESLplyWe/tyeb8zFOi/FeneDmaFnML6LYRIGZU6f+xR0jKAIUZfw==}
-    engines: {node: ^18.18 || ^20.14 || >=22}
-
   '@metamask/utils@11.12.0':
     resolution: {integrity: sha512-dtw3Kb0SwYpFfKrdTeFF0k0N9GLZ48sT6idGqk5lGriLCz120zxwgSbFyuHLA1XhFVvlYXoTf8wrPVffEZcVZg==}
     engines: {node: ^18.18 || ^20.14 || >=22}
@@ -371,6 +383,10 @@ packages:
   '@metamask/utils@11.12.1':
     resolution: {integrity: sha512-X97J5AEcaKDTIAfKb4X93ZTLfvOahzDVadlveQW+7OZ7yhXjMxXoFmhX2d9UKv48iS2Dxq9kbGJ1lUfphu9ebQ==}
     engines: {node: ^18.18 || ^20.14 || >=22}
+
+  '@metamask/utils@12.0.0':
+    resolution: {integrity: sha512-s68CmQOsd79Y3aUVZrirY9LAHjGxm4GlUYi7DaB+d2sx+ljGnw0+JdZ4rGYlf1w3SbKCSyE348WC+pL/20VuWg==}
+    engines: {node: ^22.14.0 || ^24}
 
   '@noble/ciphers@2.2.0':
     resolution: {integrity: sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA==}
@@ -645,20 +661,20 @@ packages:
     resolution: {integrity: sha512-4tmUbQjbfg0w65vWf4TVUApazeXtawDWIE8Phrdozmfi6dtk9KGqUPx14VCXVmai/maA/eK1Az0TyMzCMMFQRQ==}
     engines: {node: ^24}
 
-  '@xyo-network/sdk@7.4.1':
-    resolution: {integrity: sha512-6I8zuqD0F7iVkt+V/FsAXcV5p1+M1NFFEgpgnpuNprzHQIGocNy4vAIU0A5XSNpALOJGXMsxGZtXKtqBwXmRCw==}
+  '@xyo-network/sdk@7.4.2':
+    resolution: {integrity: sha512-cOVZJC0Ppe1XbX7PoogVw+JIVhGT9LCemVEFcMBvFqs9XvEgz5yCQsAWvNNk+Of3q3j10dOuIgcgEOin6xumig==}
     engines: {node: ^24}
     peerDependencies:
       '@ariestools/sdk': ^8.1
       '@opentelemetry/api': ^1.9
       '@xyo-network/sdk-protocol': ^7.2
-      zod: ^4.4
+      zod: ^4.6
 
   '@xyo-network/typechain@4.2.0':
     resolution: {integrity: sha512-ssrTBBTCP/JhSmckDZtK0QBV9cj6VwoBRNxvikTVwY3YB0m8Tv+YZptHhDXcOnHbJTdm75u4s7Ye+dfcHB+Qfg==}
 
-  '@xyo-network/xl1-protocol@5.5.3':
-    resolution: {integrity: sha512-sLkSx+Sj5bxMWLG+oY9MDRzCspNnlljwkPECynmZJKtEDxLpwCNOjOf8sVFh93bX/XOEQn1OnCq3s8M7MqR93Q==}
+  '@xyo-network/xl1-protocol@5.5.4':
+    resolution: {integrity: sha512-HHIuhvv+zS+Wij1LisqQPGcirMPGSPU/1x8HRjjWBfJfUAR+RNVJy1CcyhpGlWsy6ZGJ7bYyg1FaUmc5VMAHrA==}
     engines: {node: '>=22.3'}
     peerDependencies:
       '@ariestools/sdk': ^8.1
@@ -667,8 +683,8 @@ packages:
       ajv: ^8.20
       zod: ^4.5
 
-  '@xyo-network/xl1-sdk@5.5.3':
-    resolution: {integrity: sha512-+DHBU2UCcpl2fc/gT5ujDgFNzPymuWqvi6mZNqTFR8ysre1VK2BONdN033azUwtlXzbG85dRQ43ubtE+Xt1oCA==}
+  '@xyo-network/xl1-sdk@5.5.4':
+    resolution: {integrity: sha512-TgTS86tHltghnI4wKUS9zb3ohEufrguEv3UTkwyiigX8LyEyM/60ixxtzrj2GQJwd/biI7zCxKdfypfIlJM7bw==}
     engines: {node: '>=22.3'}
     peerDependencies:
       '@ariestools/sdk': ^8.2
@@ -1196,47 +1212,47 @@ packages:
     resolution: {integrity: sha512-GZtjxm/J/4TSxuL3FNYjCmLktBTnIw/rVmKSIyKeYAZpmJB2ig9VauCC5xsa82GNKVKDAqpOn3KVzNt0zmrU0g==}
     engines: {node: '>=12'}
 
-  zod@4.5.4:
-    resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@ariestools/json-rpc-engine@8.2.0(typescript@5.6.3)':
+  '@ariestools/json-rpc-engine@8.3.0(typescript@5.6.3)':
     dependencies:
       '@metamask/json-rpc-engine': 10.5.0(typescript@5.6.3)
       '@metamask/messenger': 2.0.0(typescript@5.6.3)
       '@metamask/rpc-errors': 7.0.3
-      '@metamask/utils': 11.11.0
+      '@metamask/utils': 11.12.1
       deep-freeze-strict: 1.1.1
       klona: 2.0.6
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  '@ariestools/sdk@8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)':
+  '@ariestools/sdk@8.0.8(@opentelemetry/api@1.9.1)(zod@4.6.5)':
     dependencies:
       async-mutex: 0.5.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
-      zod: 4.5.4
+      zod: 4.6.5
 
-  '@ariestools/sdk@8.1.9(@opentelemetry/api@1.9.1)(zod@4.5.4)':
+  '@ariestools/sdk@8.1.9(@opentelemetry/api@1.9.1)(zod@4.6.5)':
     dependencies:
       '@ariestools/telemetry': 8.1.9(@opentelemetry/api@1.9.1)
       '@opentelemetry/api': 1.9.1
       async-mutex: 0.5.0
     optionalDependencies:
-      zod: 4.5.4
+      zod: 4.6.5
 
-  '@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)':
+  '@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)':
     dependencies:
       '@ariestools/telemetry': 8.2.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/api': 1.9.1
       async-mutex: 0.5.0
     optionalDependencies:
-      zod: 4.5.4
+      zod: 4.6.5
 
   '@ariestools/telemetry@8.1.9(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -1246,9 +1262,9 @@ snapshots:
     dependencies:
       '@opentelemetry/api': 1.9.1
 
-  '@ariestools/threads@8.0.8(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)':
+  '@ariestools/threads@8.0.8(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.6.5)
       debug: 4.4.3
       observable-fns: 0.6.1
     transitivePeerDependencies:
@@ -1256,9 +1272,9 @@ snapshots:
       - supports-color
       - zod
 
-  '@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)':
+  '@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.1.9(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.1.9(@opentelemetry/api@1.9.1)(zod@4.6.5)
       debug: 4.4.3
       observable-fns: 0.6.1
     transitivePeerDependencies:
@@ -1351,7 +1367,13 @@ snapshots:
       '@ethereumjs/util': 8.1.0
       crc-32: 1.2.2
 
+  '@ethereumjs/common@4.4.0':
+    dependencies:
+      '@ethereumjs/util': 9.1.0
+
   '@ethereumjs/rlp@4.0.1': {}
+
+  '@ethereumjs/rlp@5.0.2': {}
 
   '@ethereumjs/tx@4.2.0':
     dependencies:
@@ -1360,11 +1382,23 @@ snapshots:
       '@ethereumjs/util': 8.1.0
       ethereum-cryptography: 2.2.1
 
+  '@ethereumjs/tx@5.4.0':
+    dependencies:
+      '@ethereumjs/common': 4.4.0
+      '@ethereumjs/rlp': 5.0.2
+      '@ethereumjs/util': 9.1.0
+      ethereum-cryptography: 2.2.1
+
   '@ethereumjs/util@8.1.0':
     dependencies:
       '@ethereumjs/rlp': 4.0.1
       ethereum-cryptography: 2.2.1
       micro-ftch: 0.3.1
+
+  '@ethereumjs/util@9.1.0':
+    dependencies:
+      '@ethereumjs/rlp': 5.0.2
+      ethereum-cryptography: 2.2.1
 
   '@metamask/json-rpc-engine@10.5.0(typescript@5.6.3)':
     dependencies:
@@ -1399,7 +1433,7 @@ snapshots:
 
   '@metamask/messenger@2.0.0(typescript@5.6.3)':
     dependencies:
-      '@metamask/utils': 11.12.0
+      '@metamask/utils': 11.12.1
       typescript: 5.6.3
     transitivePeerDependencies:
       - supports-color
@@ -1445,22 +1479,6 @@ snapshots:
 
   '@metamask/superstruct@3.4.1': {}
 
-  '@metamask/utils@11.11.0':
-    dependencies:
-      '@ethereumjs/tx': 4.2.0
-      '@metamask/superstruct': 3.4.1
-      '@noble/hashes': 1.8.0
-      '@scure/base': 1.2.6
-      '@types/debug': 4.1.13
-      '@types/lodash': 4.17.25
-      debug: 4.4.3
-      lodash: 4.18.1
-      pony-cause: 2.1.11
-      semver: 7.8.5
-      uuid: 14.0.2
-    transitivePeerDependencies:
-      - supports-color
-
   '@metamask/utils@11.12.0':
     dependencies:
       '@ethereumjs/tx': 4.2.0
@@ -1481,6 +1499,23 @@ snapshots:
   '@metamask/utils@11.12.1':
     dependencies:
       '@ethereumjs/tx': 4.2.0
+      '@metamask/scure-bip39': 2.1.1
+      '@metamask/superstruct': 3.4.1
+      '@noble/hashes': 1.8.0
+      '@scure/base': 1.2.6
+      '@types/debug': 4.1.13
+      '@types/lodash': 4.17.25
+      debug: 4.4.3
+      lodash: 4.18.1
+      pony-cause: 2.1.11
+      semver: 7.8.5
+      uuid: 14.0.2
+    transitivePeerDependencies:
+      - supports-color
+
+  '@metamask/utils@12.0.0':
+    dependencies:
+      '@ethereumjs/tx': 5.4.0
       '@metamask/scure-bip39': 2.1.1
       '@metamask/superstruct': 3.4.1
       '@noble/hashes': 1.8.0
@@ -1617,34 +1652,34 @@ snapshots:
     dependencies:
       undici-types: 6.19.8
 
-  '@xylabs/assert@8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)':
+  '@xylabs/assert@8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
       async-mutex: 0.5.0
-      zod: 4.5.4
+      zod: 4.6.5
 
-  '@xylabs/delay@8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)':
+  '@xylabs/delay@8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
       async-mutex: 0.5.0
-      zod: 4.5.4
+      zod: 4.6.5
 
-  '@xylabs/typeof@8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.5.4)':
+  '@xylabs/typeof@8.0.2(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(async-mutex@0.5.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.0.8(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
       async-mutex: 0.5.0
-      zod: 4.5.4
+      zod: 4.6.5
 
-  '@xyo-network/account-model@7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+  '@xyo-network/account-model@7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
+      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5)
       '@bitauth/libauth': 3.0.0
       '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
       '@noble/post-quantum': 0.7.1
@@ -1652,7 +1687,7 @@ snapshots:
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
       '@scure/base': 2.3.0
       '@scure/bip39': 2.3.0
-      '@xyo-network/sdk-protocol': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      '@xyo-network/sdk-protocol': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       ajv: 8.20.0
       async-mutex: 0.5.0
       debug: 4.4.3
@@ -1661,15 +1696,15 @@ snapshots:
       idb: 8.0.3
       observable-fns: 0.6.1
       webextension-polyfill: 0.12.0
-      zod: 4.5.4
+      zod: 4.6.5
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  '@xyo-network/payload-builder@7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+  '@xyo-network/payload-builder@7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
+      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5)
       '@bitauth/libauth': 3.0.0
       '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
       '@noble/post-quantum': 0.7.1
@@ -1677,7 +1712,7 @@ snapshots:
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
       '@scure/base': 2.3.0
       '@scure/bip39': 2.3.0
-      '@xyo-network/sdk-protocol': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      '@xyo-network/sdk-protocol': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       ajv: 8.20.0
       async-mutex: 0.5.0
       debug: 4.4.3
@@ -1686,15 +1721,15 @@ snapshots:
       idb: 8.0.3
       observable-fns: 0.6.1
       webextension-polyfill: 0.12.0
-      zod: 4.5.4
+      zod: 4.6.5
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  '@xyo-network/payload-model@7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+  '@xyo-network/payload-model@7.0.15(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@ariestools/threads@8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5))(@bitauth/libauth@3.0.0)(@metamask/providers@22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0))(@noble/post-quantum@0.7.1)(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@scure/base@2.3.0)(@scure/bip39@2.3.0)(ajv@8.20.0)(async-mutex@0.5.0)(debug@4.4.3)(ethers@6.17.0)(hash-wasm@4.12.0)(idb@8.0.3)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
+      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5)
       '@bitauth/libauth': 3.0.0
       '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
       '@noble/post-quantum': 0.7.1
@@ -1702,7 +1737,7 @@ snapshots:
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
       '@scure/base': 2.3.0
       '@scure/bip39': 2.3.0
-      '@xyo-network/sdk-protocol': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      '@xyo-network/sdk-protocol': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       ajv: 8.20.0
       async-mutex: 0.5.0
       debug: 4.4.3
@@ -1711,15 +1746,15 @@ snapshots:
       idb: 8.0.3
       observable-fns: 0.6.1
       webextension-polyfill: 0.12.0
-      zod: 4.5.4
+      zod: 4.6.5
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  '@xyo-network/sdk-protocol-core@7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+  '@xyo-network/sdk-protocol-core@7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@ariestools/threads': 8.0.8(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
+      '@ariestools/threads': 8.0.8(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5)
       '@bitauth/libauth': 3.0.0
       '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
       '@noble/post-quantum': 0.6.1
@@ -1734,15 +1769,15 @@ snapshots:
       idb: 8.0.3
       observable-fns: 0.6.1
       webextension-polyfill: 0.12.0
-      zod: 4.5.4
+      zod: 4.6.5
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  '@xyo-network/sdk-protocol-core@7.3.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+  '@xyo-network/sdk-protocol-core@7.3.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
+      '@ariestools/threads': 8.1.9(@opentelemetry/api@1.9.1)(observable-fns@0.6.1)(zod@4.6.5)
       '@bitauth/libauth': 3.0.0
       '@metamask/providers': 22.1.1(typescript@5.6.3)(webextension-polyfill@0.12.0)
       '@noble/post-quantum': 0.7.1
@@ -1754,31 +1789,31 @@ snapshots:
       hash-wasm: 4.12.0
       idb: 8.0.3
       observable-fns: 0.6.1
-      zod: 4.5.4
+      zod: 4.6.5
     transitivePeerDependencies:
       - '@opentelemetry/api'
       - supports-color
       - typescript
       - webextension-polyfill
 
-  '@xyo-network/sdk-protocol@7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+  '@xyo-network/sdk-protocol@7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
-      '@xyo-network/sdk-protocol-core': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      '@xyo-network/sdk-protocol-core': 7.0.16(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ajv@8.20.0)(ethers@6.17.0)(observable-fns@0.6.1)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       ajv: 8.20.0
       ethers: 6.17.0
       observable-fns: 0.6.1
       webextension-polyfill: 0.12.0
-      zod: 4.5.4
+      zod: 4.6.5
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  '@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)':
+  '@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)':
     dependencies:
-      '@xyo-network/sdk-protocol-core': 7.3.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      '@xyo-network/sdk-protocol-core': 7.3.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
     transitivePeerDependencies:
       - '@ariestools/sdk'
       - '@opentelemetry/api'
@@ -1789,14 +1824,14 @@ snapshots:
       - webextension-polyfill
       - zod
 
-  '@xyo-network/sdk@7.4.1(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4)':
+  '@xyo-network/sdk@7.4.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@opentelemetry/api': 1.9.1
-      '@xyo-network/sdk-protocol': 7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4)
+      '@xyo-network/sdk-protocol': 7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       async-mutex: 0.5.0
       lru-cache: 11.5.2
-      zod: 4.5.4
+      zod: 4.6.5
 
   '@xyo-network/typechain@4.2.0':
     dependencies:
@@ -1805,33 +1840,33 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@xyo-network/xl1-protocol@5.5.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.1(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4))(ajv@8.20.0)(zod@4.5.4)':
+  '@xyo-network/xl1-protocol@5.5.4(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(zod@4.6.5)':
     dependencies:
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@opentelemetry/api': 1.9.1
-      '@xyo-network/sdk': 7.4.1(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4)
+      '@xyo-network/sdk': 7.4.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)
       ajv: 8.20.0
       ethers: 6.17.0
-      zod: 4.5.4
+      zod: 4.6.5
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@xyo-network/xl1-sdk@5.5.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.1(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4))(ajv@8.20.0)(async-mutex@0.5.0)(ethers@6.17.0)(typescript@5.6.3)(zod@4.5.4)':
+  '@xyo-network/xl1-sdk@5.5.4(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(async-mutex@0.5.0)(ethers@6.17.0)(typescript@5.6.3)(zod@4.6.5)':
     dependencies:
-      '@ariestools/json-rpc-engine': 8.2.0(typescript@5.6.3)
-      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4)
-      '@metamask/utils': 11.12.0
+      '@ariestools/json-rpc-engine': 8.3.0(typescript@5.6.3)
+      '@ariestools/sdk': 8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
+      '@metamask/utils': 12.0.0
       '@opentelemetry/api': 1.9.1
-      '@xyo-network/sdk': 7.4.1(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4)
+      '@xyo-network/sdk': 7.4.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)
       '@xyo-network/typechain': 4.2.0
-      '@xyo-network/xl1-protocol': 5.5.3(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.1(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.5.4))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.5.4))(zod@4.5.4))(ajv@8.20.0)(zod@4.5.4)
+      '@xyo-network/xl1-protocol': 5.5.4(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@7.4.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@7.3.2(@ariestools/sdk@8.2.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(zod@4.6.5)
       async-mutex: 0.5.0
       cosmiconfig: 10.0.1
       ethers: 6.17.0
       lru-cache: 11.5.2
       uuid: 14.0.2
-      zod: 4.5.4
+      zod: 4.6.5
     transitivePeerDependencies:
       - ajv
       - bufferutil
@@ -2373,4 +2408,4 @@ snapshots:
       y18n: 5.0.8
       yargs-parser: 21.1.1
 
-  zod@4.5.4: {}
+  zod@4.6.5: {}

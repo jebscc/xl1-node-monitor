@@ -4,7 +4,20 @@
 # For the block-height role this container needs NO wallet: /block-height uses
 # a read-only gateway, and the signing routes resolve their account lazily, so
 # leaving XL1_MNEMONIC unset simply means those routes error if ever called.
-FROM node:24-bookworm-slim
+#
+# NODE 26 IS NOT LTS UNTIL 2026-10-28, and sitting here anyway is a deliberate
+# call rather than an oversight. Node 24 is the Active LTS until 2026-10-20 and
+# 26 becomes LTS eight days after that; moving on 2026-09-19 puts this image on
+# the line it will sit on for the next two years rather than moving it twice.
+# If you are installing this today and would rather stay on Active LTS,
+# node:24-bookworm-slim is a one-word change and everything here works on it.
+#
+# It does NOT unblock @xyo-network/sdk 8, which declares engines node ^26.
+# That is one of two locks; the other is that xl1-sdk 5.5.4 still declares
+# @xyo-network/sdk ^7.4 as a PEER, so taking sdk 8 would break the XL1 SDK's
+# own requirement whatever Node this image runs. Both have to clear before
+# the pin in package.json can move.
+FROM node:26-bookworm-slim
 
 WORKDIR /app
 

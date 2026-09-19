@@ -15,7 +15,12 @@ It answers four questions a node operator actually has:
 - **Can anyone check those figures, or do they have to take my word for it?**
 
 Built for a Raspberry Pi producing on the Sequence network, but nothing in it
-is Pi-specific — any Linux machine running the node in Docker will do.
+is Pi-specific — any Linux machine running the node in Docker will do, and
+Windows via WSL2 has been tested too.
+
+**It can also create the node.** `agent/bootstrap-pi.sh` installs a producer,
+the anchoring service and the agent together; Part 1 covers that and the
+Windows route beside it.
 
 ---
 
@@ -25,7 +30,7 @@ You need three things:
 
 | | |
 |---|---|
-| **A running XL1 node** | In Docker, from [xl1-docker-images](https://github.com/XYOracleNetwork/xl1-docker-images). This tool watches a node; it does not create one. |
+| **A running XL1 node** | In Docker, from [xl1-docker-images](https://github.com/XYOracleNetwork/xl1-docker-images). **Part 1 builds one** if you do not have it — on a Pi or on Windows. |
 | **Shell access to that machine** | With `sudo`. Referred to below as *the node machine*. |
 | **Somewhere to run the receiver** | Any machine the node machine can reach over HTTP. See [Where to run the receiver](#where-to-run-the-receiver). |
 
@@ -59,7 +64,200 @@ node machine                                   anywhere
 
 ---
 
-## Part 1 — Run the receiver
+## Part 1 — Run a node
+
+Skip this if you already have one. `docker ps` showing an XL1 container is all
+Part 2 needs.
+
+Two routes are written up here, and **both have been run**: a Raspberry Pi,
+which is what this was built for, and Windows, which was tested on 2026-09-19.
+Nothing below is derived from the other — where Windows differs, it differs
+because it was found to.
+
+### A — Raspberry Pi, with the wizard
+
+`agent/bootstrap-pi.sh` takes a freshly flashed Pi to a running node in eleven
+steps. It asks before each one and shows what it will do first. It installs
+three things, all on that machine:
+
+| | |
+|---|---|
+| the heartbeat agent | reports how the machine is doing, every 30 seconds — Part 3 |
+| an XL1 block producer | built there and run in Docker |
+| the anchoring service | writes a hash of each reading to the chain |
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent/bootstrap-pi.sh | bash
+```
+
+Every prompt can be given as a flag instead — `--node-id`, `--label`,
+`--location`, `--lat/--lon`, `--postcode` — and anything supplied is not asked
+about, which makes it usable from a script as well as from a chair.
+
+**Budget the time.** Building the node image is the long part: ten to twenty
+minutes on a Pi 4, longer on a Pi 3. It is compiling, not hung.
+
+### B — Windows, with WSL2
+
+Tested on Windows 11 with Ubuntu 26.04 under WSL2. **Docker Desktop is not
+required** — Docker Engine inside WSL has no licensing question, needs no GUI,
+and runs the same Linux steps the Pi does.
+
+The node image is **not Arm-only**: it builds and runs as `amd64/linux` from
+the same recipe and the same `xl1-cli` version a Pi uses. It is also far
+quicker — 48 seconds to compile and build on a 12-core x86 box, against the
+Pi's ten to twenty minutes.
+
+**1. Ubuntu under WSL2**, if you do not have it:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Check `systemd` is running inside it (`ls /run/systemd/system`). Recent WSL
+enables it by default; older ones need `[boot]\nsystemd=true` in `/etc/wsl.conf`
+and `wsl --shutdown`.
+
+**2. Docker Engine, inside Ubuntu** — not on Windows:
+
+```bash
+sudo apt-get update && sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+```
+
+Then **open a new Ubuntu shell** — group membership only applies to new
+sessions — and confirm with `docker run --rm hello-world`.
+
+**3. Build the node image.** `dist/` is deliberately not in the recipe
+repository, so a plain `docker build` fails at its `COPY`. Compile it first,
+in a container, so no toolchain lands on your machine:
+
+```bash
+git clone https://github.com/XYOracleNetwork/xl1-docker-images.git ~/xl1-docker-images
+cd ~/xl1-docker-images
+
+CLI_VERSION=$(curl -fsSL https://registry.npmjs.org/@xyo-network/xl1-cli/latest \
+  | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+
+docker run --rm -v "$PWD":/w -w /w node:24.14.1-bookworm-slim \
+  sh -c 'corepack enable && pnpm install --frozen-lockfile && pnpm xy compile'
+
+env XL1_CLI_VERSION="$CLI_VERSION" TAG="xl1:$CLI_VERSION" bash scripts/build-image.sh
+docker tag "xl1:$CLI_VERSION" xl1:local
+```
+
+**Pin that `node:24`.** Node 26 images no longer ship `corepack`, so
+`corepack enable` fails there with `corepack: not found`. If you must use a
+newer base, install it first: `npm install -g corepack@latest && corepack enable`.
+
+**4. Run it.** Four settings are required, and the node refuses to start
+without them rather than running oddly:
+
+```bash
+docker run -d --name xl1-producer --restart unless-stopped \
+  -e XL1_NETWORK=sequence \
+  -e XL1_ROLE=producer-rest \
+  -e XL1_MNEMONIC="your twelve words here" \
+  -e XL1_REWARD_ADDRESS=0xYourRewardAddress \
+  -e XL1_HEALTH_CHECK_PORT=9099 \
+  -p 127.0.0.1:9099:9099 \
+  xl1:local
+```
+
+Omit `XL1_MNEMONIC` and it says `XL1_MNEMONIC is required when using
+network/role presets`; omit the reward address and it says
+`XL1_REWARD_ADDRESS is required for the producer role preset`.
+
+WSL forwards localhost, so `http://127.0.0.1:9099/statz` answers **from
+Windows** as well as from inside Ubuntu — a browser or the agent on the
+Windows side can read it.
+
+**The caveat, and it is the reason a Pi is still the better host.** WSL is not
+a headless board: the distro stops when Windows stops it, and Windows shuts it
+down on idle by default. A producer is meant to run continuously, so settle
+that before trusting this with uptime.
+
+---
+
+### The one setting that decides whether it produces
+
+**The shipped image defaults to `blockProductionCheckInterval: 60000` in both
+roles, and that will cripple your node.** Nothing warns you.
+
+That interval is not how often the node notices a new block — it is how often
+it **samples the mempool**, and pending transactions live about six seconds
+before another producer sweeps them. So:
+
+| interval | samples/min | transactions caught |
+|---|---|---|
+| `60000` — the shipped default | 1 | ~10% |
+| `10000` | 6 | ~46% |
+| `5000` | 12 | **~71%** |
+
+`5000` is not an aggressive value: it is `MIN_POLL_INTERVAL_MS`, the floor
+XYO's own stream provider enforces on itself. Below it there is no defensible
+ground. Above it you are simply not seeing most of the work.
+
+Measured cost at `5000`: about **25 RPC calls a minute** across all call
+sites, with no rate-limiting observed and no rejected publishes.
+
+The presets live at `/opt/xl1/presets/roles/` inside the image. To change one,
+mount a host copy over it:
+
+```bash
+docker run --rm --entrypoint sh xl1:local -c 'cat /opt/xl1/presets/roles/producer-rest.json' \
+  > ~/xl1-presets/roles/producer-rest.json
+# edit blockProductionCheckInterval to 5000, then add to your docker run:
+#   -v ~/xl1-presets:/presets -e XL1_PRESETS_DIR=/presets
+```
+
+**Check the file inside the container, not the one on the host** —
+`docker exec xl1-producer grep CheckInterval /presets/roles/producer-rest.json`.
+A host edit that never reached the container looks exactly like a host edit
+that did.
+
+Do not expect this to be the start of a series. At `5000`, most attempts still
+find no pending transaction at all: the ceiling after that is how busy the
+chain is, not how fast you sample.
+
+---
+
+### What "running" looks like, and why it may still produce nothing
+
+A healthy start ends with `[xl1] system ready (producer in …ms)` and a
+container that reports `healthy`. `GET /statz` on the health port is the real
+instrument — `blockProductionChecks`, `idleAttempts`, `blocksProduced`,
+`rejectedPublishes`, and per-stage timings.
+
+**A high idle count is normal.** Most checks find nothing to do, and sampling
+more often makes that fraction larger, not smaller. It is not a fault.
+
+**And a node can be perfectly healthy and land nothing.** Sequence is
+federated: producers are authorised by an allowlist, and a signing address
+that is not on it runs green, reports live, submits candidates and has every
+one of them ignored. `Published block:` in the log means *submitted*, not
+*accepted*.
+
+**Authorisation follows the signing key, not the reward address.** The signing
+address is derived from `XL1_MNEMONIC` at `accountPath 0` and is never written
+down anywhere; `XL1_REWARD_ADDRESS` only says where rewards are paid and has
+no bearing on whether you may produce. Confirm which address your phrase
+actually derives before concluding you are blocked on an allowlist entry — a
+climbing reward balance is the only real confirmation that blocks are being
+accepted.
+
+---
+
+## Part 2 — Run the receiver
 
 ### Where to run the receiver
 
@@ -145,7 +343,7 @@ a terminal, and put HTTPS in front of it.
 
 ---
 
-## Part 2 — Install the agent on the node machine
+## Part 3 — Install the agent on the node machine
 
 Everything below runs **on the node machine**. Copy `agent/` there first, from
 your own machine:
@@ -287,7 +485,7 @@ journalctl -u xl1-heartbeat -n 20 --no-pager
 
 ---
 
-## Part 3 — Check it end to end
+## Part 4 — Check it end to end
 
 Ask the receiver what it knows:
 

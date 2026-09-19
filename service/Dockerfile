@@ -21,7 +21,19 @@ FROM node:26-bookworm-slim
 
 WORKDIR /app
 
-RUN corepack enable
+# COREPACK IS NOT IN THE NODE 26 IMAGE. It shipped inside node:24 and this
+# line was a bare `corepack enable` until 2026-09-19, when the first build on
+# 26 failed at once: `/bin/sh: 1: corepack: not found`, exit 127. Measured in
+# the image rather than inferred -- node:26-bookworm-slim is v26.9.0 with npm
+# 11.19.1 and NEITHER corepack nor pnpm on the path. The Node changelog still
+# lists corepack being updated, which is what misled the change: the package
+# is still maintained, it is simply no longer bundled in the distribution.
+#
+# Installed rather than swapped for `npm i -g pnpm`, because `packageManager`
+# in package.json pins pnpm@9.15.0 WITH A sha512 INTEGRITY HASH and corepack
+# is what verifies it. Installing pnpm directly would run whatever the
+# registry served and check nothing.
+RUN npm install -g corepack@latest && corepack enable
 
 # Dependencies first so edits to src/ don't invalidate the install layer.
 # tsx is a devDependency and is required to run, so no --prod here.

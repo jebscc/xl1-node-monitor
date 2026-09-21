@@ -206,9 +206,42 @@ producer_preset() {
 #
 # The keys stay in the file. They are why a restore can tell which account a
 # machine is, which is worth more than the line that removes them here.
+#
+# SO THEY ARE WRITTEN COMMENTED OUT, and that is the whole of the fix.
+#
+# Filtering them on the way to `docker run` covered only the containers THIS
+# script creates, and it does not create them all. Where a systemd unit owns
+# the producer, this script writes into the unit's own --env-file -- it has
+# to, or nothing it configures reaches the node -- and the unit then hands
+# that file to the container whole, through an ExecStart this script does not
+# write and must not rewrite. Filtering had nothing to filter on that path.
+# The script warned, and restarted the unit anyway.
+#
+# Jim's Pi 4, 2026-09-21: exit 78, twenty-four restarts, `Unrecognized key:
+# "accountIndex"`, on a producer that had run for weeks. The wizard printed
+# the diagnosis and the cure in the same breath as the failure.
+#
+# `docker --env-file` ignores a line beginning with `#`, and an operator
+# reading the file still sees the number. So the record survives AND the file
+# is safe to hand a node whole -- which is the only thing that helps when the
+# handing is done by somebody else's unit.
+#
+# Declining to edit a unit is right. Declining to stop poisoning a file this
+# script writes itself is not the same restraint, and the two got confused.
 RECORD_ONLY_KEYS='XL1_ACCOUNT_INDEX|XL1_BLOCK_CHECK_INTERVAL_MS'
 
+# The same keys as a sed program, built from the one list above rather than
+# spelled a second time: `s/^KEY=/# KEY=/;` for each.
+record_only_sed() {
+  for _rk in $(printf '%s' "$RECORD_ONLY_KEYS" | tr '|' ' '); do
+    printf 's/^%s=/# %s=/;' "$_rk" "$_rk"
+  done
+}
+
 producer_runtime_env() { # <src> <dest>: the env file, minus what the node rejects
+  # STILL FILTERS, and it is not redundant now the writer comments them: a
+  # file left by an older version has the keys live, and this is the path
+  # that hands one straight to `docker run`.
   # umask, not a later chmod: the phrase is in here, and a file that is
   # briefly world-readable is world-readable.
   $SUDO sh -c "umask 077; grep -vE '^($RECORD_ONLY_KEYS)=' '$1' > '$2'"
@@ -228,7 +261,10 @@ producer_account() {
   # So the index is also written beside the phrase and the role it belongs
   # with, in $PRODUCER_ENV, which is the file an operator actually backs up.
   # The preset still wins when both exist: it is what the node reads.
-  [ -n "$_acct" ] || _acct="$($SUDO sed -n 's/^XL1_ACCOUNT_INDEX=//p' \
+  #
+  # Commented or live: the writer comments it out (see RECORD_ONLY_KEYS) and a
+  # file from an older run has it live. Both are the same record.
+  [ -n "$_acct" ] || _acct="$($SUDO sed -n 's/^#\{0,1\} *XL1_ACCOUNT_INDEX=//p' \
     "$PRODUCER_ENV" 2>/dev/null | head -1 | tr -d ' \r\n')"
   printf '%s' "$_acct"
 }
@@ -246,7 +282,7 @@ producer_account() {
 # here, because a default this script made up would be one more figure nobody
 # chose, reverting to something else again on the next image.
 producer_check_interval() {
-  $SUDO sed -n 's/^XL1_BLOCK_CHECK_INTERVAL_MS=//p' "$PRODUCER_ENV" 2>/dev/null \
+  $SUDO sed -n 's/^#\{0,1\} *XL1_BLOCK_CHECK_INTERVAL_MS=//p' "$PRODUCER_ENV" 2>/dev/null \
     | head -1 | tr -d ' \r\n'
 }
 
@@ -278,7 +314,7 @@ verify_producer_account() {
   # a default would paper over.
   if [ -z "$_want_acct" ]; then
     warn "producing as account $_run_acct, but nothing here records which it should be" \
-         "put XL1_ACCOUNT_INDEX=$_run_acct in $PRODUCER_ENV, or a restore has to guess -- and 0 is the guess that collides"
+         "put \"# XL1_ACCOUNT_INDEX=$_run_acct\" in $PRODUCER_ENV -- commented, because a unit may hand that file to the node whole -- or a restore has to guess, and 0 is the guess that collides"
     return 0
   fi
   if [ "$_run_acct" != "$_want_acct" ]; then
@@ -2363,11 +2399,15 @@ chmod 600 "$tmp_env"
   # Beside the phrase it derives from, in the file operators back up. The node
   # does not read this -- the preset is still the mechanism -- but it is what
   # lets a restore know which account this machine is, instead of guessing.
-  printf 'XL1_ACCOUNT_INDEX=%s\n' "${ACCOUNT_INDEX:-0}"
+  #
+  # COMMENTED OUT, and RECORD_ONLY_KEYS says why: a unit this script does not
+  # own may hand this file to the container whole, and the entrypoint turns a
+  # live key here into a top-level run config the CLI refuses outright.
+  printf '# XL1_ACCOUNT_INDEX=%s\n' "${ACCOUNT_INDEX:-0}"
   # Only when this machine has one. An absent line means the image's value
   # stands, which is different from recording a number this script chose.
   [ -n "${CHECK_INTERVAL_MS:-}" ] \
-    && printf 'XL1_BLOCK_CHECK_INTERVAL_MS=%s\n' "$CHECK_INTERVAL_MS"
+    && printf '# XL1_BLOCK_CHECK_INTERVAL_MS=%s\n' "$CHECK_INTERVAL_MS"
 } > "$tmp_env"
 
 # EVERYTHING THIS WRITER DOES NOT OWN IS CARRIED OVER -- the same rule the
@@ -2509,12 +2549,18 @@ if [ -n "$PRODUCER_UNIT_NAME" ]; then
     warn "this node produces as account $ACCOUNT_INDEX, which needs the preset mount" \
          "the unit's ExecStart must carry -e XL1_PRESETS_DIR=/presets -v $PRESETS_DIR:/presets, or the node comes back as account 0 -- a different address"
   fi
-  # A unit reads its OWN --env-file, so nothing above can filter it. Said here
-  # rather than fixed, because editing somebody's unit is not this script's
-  # business -- but a restart is exactly when this bites.
-  if $SUDO grep -qE "^($RECORD_ONLY_KEYS)=." "$PRODUCER_ENV" 2>/dev/null; then
-    warn "$PRODUCER_ENV carries keys the node rejects, and this unit loads that file whole" \
-         "the container will not start -- \"Unrecognized keys\", exit 78. Point the unit's --env-file at a copy without XL1_ACCOUNT_INDEX or XL1_BLOCK_CHECK_INTERVAL_MS; both settings already live in the preset."
+  # A unit reads its OWN --env-file, so nothing above can filter it -- and
+  # that file is the one this script has just written. Editing the UNIT is not
+  # this script's business; leaving a key it wrote itself in a state that
+  # stops the node is not a boundary, it is a bug with a warning attached.
+  #
+  # The writer above comments these out, so this can only fire on a file an
+  # older version left behind. It repairs that file, because the restart is
+  # the next line and the restart is when it bites.
+  if $SUDO grep -qE "^($RECORD_ONLY_KEYS)=" "$PRODUCER_ENV" 2>/dev/null; then
+    $SUDO sed -i "$(record_only_sed)" "$PRODUCER_ENV" \
+      && ok "commented out the keys the node rejects in $PRODUCER_ENV" \
+      || die "$PRODUCER_ENV carries keys the node rejects and could not be repaired. Comment out XL1_ACCOUNT_INDEX and XL1_BLOCK_CHECK_INTERVAL_MS by hand -- the container will not start otherwise, exit 78."
   fi
 else
   $SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true

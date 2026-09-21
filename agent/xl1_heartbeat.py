@@ -44,7 +44,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.42.0"
+AGENT_VERSION = "1.42.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1693,6 +1693,22 @@ def _peers_none(why):
     return None, None, None, None
 
 
+_share_why = {"seen": None}
+
+
+def _peers_share_unknown(why):
+    """Say once why a reading arrived without our own share in it.
+
+    Separate from _peers_none's dict on purpose: that one is cleared by a
+    successful reading, and this IS a successful reading. Sharing the dict
+    would make the line print again every hour for a condition that has not
+    changed.
+    """
+    if _share_why["seen"] != why:
+        _share_why["seen"] = why
+        print("peers: share withheld -- %s" % why, file=sys.stderr, flush=True)
+
+
 def _peer_windows(steps):
     """Ranked producers per scan depth, or None if the service sent none.
 
@@ -1738,6 +1754,11 @@ def _peer_windows(steps):
 def fetch_peers(name):
     """(peer_count, our_share_percent, window, field_shape) for the field.
 
+    our_share_percent may be None while the other three are real: see the
+    withholding rule at the foot of this function. A share is a claim about
+    THIS node and needs to know which node that is; the count, window and
+    shape are claims about everybody else and do not.
+
     A block count on its own says nothing: the same number is healthy against
     three other producers and alarming against ten. The share, and whether the
     share moved, is what makes a quiet day readable.
@@ -1776,9 +1797,17 @@ def fetch_peers(name):
     """
     if not PEERS_URL:
         return _peers_none("XL1_PEERS_URL is empty, so peers are not collected")
-    address = read_reward_address(name)
+    # THE SIGNER, not the reward wallet. /peers tallies the address that signs
+    # each block, which is the same address the production scan counts against
+    # -- and this was the one counter in the file still asking for the reward
+    # address instead. On the common setup the two are equal and nothing shows.
+    # Where the operator points rewards at a separate wallet they differ, the
+    # lookup below matches nothing, and the node reports a confident 0% share
+    # of a chain it is producing 9.85% of. Jim's Pi 4, 2026-09-21, after a
+    # rebuild wrote a differing XL1_REWARD_ADDRESS into a fresh env file.
+    address, fallback = counting_address(name)
     if not address:
-        return _peers_none("no reward address for container %s" % name)
+        return _peers_none("no address for container %s" % name)
     now = time.monotonic()
     cached = _peers_cache["value"]
     if cached is not None and now - _peers_cache["at"] < PEERS_INTERVAL:
@@ -1815,7 +1844,9 @@ def fetch_peers(name):
     # of its own blocks. The same class of quiet wrongness as the prefix bug
     # that once made a working balance look unreadable.
     target = re.sub(r"^0x", "", address.lower())
-    mine = 0
+    # None until a row is found, because "no row" and "a row saying zero" are
+    # different answers and the old `mine = 0` collapsed them.
+    mine = None
     for p in producers:
         if isinstance(p, dict) and str(p.get("address", "")).lower() == target:
             mine = p.get("blocks") or 0
@@ -1878,9 +1909,34 @@ def fetch_peers(name):
     # instead would be worse: this node produces, and a confident 0% share of
     # a chain it is producing on is the same quiet wrongness the address
     # matching above already guards against.
+    share_unknown = False
+    if mine is None:
+        # No row carrying our address. What that means depends entirely on
+        # whether the address was known or guessed.
+        #
+        # Signer known: a fact. This node signed nothing in the window, and 0%
+        # is the honest reading of a real quiet spell.
+        #
+        # Signer NOT known -- counting_address fell back to the reward wallet
+        # -- and a miss says only that the guess did not match. It cannot tell
+        # "produced nothing" from "looked for the wrong name", and the second
+        # is exactly the case this fix exists for. So the share is WITHHELD
+        # rather than reported as 0: the panel already draws a missing share
+        # as "—", and a gap an operator can question beats a zero they cannot.
+        # The count, window and field shape still go -- none of those was ever
+        # about us, and they stay true whoever we turn out to be.
+        if fallback:
+            share_unknown = True
+            _peers_share_unknown(
+                "the signing address is not known yet and the fallback %s is "
+                "not in the field, so the share is withheld rather than 0"
+                % target)
+        mine = 0
     if isinstance(mine, bool) or not isinstance(mine, (int, float)):
         return _peers_none("our own block count is not a number")
-    value = (len(producers), round(100.0 * mine / total, 2), body.get("window"), shape)
+    value = (len(producers),
+             None if share_unknown else round(100.0 * mine / total, 2),
+             body.get("window"), shape)
     # Cache only a real answer, for the same reason the balance does: a cached
     # failure pins the tile blank long after the cause is gone.
     _peers_cache["value"] = value

@@ -2110,7 +2110,19 @@ PEERS_BODY = {
 }
 
 
-def _stub_peers(monkeypatch, body, status=200, reward="0xd1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0"):
+_SIGNER_IS_THE_REWARD_WALLET = object()
+
+
+def _stub_peers(monkeypatch, body, status=200, reward="0xd1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0",
+                signer=_SIGNER_IS_THE_REWARD_WALLET):
+    """Stand up /peers, a reward address, and a signing address.
+
+    The signer defaults to the reward wallet, which is the ordinary setup the
+    wizard produces and what every test written before the two were told apart
+    was silently assuming. Pass signer=None to play a node that has not yet
+    said who it signs as, or a literal address to play one whose operator
+    points rewards somewhere else.
+    """
     class _Resp:
         def __init__(self): self.status = status
         def read(self): return json.dumps(body).encode() if body is not None else b"{}"
@@ -2118,8 +2130,12 @@ def _stub_peers(monkeypatch, body, status=200, reward="0xd1e2f3a4b5c6d7e8f9a0b1c
         def __exit__(self, *a): return False
     monkeypatch.setattr(agent.urllib.request, "urlopen", lambda url, timeout=0: _Resp())
     monkeypatch.setattr(agent, "REWARD_ADDRESS", reward)
+    if signer is _SIGNER_IS_THE_REWARD_WALLET:
+        signer = re.sub(r"^0x", "", (reward or "").lower()) or None
+    monkeypatch.setattr(agent, "read_producer_address", lambda name: signer)
     monkeypatch.setitem(agent._peers_cache, "value", None)
     monkeypatch.setitem(agent._peers_cache, "at", 0.0)
+    monkeypatch.setitem(agent._share_why, "seen", None)
 
 
 def test_our_share_is_found_among_the_peers(monkeypatch):
@@ -2464,6 +2480,58 @@ def test_a_node_absent_from_the_window_reports_zero_not_nothing(monkeypatch):
     _stub_peers(monkeypatch, body)
     count, share, _, _ = agent.fetch_peers("xl1-producer")
     assert count == 1 and share == 0.0
+
+
+def test_the_share_is_counted_against_the_signer_not_the_reward_wallet(monkeypatch):
+    """/peers tallies the address that SIGNS blocks. The reward wallet is the
+    operator's choice of where money lands and need not be the same one.
+
+    Jim's Pi 4, 2026-09-21: a rebuild wrote a differing XL1_REWARD_ADDRESS into
+    a fresh env file, and this function -- the last counter in the agent still
+    asking for the reward address -- reported produced_share 0.0 for a node
+    whose own field list showed it signing 9.85% of the window. Everything
+    else on the panel was right, which is what made it hard to see."""
+    signer = "a6567633ac83a7017f3a2ef20fbbed890a2adae9"
+    body = {"window": 2000, "totalBlocks": 2000,
+            "producers": [{"address": signer, "blocks": 197},
+                          {"address": "b" * 40, "blocks": 1803}]}
+    _stub_peers(monkeypatch, body,
+                reward="0xc6fcc91bd2b4aff1d803792c7b8a9ab3c8435a6f",
+                signer=signer)
+    _, share, _, _ = agent.fetch_peers("xl1-producer")
+    assert share == 9.85, f"counted against the wrong address: got {share}"
+
+
+def test_an_unknown_signer_withholds_the_share_rather_than_claiming_zero(monkeypatch):
+    """The fallback's miss is not evidence of anything.
+
+    With no signing address learned yet, counting_address guesses the reward
+    wallet. A guess that matches nothing cannot tell "this node produced
+    nothing" from "this node was looked up under the wrong name" -- and the
+    bug above is the second. So the share is withheld. The count, window and
+    field shape are facts about the rest of the chain and still go."""
+    body = {"window": 1000, "totalBlocks": 1000,
+            "producers": [{"address": "b" * 40, "blocks": 600},
+                          {"address": "c" * 40, "blocks": 400}]}
+    _stub_peers(monkeypatch, body, signer=None)
+    count, share, window, field = agent.fetch_peers("xl1-producer")
+    assert share is None, f"a guess that matched nothing reported {share}"
+    assert count == 2 and window == 1000
+    assert field and field["leader"] == 60.0
+
+
+def test_a_guessed_address_that_matches_is_still_a_real_share(monkeypatch):
+    """Withholding applies to the miss, not to the guess.
+
+    The Pi 3's reward address IS its signer, which is why it never showed this
+    bug. A node in that position with its signer not yet learned still matches
+    its own row, and that match is proof the guess was right."""
+    addr = "30251291ac55017d90a3c892ab5604bdacf9bcde"
+    body = {"window": 2000, "totalBlocks": 2000,
+            "producers": [{"address": addr, "blocks": 237}]}
+    _stub_peers(monkeypatch, body, reward="0x" + addr, signer=None)
+    _, share, _, _ = agent.fetch_peers("xl1-producer")
+    assert share == 11.85, f"a matching guess is a measurement, got {share}"
 
 
 def test_an_unreadable_answer_is_not_a_zero_share(monkeypatch):

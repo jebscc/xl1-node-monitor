@@ -248,6 +248,46 @@ producer_runtime_env() { # <src> <dest>: the env file, minus what the node rejec
 }
 
 
+producer_config_refused() { # <env-file> [extra docker args...]
+  # Does the node REFUSE the configuration it is about to be given?
+  #
+  # `xl1 --dump-config` merges presets, env file and flags, validates the
+  # result, prints it redacted and exits WITHOUT starting an actor. So the
+  # question a restart used to answer by falling over can be asked first,
+  # against the same file, in a container that removes itself.
+  #
+  # Measured on the Pi 4, 2026-09-21, which is the only reason this exists in
+  # this shape: exit 0 and a config on a file the node accepts, exit 78 on one
+  # it does not -- the same EX_CONFIG the crash loop was throwing.
+  #
+  # ONLY 78 IS A NO. Anything else -- a missing image, a docker that will not
+  # run, a flag this CLI has never heard of, a timeout -- is this check
+  # failing, not the config, and a check that cannot tell those apart talks a
+  # working node out of starting. It says nothing and gets out of the way.
+  #
+  # THE FLAG IS THE WHOLE COMMAND. The image entrypoint builds
+  # `xl1 -c <generated> start <actors...> "$@"`, so anything passed lands
+  # after the actor list and a stray word becomes an actor name: asking for
+  # `--dump-config start producer` asks it to start an actor called "start",
+  # which is two of the three tries it took to learn this.
+  _dump_env="$1"; shift
+  _dump_out="$($SUDO docker run --rm --env-file "$_dump_env" "$@" \
+    xl1:local --dump-config 2>&1)"; _dump_rc=$?
+  [ "$_dump_rc" = 78 ] || return 1
+  printf '%s\n' "$_dump_out" | grep -iE 'unrecognized|invalid|error' | head -4 \
+    | sed 's/^/      /'
+  return 0
+}
+
+producer_unit_presets() { # <unit>: the host path the unit mounts at /presets
+  # READ FROM THE UNIT, never assumed to be $PRESETS_DIR. The default here is
+  # /opt/xl1-presets and the Pi 4's unit mounts /opt/xl1-docker-images/presets
+  # -- rehearsing against the wrong one resolves a different account and a
+  # different check interval from the ones about to start.
+  systemctl show "$1" -p ExecStart --value 2>/dev/null \
+    | sed -n 's/.*-v[= ]\([^ ;"]*\):\/presets.*/\1/p' | head -1
+}
+
 producer_account() {
   _acct="$($SUDO sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p' \
     "$(producer_preset)" 2>/dev/null | head -1)"
@@ -2536,6 +2576,40 @@ if [ "${ACCOUNT_INDEX:-0}" != 0 ] || [ -n "$CHECK_INTERVAL_MS" ]; then
 fi
 
 if [ -n "$PRODUCER_UNIT_NAME" ]; then
+  # A unit reads its OWN --env-file, so nothing above can filter it -- and
+  # that file is the one this script has just written. Editing the UNIT is not
+  # this script's business; leaving a key it wrote itself in a state that
+  # stops the node is not a boundary, it is a bug with a warning attached.
+  #
+  # The writer above comments these out, so this can only fire on a file an
+  # older version left behind. It repairs that file BEFORE the restart, which
+  # is where it belonged all along: shipped on 2026-09-21 nineteen lines below
+  # the restart, under a comment claiming the restart was the next line. A
+  # repair after the fall still heals the node -- on systemd's next attempt --
+  # but it takes the outage it was written to prevent.
+  if $SUDO grep -qE "^($RECORD_ONLY_KEYS)=" "$PRODUCER_ENV" 2>/dev/null; then
+    $SUDO sed -i "$(record_only_sed)" "$PRODUCER_ENV" \
+      && ok "commented out the keys the node rejects in $PRODUCER_ENV" \
+      || die "$PRODUCER_ENV carries keys the node rejects and could not be repaired. Comment out XL1_ACCOUNT_INDEX and XL1_BLOCK_CHECK_INTERVAL_MS by hand -- the container will not start otherwise, exit 78."
+  fi
+
+  # ASK BEFORE RESTARTING. The repair above covers the one bad key this script
+  # knows the name of; this covers the rest, including whatever the next
+  # release decides to reject. The mount comes from the unit rather than from
+  # $PRESETS_DIR -- see producer_unit_presets for why those differ.
+  #
+  # A variable rather than `set --`, matching PRESET_ARGS below: the
+  # positional list belongs to the script's own invocation, and quietly
+  # emptying it here would be a trap for the next thing added after it.
+  _unit_presets="$(producer_unit_presets "$PRODUCER_UNIT_NAME")"
+  _rehearse_args=""
+  [ -n "$_unit_presets" ] \
+    && _rehearse_args="-e XL1_PRESETS_DIR=/presets -v $_unit_presets:/presets"
+  # shellcheck disable=SC2086
+  if producer_config_refused "$PRODUCER_ENV" $_rehearse_args; then
+    die "the node refuses the configuration in $PRODUCER_ENV, so $PRODUCER_UNIT_NAME has NOT been restarted -- it is still running on the one it started with. The lines above are its own words. Fix that file and run this again."
+  fi
+
   # systemd owns the lifecycle. Ask it, and leave the container alone.
   say "restarting $PRODUCER_UNIT_NAME"
   $SUDO systemctl restart "$PRODUCER_UNIT_NAME" \
@@ -2548,19 +2622,6 @@ if [ -n "$PRODUCER_UNIT_NAME" ]; then
   if [ "${ACCOUNT_INDEX:-0}" != 0 ]; then
     warn "this node produces as account $ACCOUNT_INDEX, which needs the preset mount" \
          "the unit's ExecStart must carry -e XL1_PRESETS_DIR=/presets -v $PRESETS_DIR:/presets, or the node comes back as account 0 -- a different address"
-  fi
-  # A unit reads its OWN --env-file, so nothing above can filter it -- and
-  # that file is the one this script has just written. Editing the UNIT is not
-  # this script's business; leaving a key it wrote itself in a state that
-  # stops the node is not a boundary, it is a bug with a warning attached.
-  #
-  # The writer above comments these out, so this can only fire on a file an
-  # older version left behind. It repairs that file, because the restart is
-  # the next line and the restart is when it bites.
-  if $SUDO grep -qE "^($RECORD_ONLY_KEYS)=" "$PRODUCER_ENV" 2>/dev/null; then
-    $SUDO sed -i "$(record_only_sed)" "$PRODUCER_ENV" \
-      && ok "commented out the keys the node rejects in $PRODUCER_ENV" \
-      || die "$PRODUCER_ENV carries keys the node rejects and could not be repaired. Comment out XL1_ACCOUNT_INDEX and XL1_BLOCK_CHECK_INTERVAL_MS by hand -- the container will not start otherwise, exit 78."
   fi
 else
   $SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true

@@ -3604,6 +3604,38 @@ note "Anchoring runs hourly. The first one lands within the hour, and ends"
 note "this device's probation early -- it is the faster of the two ways off"
 note "pending."
 
+# --- two commands for afterwards ---------------------------------------------
+#
+# Everything this script just did, and everything that comes after it, is also
+# a command on the machine -- because the README is on a laptop and the trouble
+# is on the Pi, usually over SSH and usually at the wrong hour.
+#
+#   xl1-help    prints and never acts. Safe to run on a producing node without
+#               reading it first, which is the whole of its value.
+#   xl1-menu    the same list as choices. Shows each command and waits for a
+#               yes; refuses to restart a producer whose config the node
+#               itself rejects.
+#
+# INSTALLED FROM WHEREVER THIS SCRIPT CAME FROM. Piped from the network there
+# is no checkout to copy from, so they are fetched the same way this was.
+# Neither is required for the node to run, so a failure here is a note rather
+# than a death -- the producer is already up by this point.
+_tools_src="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+for _t in xl1-help xl1-menu; do
+  if [ -n "$_tools_src" ] && [ -f "$_tools_src/$_t.sh" ]; then
+    $SUDO install -m 755 "$_tools_src/$_t.sh" "/usr/local/bin/$_t" 2>/dev/null       && ok "installed $_t" || warn "could not install $_t"
+  elif curl -fsSL "$PUBLIC_REPO/$_t.sh" -o "/tmp/$_t.sh" 2>/dev/null; then
+    $SUDO install -m 755 "/tmp/$_t.sh" "/usr/local/bin/$_t" 2>/dev/null       && ok "installed $_t" || warn "could not install $_t"
+    rm -f "/tmp/$_t.sh"
+  else
+    warn "could not fetch $_t; the node runs without it"
+  fi
+done
+note ""
+note "Two commands are installed for afterwards:"
+note "  xl1-help    what everything is and where, on this machine"
+note "  xl1-menu    the same list as choices -- restart, update, logs"
+
 clear_state
 printf '\n  %sSetup is complete.%s\n' "$G" "$X"
 exit 0

@@ -19,17 +19,17 @@ importers:
         specifier: 9.0.0
         version: 9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@xyo-network/sdk':
-        specifier: 8.0.0
-        version: 8.0.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)
+        specifier: 8.0.1
+        version: 8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)
       '@xyo-network/sdk-protocol':
         specifier: 8.0.1
         version: 8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       '@xyo-network/xl1-protocol':
-        specifier: 5.6.0
-        version: 5.6.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(zod@4.6.5)
+        specifier: 5.6.1
+        version: 5.6.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(zod@4.6.5)
       '@xyo-network/xl1-sdk':
-        specifier: 5.6.0
-        version: 5.6.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(async-mutex@0.5.0)(ethers@6.17.0)(typescript@5.6.3)(zod@4.6.5)
+        specifier: 5.6.1
+        version: 5.6.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(async-mutex@0.5.0)(ethers@6.17.0)(typescript@5.6.3)(zod@4.6.5)
       ajv:
         specifier: 8.20.0
         version: 8.20.0
@@ -426,8 +426,8 @@ packages:
     resolution: {integrity: sha512-7t9zNeDbHvWyfw3XejVLH+nxvZVAiK1dqyIayb37mmo4MInoyDjxehjq7YGNb6xJslWLu1925ZwhOUZMYjM5Kw==}
     engines: {node: ^26}
 
-  '@xyo-network/sdk@8.0.0':
-    resolution: {integrity: sha512-KIDJOMxZ9jBPz6nHPUpQgQKFSdHGcZGVIHTsJHnmM49HM3wCoWWCpBPYd269uPirP3E0d/AcxtpHdgnQunEsUw==}
+  '@xyo-network/sdk@8.0.1':
+    resolution: {integrity: sha512-r+Ze/VQr59tdkGwp0pH7I0gDVsMwAMxN6eaRcw1P+7UseZHW444ILbQUag32vuOi+trCZfoXSa0PU70bz7lSSg==}
     engines: {node: ^26}
     peerDependencies:
       '@ariestools/sdk': ^9.0
@@ -438,8 +438,8 @@ packages:
   '@xyo-network/typechain@4.2.0':
     resolution: {integrity: sha512-ssrTBBTCP/JhSmckDZtK0QBV9cj6VwoBRNxvikTVwY3YB0m8Tv+YZptHhDXcOnHbJTdm75u4s7Ye+dfcHB+Qfg==}
 
-  '@xyo-network/xl1-protocol@5.6.0':
-    resolution: {integrity: sha512-RzAhbBbZCQwPqT7zdRapadqUxLeS2iKVGr/QwohSqsNpxYT/pkEnryqmrB3bOxP3xPPasNZGqWXhNBIHbhlNKA==}
+  '@xyo-network/xl1-protocol@5.6.1':
+    resolution: {integrity: sha512-tYvYt6rrbgW39XeNIZAnZ4vsX5SdC2JHbqdFLj5hnlIFrGj89Kqdwk/Y/1f3HsjGGcpNgL4s3TqO6C0YizUusQ==}
     engines: {node: '>=26'}
     peerDependencies:
       '@ariestools/sdk': ^8.3 || ^9.0
@@ -448,8 +448,8 @@ packages:
       ajv: ^8.20
       zod: ^4.6
 
-  '@xyo-network/xl1-sdk@5.6.0':
-    resolution: {integrity: sha512-p7XzjkAWLTUekKCQw6D7nYgV+J9LBQd52C1/HT4RQ+VSMAfEwzGCXLvHEjr4wd582MXrk7mOaJvkjKteAgDCNg==}
+  '@xyo-network/xl1-sdk@5.6.1':
+    resolution: {integrity: sha512-v2A+4x30gGGetDqHDQ1NnSoIyje3BK3cdhc7ORzq5r2ULlySCo3Vfzw/MTgu5hPFvLOkslJyz3XIeOvuNtxdmw==}
     engines: {node: '>=26'}
     peerDependencies:
       '@ariestools/sdk': ^8.3 || ^9.0
@@ -738,10 +738,6 @@ packages:
 
   lodash@4.18.1:
     resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
-
-  lru-cache@11.5.2:
-    resolution: {integrity: sha512-4pfM1Ff0x50o0tQwb5ucw/RzNyD0/YJME6IVcStalZuMWxdt3sR3huStTtxz4PUmvZfRguvDejasvQ2kifR11g==}
-    engines: {node: 20 || >=22}
 
   lru-cache@11.5.3:
     resolution: {integrity: sha512-U4N8FgzmWxc8k1VH8Kr6lQg18U7Fjvby6wXHVRX/ZZ7IwWbRMgrRbP0Wrb5q5NVinryp4SQampHKdvtecItxUg==}
@@ -1370,13 +1366,13 @@ snapshots:
       - webextension-polyfill
       - zod
 
-  '@xyo-network/sdk@8.0.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)':
+  '@xyo-network/sdk@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@ariestools/sdk': 9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@opentelemetry/api': 1.9.1
       '@xyo-network/sdk-protocol': 8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5)
       async-mutex: 0.5.0
-      lru-cache: 11.5.2
+      lru-cache: 11.5.3
       zod: 4.6.5
 
   '@xyo-network/typechain@4.2.0':
@@ -1386,11 +1382,11 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@xyo-network/xl1-protocol@5.6.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(zod@4.6.5)':
+  '@xyo-network/xl1-protocol@5.6.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(zod@4.6.5)':
     dependencies:
       '@ariestools/sdk': 9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@opentelemetry/api': 1.9.1
-      '@xyo-network/sdk': 8.0.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)
+      '@xyo-network/sdk': 8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)
       ajv: 8.20.0
       ethers: 6.17.0
       zod: 4.6.5
@@ -1398,15 +1394,15 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@xyo-network/xl1-sdk@5.6.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(async-mutex@0.5.0)(ethers@6.17.0)(typescript@5.6.3)(zod@4.6.5)':
+  '@xyo-network/xl1-sdk@5.6.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(async-mutex@0.5.0)(ethers@6.17.0)(typescript@5.6.3)(zod@4.6.5)':
     dependencies:
       '@ariestools/json-rpc-engine': 9.0.0(typescript@5.6.3)
       '@ariestools/sdk': 9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5)
       '@metamask/utils': 12.0.0
       '@opentelemetry/api': 1.9.1
-      '@xyo-network/sdk': 8.0.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)
+      '@xyo-network/sdk': 8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5)
       '@xyo-network/typechain': 4.2.0
-      '@xyo-network/xl1-protocol': 5.6.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.0(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(zod@4.6.5)
+      '@xyo-network/xl1-protocol': 5.6.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(@xyo-network/sdk-protocol@8.0.1(@ariestools/sdk@9.0.0(@opentelemetry/api@1.9.1)(zod@4.6.5))(@opentelemetry/api@1.9.1)(ajv@8.20.0)(ethers@6.17.0)(typescript@5.6.3)(webextension-polyfill@0.12.0)(zod@4.6.5))(zod@4.6.5))(ajv@8.20.0)(zod@4.6.5)
       async-mutex: 0.5.0
       cosmiconfig: 10.0.1
       ethers: 6.17.0
@@ -1740,8 +1736,6 @@ snapshots:
   klona@2.0.6: {}
 
   lodash@4.18.1: {}
-
-  lru-cache@11.5.2: {}
 
   lru-cache@11.5.3: {}
 

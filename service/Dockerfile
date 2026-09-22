@@ -69,6 +69,23 @@ COPY new-attestor.ts delegate-attestor.ts verify-headless.ts ./
 # that always precedes a deploy.
 RUN pnpm run typecheck
 
+# AND THE HALF A TYPECHECK CANNOT SEE. Types come from whatever version is on
+# disk, so tsc describes the tree it was given rather than the tree the
+# packages asked for -- and `pnpm install --frozen-lockfile` above installs an
+# unmet peer in silence, where a resolving install would have warned. Measured
+# on PR #33: @xyo-network/sdk 8.0.0 above sdk-protocol 7.3.2, green install,
+# green typecheck, and the packages that do the anchoring refusing the SDK
+# underneath them.
+#
+# Here because this is the one step that always precedes a deploy. A tree the
+# stack disagrees with cannot become an image, so it cannot reach the Pi.
+# Only disagreements INSIDE the stack fail the build: @noble/post-quantum has
+# shipped a minor ahead of what three XYO packages ask for since before this
+# existed, and stopping every deploy over another repository's decision is not
+# a gate, it is an outage with a reason attached.
+COPY scripts/peer-audit.mjs ./scripts/
+RUN node scripts/peer-audit.mjs .
+
 ENV XL1_SERVICE_PORT=8090
 EXPOSE 8090
 

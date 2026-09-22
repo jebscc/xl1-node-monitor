@@ -35,8 +35,8 @@
  */
 import { createInterface } from 'node:readline'
 
-import { PayloadBuilder } from '@xyo-network/payload-builder'
-import { asSchema } from '@xyo-network/payload-model'
+import { PayloadBuilder } from '@xyo-network/sdk-protocol/payload-builder'
+import { asSchema } from '@xyo-network/sdk-protocol/payload-model'
 import { HashSchema, type HashPayload } from '@xyo-network/xl1-protocol'
 import { ADDRESS_INDEX, GatewayBuilder, generateXyoBaseWalletFromPhrase } from '@xyo-network/xl1-sdk'
 import { NetworkDataLakeUrls } from '@xyo-network/xl1-protocol'

@@ -38,8 +38,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { PayloadBuilder } from '@xyo-network/payload-builder'
-import { asSchema } from '@xyo-network/payload-model'
+import { PayloadBuilder } from '@xyo-network/sdk-protocol/payload-builder'
+import { asSchema } from '@xyo-network/sdk-protocol/payload-model'
 
 let failures = 0
 const check = (name, actual, expected) => {

@@ -1,5 +1,5 @@
-import { PayloadBuilder } from '@xyo-network/payload-builder'
-import { asSchema, type Payload } from '@xyo-network/payload-model'
+import { PayloadBuilder } from '@xyo-network/sdk-protocol/payload-builder'
+import { asSchema, type Payload } from '@xyo-network/sdk-protocol/payload-model'
 import { type HashPayload, HashSchema } from '@xyo-network/xl1-sdk'
 
 /**

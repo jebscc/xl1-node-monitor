@@ -3,8 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import express from 'express'
-import { PayloadBuilder } from '@xyo-network/payload-builder'
-import { asSchema } from '@xyo-network/payload-model'
+import { PayloadBuilder } from '@xyo-network/sdk-protocol/payload-builder'
+import { asSchema } from '@xyo-network/sdk-protocol/payload-model'
 import { ExplorerLinks, MainNetwork, SequenceNetwork, toXL1BlockNumber } from '@xyo-network/xl1-protocol'
 import type { NetworkId } from '@xyo-network/xl1-protocol'
 import {
@@ -1008,11 +1008,17 @@ app.get('/transaction', async (req, res) => {
 // makes Docker socket access dangerous, and a version string is not worth
 // spending that on. A process is also the authority on what it actually
 // resolved at runtime, which is not always what package.json asked for.
+// PACKAGES, NOT SUBPATHS. payload-builder and payload-model used to be two
+// separate packages and were listed as two; they are entry points of
+// sdk-protocol now, and asking for `.../payload-builder/package.json` resolves
+// nothing while reporting the absence as an unknown version. One name, once --
+// and @xyo-network/sdk beside it, which is the package the whole stack hangs
+// off and the one that moved.
 const VERSIONED_PACKAGES = [
   '@xyo-network/xl1-sdk',
   '@xyo-network/xl1-protocol',
-  '@xyo-network/payload-builder',
-  '@xyo-network/payload-model',
+  '@xyo-network/sdk',
+  '@xyo-network/sdk-protocol',
 ] as const
 
 const requirePackage = createRequire(import.meta.url)

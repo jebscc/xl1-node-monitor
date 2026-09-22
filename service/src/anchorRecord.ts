@@ -15,8 +15,8 @@
  * second is filed off-chain where the hash can resolve to something. An anchor
  * whose payload was never filed is a digest nobody can ever read.
  */
-import { PayloadBuilder } from '@xyo-network/payload-builder'
-import { asSchema } from '@xyo-network/payload-model'
+import { PayloadBuilder } from '@xyo-network/sdk-protocol/payload-builder'
+import { asSchema } from '@xyo-network/sdk-protocol/payload-model'
 import type { HashPayload } from '@xyo-network/xl1-protocol'
 import { HashSchema } from '@xyo-network/xl1-protocol'
 import type { SimpleXyoGatewayRunner } from '@xyo-network/xl1-sdk'

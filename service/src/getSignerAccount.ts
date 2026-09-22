@@ -8,11 +8,14 @@ const derive = async () => {
   return wallet.derivePath(ADDRESS_INDEX.XYO)
 }
 
-// Inferred from the SDK rather than annotated with AccountInstance from
-// @xyo-network/account-model: the SDK builds against sdk-protocol-core's
-// AccountInstance, which carries members the standalone package's version does
-// not, so the two do not unify. Letting the type flow from the SDK keeps them
-// the same type by construction.
+// Inferred from the SDK rather than annotated with an imported
+// AccountInstance. The reason has changed and the shape of the answer has not:
+// it used to be that @xyo-network/account-model -- a standalone package, now
+// retired into @xyo-network/sdk-protocol -- carried a narrower AccountInstance
+// than the one the SDK built against, so the two would not unify. Naming any
+// version of that type here reintroduces the same class of mismatch the moment
+// the two halves of the stack move apart again. Letting it flow from the SDK
+// keeps them the same type by construction, whatever either is called.
 let signerAccount: Awaited<ReturnType<typeof derive>> | undefined
 
 /**

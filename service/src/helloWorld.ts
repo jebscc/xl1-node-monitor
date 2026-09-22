@@ -1,4 +1,4 @@
-import { isError } from '@xylabs/typeof'
+import { isError } from '@ariestools/sdk/typeof'
 import type { SignedHydratedTransaction } from '@xyo-network/xl1-protocol'
 
 import { getGateway } from './getGateway.ts'

@@ -1,4 +1,4 @@
-import { isDefined } from '@xylabs/typeof'
+import { isDefined } from '@ariestools/sdk/typeof'
 import {
   GatewayBuilder,
   NetworkDataLakeUrls, SimpleXyoGatewayRunner,

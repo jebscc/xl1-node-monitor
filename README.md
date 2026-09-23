@@ -97,6 +97,35 @@ about, which makes it usable from a script as well as from a chair.
 **Budget the time.** Building the node image is the long part: ten to twenty
 minutes on a Pi 4, longer on a Pi 3. It is compiling, not hung.
 
+**It leaves you two commands.** The README is on a laptop and the trouble is on
+the node, so everything below that touches the producer or the anchoring
+service is also a command on the machine itself:
+
+```bash
+xl1-help              # what everything is and where, on THIS machine
+xl1-menu              # the same list as choices, each one shown before it runs
+```
+
+`xl1-help` prints and never acts — a test greps its source to keep it that way
+— which is what makes it the one you can run without reading it first. It reads
+your machine rather than printing defaults: where it cannot find something it
+says so, instead of naming a plausible path you would then go and look at.
+
+`xl1-menu` does the things: status, check the producer's configuration without
+restarting it, restart it, re-run the wizard, build and promote a node image,
+update the XYO SDK, update the agent, logs. Every action shows its exact
+command and waits for a yes, and `DRY_RUN=1 xl1-menu` shows what each choice
+would run while changing nothing. `u` updates both commands and restarts into
+the new one.
+
+Two of them are gated on more than a keypress. **Restarting the producer runs
+`xl1 --dump-config` first and refuses on exit 78** — the configuration-refused
+code — because restarting onto a config the node rejects is a crash loop.
+**Redeploying the anchoring service (`r`) refuses if what would replace the
+container publishes fewer ports than it has**, keeps the image it replaced as
+`xl1-service:previous`, and rolls back if the new one will not answer. A
+healthy container nothing can reach looks exactly like a working one.
+
 ### B — Windows, with WSL2
 
 Tested on Windows 11 with Ubuntu 26.04 under WSL2. **Docker Desktop is not

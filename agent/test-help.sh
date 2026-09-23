@@ -206,5 +206,77 @@ else
   bad "prose wraps past 72 columns" "$LONG"
 fi
 
+# --- the service section describes THIS node ---------------------------------
+#
+# Every line here was true of the board it was written on. On the CM4 on
+# 2026-09-22 the same section printed `-f ` with nothing after it, promised
+# "TWO lines, or the proxy is down" to a node that publishes one and is
+# perfectly healthy, and offered a compose command to a machine that has no
+# compose at all -- the wizard installs none, it creates the anchor with
+# docker run. A help screen that states the wrong number is worse than one
+# that says nothing, because the number is acted on.
+printf '\nthe service section on a node unlike the one it was written on\n'
+STUB="$(mktemp -d)"
+cat > "$STUB/docker" <<'STUBEOF'
+#!/bin/sh
+case "$1" in
+  port) printf '8090/tcp -> 127.0.0.1:8090\n'; exit 0 ;;
+  compose) echo "unknown shorthand flag: 'f' in -f" >&2; exit 125 ;;
+esac
+exit 0
+STUBEOF
+chmod +x "$STUB/docker"
+FAKE="$(mktemp -d)"; mkdir -p "$FAKE/agent" "$FAKE/service"
+: > "$FAKE/agent/xl1_heartbeat.py"
+svc() { PATH="$STUB:$PATH" NO_COLOR=1 XL1_REPO="$FAKE" XL1_COMPOSE_OVERRIDE="${1:-}" \
+        bash "$SCRIPT" service 2>&1; }
+
+NONE="$(svc '')"
+# An empty override must not reach the command line at all.
+if printf '%s' "$NONE" | grep -qE '^\s*-f\s*$|-f\s+(up|$)|-f\s\s'; then
+  bad "it prints -f with no file after it" \
+      "$(printf '%s' "$NONE" | grep -nE '\-f' | head -3)"
+else
+  ok "with no override it prints the one-file form, not an empty -f"
+fi
+if printf '%s' "$NONE" | grep -qi 'TWO lines'; then
+  bad "it promises two published ports on a node that has one" \
+      "the reader goes looking for a fault that is not there"
+else
+  ok "it counts what this container publishes rather than asserting a number"
+fi
+if printf '%s' "$NONE" | grep -qi 'no compose on this machine'; then
+  ok "a machine with no compose is told so, beside the compose command"
+else
+  bad "it offers a compose command to a machine that has none" \
+      "which is the ordinary shape of a wizard-built node"
+fi
+
+# AND WITH NO CHECKOUT AT ALL, which is what a wizard run from a pipe leaves
+# behind. `c "cd $SERVICE_DIR"` printed `cd ` with nothing after it: a command
+# somebody copies, runs, and lands in their home directory, where the line
+# below it does something else entirely.
+NOREPO="$(PATH="$STUB:$PATH" NO_COLOR=1 XL1_REPO="$STUB" XL1_COMPOSE_OVERRIDE= \
+          bash "$SCRIPT" service 2>&1)"
+if printf '%s' "$NOREPO" | grep -qE '^[[:space:]]*cd[[:space:]]*$'; then
+  bad "it prints a bare cd when there is no checkout" \
+      "that command runs, and goes somewhere else"
+else
+  ok "with no checkout it names the gap instead of a cd to nowhere"
+fi
+
+# AND THE OTHER NODE STILL GETS ITS TWO-FILE FORM. The override exists to
+# reproduce a second binding, and dropping it is what takes the site's chain
+# height down -- so a fix for one node must not quietly disarm the other.
+OV="$(mktemp)"; : > "$OV"
+WITH="$(svc "$OV")"
+if printf '%s' "$WITH" | grep -q -- "-f $OV"; then
+  ok "where an override exists it is still named in the command"
+else
+  bad "an override that exists is left out of the command" \
+      "the tailnet publish and the container's DNS go with it"
+fi
+rm -rf "$STUB" "$FAKE" "$OV"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -296,16 +296,52 @@ s_service() {
   h "The anchor service (xl1-service) and its SDK"
   c "curl -s localhost:8090/health | python3 -m json.tool"
   c "docker port ${ANCHOR_CONTAINER:-xl1-service-anchor-1}"
-  w "TWO lines, or the remote proxy is down. One publish is for the"
-  w "agent, the other is the tailnet address the backend reads."
+  # HOW MANY IT ACTUALLY PUBLISHES. "TWO lines, or the proxy is down" was
+  # true of the board this was written on and false on a wizard-built node,
+  # which publishes one and is perfectly healthy. A help screen that states
+  # the wrong number sends somebody hunting for a fault that is not there.
+  _pub="$(docker port "${ANCHOR_CONTAINER:-xl1-service-anchor-1}" 2>/dev/null \
+          | grep -c ':')"
+  if [ "${_pub:-0}" -gt 1 ]; then
+    w "$_pub lines here. One publish is for the agent; the rest are"
+    w "addresses the backend reads. Fewer than $_pub and the proxy"
+    w "is down."
+  elif [ "${_pub:-0}" = 1 ]; then
+    w "One line here, which is all the base compose file describes."
+    w "None at all would mean nothing can reach the anchor."
+  else
+    w "<could not ask docker what this publishes>"
+  fi
   h "Redeploy it after an SDK bump"
-  c "cd $SERVICE_DIR"
-  c "sudo docker compose -f docker-compose.pi.yml \\"
-  c "  -f $TAILNET_OVERRIDE up -d --build"
-  c "docker port ${ANCHOR_CONTAINER:-xl1-service-anchor-1}   # two lines, or the proxy is down"
-  w "ALWAYS THE TWO-FILE FORM. The bare -f docker-compose.pi.yml drops the"
-  w "tailnet publish AND the container's DNS: every chain read then fails"
-  w "EAI_AGAIN while the producer beside it stays perfectly fine."
+  # AND THE DEPLOY RUNS FROM A CHECKOUT. Without one this printed `cd ` with
+  # nothing after it -- a command somebody would copy, run, and land in their
+  # home directory, where the next line does something else entirely.
+  if [ -z "$SERVICE_DIR" ]; then
+    w "$(q 'service checkout' "$SERVICE_DIR") -- nothing to deploy from."
+    n "The wizard can install from a pipe, leaving no checkout behind."
+  elif [ -n "$TAILNET_OVERRIDE" ]; then
+    c "cd $SERVICE_DIR"
+    c "sudo docker compose -f docker-compose.pi.yml \\"
+    c "  -f $TAILNET_OVERRIDE up -d --build"
+    c "docker port ${ANCHOR_CONTAINER:-xl1-service-anchor-1}   # as many as before, or the proxy is down"
+    w "ALWAYS THE TWO-FILE FORM. The one-file form drops the"
+    w "tailnet publish AND the container's DNS: every chain read"
+    w "then fails EAI_AGAIN while the producer stays perfectly fine."
+  else
+    c "cd $SERVICE_DIR"
+    c "sudo docker compose -f docker-compose.pi.yml up -d --build"
+    n "There is no compose override on this machine, so the base file is"
+    n "the whole of the deploy here -- the two-file form would fail on a"
+    n "file that is not there. If this node publishes more than the base"
+    n "file describes, that binding would be lost: xl1-menu option 7"
+    n "counts both sides and refuses on a shortfall."
+  fi
+  if [ -n "$SERVICE_DIR" ] && ! docker compose version >/dev/null 2>&1 &&
+     ! command -v docker-compose >/dev/null 2>&1; then
+    n "THERE IS NO COMPOSE ON THIS MACHINE. The wizard installs none -- it"
+    n "creates the anchor with docker run -- so the command above needs"
+    n "sudo apt install docker-compose-plugin first."
+  fi
   n "sudo because compose reads /etc/xl1-anchor.env, which is root-only."
   n "The SDK bump itself arrives as a Dependabot PR on the repo. Merging it"
   n "is not deploying it: this command is the deploy, and it is manual on"

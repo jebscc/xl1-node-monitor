@@ -474,5 +474,108 @@ else
   bad "the menu wraps on a narrow terminal" "$WIDE"
 fi
 
+# --- a compose that cannot run is not a measurement --------------------------
+#
+# 2026-09-22, on the CM4: `docker compose` printed a usage screen, because the
+# wizard installs no compose and that node had never had one. The count of
+# published ports was taken by piping straight into `grep -c`, which threw the
+# exit status away, matched nothing, and reported that "compose would publish 0
+# where the running container publishes 1" -- a command that could not run,
+# quoted back as a fact about the deploy, sending somebody to look at an
+# override file for a problem that was a missing package.
+printf '\na compose that cannot answer\n'
+SWAP="$(printf '%s' "$SRC" | sed -n '/^swap_anchor_to_compose() {/,/^}/p')"
+
+# The function driven with compose failing exactly as it did on that machine.
+verdict() { # verdict <compose exit status> -> what it decided
+  ( eval "$(printf '%s' "$SRC" | sed -n '/^override_hint() {/,/^}/p')"
+    eval "$SWAP" 2>/dev/null
+    SERVICE_DIR=/nonexistent; TAILNET_OVERRIDE=""; ANCHOR_CONTAINER=c; DRY_RUN=1
+    COMPOSE_BIN="stub"; RC="$1"
+    warn() { :; }; note() { :; }; say() { :; }; ok() { :; }
+    err()  { printf 'ERR %s\n' "$1"; }
+    do_cmd() { return 0; }
+    docker() { [ "$1" = port ] && printf '8090/tcp -> 127.0.0.1:8090\n'; return 0; }
+    compose_cmd() { printf 'exit %s #' "$RC"; }
+    swap_anchor_to_compose ) 2>/dev/null
+}
+
+OUT="$(verdict 1)"
+if printf '%s' "$OUT" | grep -qi 'could not read'; then
+  ok "a compose that fails is reported as a failure, not as zero ports"
+else
+  bad "a failed compose is counted as publishing nothing" \
+      "${OUT:-it said nothing at all}"
+fi
+if printf '%s' "$OUT" | grep -qi 'would publish 0'; then
+  bad "it still quotes the count from a command that did not run" "$OUT"
+else
+  ok "it does not quote a count it could not take"
+fi
+
+# AND NOT THE OTHER WAY. A function that refuses every compose refuses the
+# working ones too, which would make the option unusable on the node it was
+# written for.
+OUT0="$(verdict 0)"
+if printf '%s' "$OUT0" | grep -qi 'could not read'; then
+  bad "a compose that ran fine is called a failure" "$OUT0"
+else
+  ok "a compose that answers is not called a failure"
+fi
+
+# --- nobody is sent to an empty path -----------------------------------------
+printf '\nwhere it sends you\n'
+# OUTSIDE THE ONE FUNCTION THAT CHECKS FIRST. override_hint names the path in
+# its set branch, which is the whole point of it; anywhere else the value can
+# be empty and the line goes out with nothing on the end of it.
+ELSEWHERE="$(printf '%s' "$SRC" | sed '/^override_hint() {/,/^}/d' | grep -vE '^[[:space:]]*#')"
+if printf '%s' "$ELSEWHERE" | grep -qE '(err|warn|note) .*\$TAILNET_OVERRIDE'; then
+  bad "a message names the override path without checking it is set" \
+      "$(printf '%s' "$ELSEWHERE" | grep -nE '(err|warn|note) .*\$TAILNET_OVERRIDE' | head -2)"
+else
+  ok "the override is only named where one was actually found"
+fi
+HINT="$(printf '%s' "$SRC" | sed -n '/^override_hint() {/,/^}/p')"
+if printf '%s' "$HINT" | grep -q 'TAILNET_OVERRIDE' && printf '%s' "$HINT" | grep -qi 'no compose override'; then
+  ok "both cases are answered -- an override that exists, and none"
+else
+  bad "the hint has only one branch" "one of the two nodes gets a useless line"
+fi
+
+# --- no compose at all is refused before anything is removed -----------------
+#
+# The wizard creates the anchor with `docker run` and never installs compose,
+# so this is the ORDINARY shape of a node, not an exotic one. The whole of
+# option 7's deploy is compose, and the report above it is worth having either
+# way -- so the refusal belongs after the report and before the first command
+# that changes something.
+printf '\na machine with no compose\n'
+SVC="$(printf '%s' "$SRC" | sed -n '/^a_service() {/,/^}/p')"
+if printf '%s' "$SVC" | grep -q 'COMPOSE_BIN'; then
+  ok "option 7 checks there is a compose before deploying with one"
+else
+  bad "it deploys with a compose it never looked for" \
+      "on a wizard-built node every command in the deploy is a usage screen"
+fi
+_ref="$(printf '%s' "$SVC" | grep -n 'COMPOSE_BIN' | head -1 | cut -d: -f1)"
+_rm="$(printf '%s' "$SVC" | grep -n 'swap_anchor_to_compose\|up -d' | head -1 | cut -d: -f1)"
+if [ -n "$_ref" ] && [ -n "$_rm" ] && [ "$_ref" -lt "$_rm" ]; then
+  ok "it refuses before the first command that would change anything"
+else
+  bad "the check comes after the container is already being handed over"
+fi
+if printf '%s' "$SVC" | grep -q 'docker-compose-plugin'; then
+  ok "it names the package to install rather than only the lack"
+else
+  bad "it reports the gap without saying how to close it"
+fi
+# It is found rather than assumed, and both spellings are known.
+BIN="$(printf '%s' "$SRC" | sed -n '/^compose_bin() {/,/^}/p')"
+if printf '%s' "$BIN" | grep -q 'docker compose version' && printf '%s' "$BIN" | grep -q 'command -v docker-compose'; then
+  ok "both the plugin and the standalone binary are looked for"
+else
+  bad "only one spelling of compose is known" "the other machine has the other one"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

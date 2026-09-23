@@ -317,6 +317,19 @@ xyo_stack() {
     "$SERVICE_DIR/package.json" | sort
 }
 
+# WHICH COMPOSE THIS MACHINE HAS, IF ANY. The wizard never installs one --
+# it creates the anchor with `docker run --name` -- so a node that has only
+# ever met the wizard has no compose plugin, and every compose command here
+# comes back as a docker usage screen. Debian's docker.io package ships
+# without it too. `docker compose version` is answered by the client alone,
+# so this needs no daemon and no sudo.
+compose_bin() {
+  if docker compose version >/dev/null 2>&1; then printf 'docker compose'
+  elif command -v docker-compose >/dev/null 2>&1; then printf 'docker-compose'
+  fi
+}
+COMPOSE_BIN="$(compose_bin)"
+
 compose_cmd() { # the compose command for THIS node, spelt once
   # THE OVERRIDE IS AN EXTRA, NOT A REQUIREMENT. A wizard-built node publishes
   # one port and has no second compose file; the base file is the whole of its
@@ -342,6 +355,18 @@ compose_owns_anchor() {
           "$ANCHOR_CONTAINER" 2>/dev/null)" ]
 }
 
+# AN EMPTY PATH IS NOT SOMEWHERE TO LOOK. "check the override at " with
+# nothing after it was printed on a node that has no override and needs none.
+override_hint() {
+  if [ -n "$TAILNET_OVERRIDE" ]; then
+    err "Check the override at $TAILNET_OVERRIDE before trying again."
+  else
+    err "No compose override was found on this machine. If a binding here is"
+    err "not in the base deploy file, point XL1_COMPOSE_OVERRIDE at the one"
+    err "that reproduces it."
+  fi
+}
+
 # Hand the container over to compose, without losing what the running one has.
 #
 # THE ONLY DANGER HERE IS THE PUBLISHES. The wizard's container carries the
@@ -362,11 +387,26 @@ swap_anchor_to_compose() {
   do_cmd "docker port $ANCHOR_CONTAINER"
   note "what compose would create instead:"
   do_cmd "$(compose_cmd) config | grep -E 'published:|dns:|- \"?[0-9.]*:?[0-9]+:' "
-  _will="$(sh -c "$(compose_cmd) config" 2>/dev/null | grep -c 'published:')"
+  # THE EXIT STATUS, BEFORE THE COUNT. Piping straight into `grep -c` throws
+  # away whether compose ran at all, and a command that cannot run matches
+  # nothing -- so on 2026-09-22 a docker usage screen was counted, came to 0,
+  # and the menu announced that "compose would publish 0 where the running
+  # container publishes 1". That is a failure quoted back as a measurement,
+  # and it sent somebody to look at an override for a problem that was a
+  # missing compose plugin.
+  _cfg="$(sh -c "$(compose_cmd) config" 2>/dev/null)"; _rc=$?
+  if [ "$_rc" -ne 0 ]; then
+    err "compose could not read the deploy in $SERVICE_DIR (exit $_rc), so"
+    err "there is nothing to compare the running container against. Nothing"
+    err "done -- run the command above by hand to see what it says."
+    return 1
+  fi
+  _will="$(printf '%s
+' "$_cfg" | grep -c 'published:')"
   if [ "${_will:-0}" -lt "${_had:-0}" ]; then
     err "compose would publish $_will where the running container publishes $_had."
-    err "Removing it would lose a binding. Nothing done -- check the override at"
-    err "$TAILNET_OVERRIDE before trying again."
+    err "Removing it would lose a binding. Nothing done."
+    override_hint
     return 1
   fi
   note "compose publishes $_will, which is not fewer. Safe to hand over."
@@ -375,7 +415,8 @@ swap_anchor_to_compose() {
   _now="$(docker port "$ANCHOR_CONTAINER" 2>/dev/null | grep -c ':')"
   if [ "${_now:-0}" -lt "${_had:-0}" ]; then
     err "it came back publishing $_now where it had $_had. The Render proxy"
-    err "reads the second one -- check $TAILNET_OVERRIDE and docker port."
+    err "reads the second one -- check docker port."
+    override_hint
     return 1
   fi
   ok "handed over to compose, still publishing $_now"
@@ -493,7 +534,7 @@ a_service() {
     do_cmd "cd $REPO && git pull --ff-only"
   else
     warn "this checkout is not a clone, so a merged bump cannot be collected"
-    warn "here. The rebuild below uses whatever is already on disk."
+    warn "here. Any rebuild uses whatever is already on disk."
   fi
   _after="$(xyo_stack)"
   # THE DIFFERENCE, NOT TWO LISTS. Nine lines before and nine after is a
@@ -525,6 +566,20 @@ a_service() {
   # The question is not "is there an override" but "would this deploy publish
   # fewer ports than the container already has". The count answers it either
   # way, and needs no knowledge of which node this is.
+  # AND THE DEPLOY NEEDS A COMPOSE TO RUN IT. Everything above this line is
+  # reporting -- which versions are pinned, what npm has, what the container
+  # is running -- and all of it is worth having on a machine that cannot
+  # deploy. So the refusal goes here, after the report and before the first
+  # command that would change anything.
+  if [ -z "$COMPOSE_BIN" ]; then
+    err "this machine has no docker compose, and the redeploy is entirely"
+    err "compose. The wizard does not install one -- it creates the"
+    err "anchor with docker run -- so a node that has only met the wizard"
+    err "will not have it:"
+    err "  sudo apt install docker-compose-plugin"
+    err "Nothing done. The versions above are still the truth about this node."
+    return 1
+  fi
   if [ -z "$TAILNET_OVERRIDE" ]; then
     _have="$(docker port "$ANCHOR_CONTAINER" 2>/dev/null | grep -c ':')"
     if [ "${_have:-0}" -gt 1 ]; then

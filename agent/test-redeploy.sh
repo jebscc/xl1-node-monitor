@@ -78,6 +78,8 @@ STUB
   printf '#!/bin/sh\nexec "$@"\n' > "$_d/sudo"
   printf '#!/bin/sh\nexit 0\n' > "$_d/sleep"
   chmod +x "$_d"/*
+  # An override beside the service, when the case asks for one.
+  [ "${5:-no}" = yes ] && : > "$_d/docker-compose.override.yml"
   ( PATH="$_d:$PATH" NO_COLOR=1 XL1_BOOTSTRAP="$BOOT" XL1_SERVICE_DIR="$_d" \
     bash "$SCRIPT" ) 2>&1
   rm -rf "$_d"
@@ -138,6 +140,57 @@ if printf '%s' "$OUT" | grep -qi 'putting xl1-service:previous back'; then
   ok "and the old image is put back"
 else
   bad "it leaves the node on a service that does not answer"
+fi
+
+printf '\na container that publishes more than the wizard would\n'
+# THE EIGHT-HOUR OUTAGE. On 2026-09-23 the anchor came back publishing
+# loopback alone, Render could no longer reach the Pi, and the site sat on
+# "last chain count -- retrying" while the node looked healthy and kept
+# anchoring. The port comparison further down SPOTS that, but its remedy
+# cannot fix it: restore_previous re-tags the image and starts it through the
+# same function, which publishes the same single binding. So it would report a
+# rollback and leave the node exactly as broken. It has to refuse first.
+OUT="$(run_case yes 1 yes 2 yes)"
+if printf '%s' "$OUT" | grep -qi "would drop"; then
+  ok "a redeploy that would drop a binding is refused"
+else
+  bad "it proceeds and drops a binding" \
+      "the rollback cannot restore a publish; only refusing first can"
+fi
+if printf '%s' "$OUT" | grep -qi "built xl1-service"; then
+  bad "it built before refusing" "the refusal must come before anything is touched"
+else
+  ok "and refuses before building anything"
+fi
+if printf '%s' "$OUT" | grep -q "docker-compose.pi.yml -f"; then
+  ok "it names the two-file compose command instead"
+else
+  bad "it refuses without saying what to do instead" \
+      "that leaves an operator with a broken node and no next step"
+fi
+# WITHOUT AN OVERRIDE there is nothing to name, and naming an empty path is
+# the bug this project keeps re-learning.
+OUT="$(run_case yes 1 yes 2 no)"
+if printf '%s' "$OUT" | grep -qE '\-f[[:space:]]*$|\-f[[:space:]]+up'; then
+  bad "it prints -f with no file after it" "$OUT"
+else
+  ok "with no override it says so rather than printing an empty path"
+fi
+# AND NOT THE OTHER WAY. An ordinary single-binding node must still deploy,
+# or this refusal has simply disabled the script everywhere.
+OUT="$(run_case yes 1 yes 1 no)"
+if printf '%s' "$OUT" | grep -qi "would drop"; then
+  bad "an ordinary node is refused too" "the wizard publishes one; so does this node"
+else
+  ok "a node publishing what the wizard publishes still deploys"
+fi
+# THE COUNT COMES FROM THE WIZARD, not from a 1 written down here.
+if printf '%s' "$CODE" | grep -q 'START_FN' && \
+   printf '%s' "$CODE" | grep -qE 'grep -cE .*-p'; then
+  ok "what the wizard would publish is counted from the wizard"
+else
+  bad "the expected publish count is hard-coded" \
+      "a second -p in bootstrap-pi.sh would then be invisible here"
 fi
 
 printf '\nthe dry run\n'

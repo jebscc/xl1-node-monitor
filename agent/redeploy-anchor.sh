@@ -68,7 +68,8 @@ SVC="${XL1_SERVICE_DIR:-$(find_service)}"
 # assignments and two functions are evaluated -- named one by one rather than
 # sourcing the file, which would run the whole installer.
 eval "$(sed -n 's/^\(XL1_NET\|XL1_SEQUENCE_RPC_URL\|XL1_MAINNET_RPC_URL\|ANCHOR_ENV\)=\(.*\)$/\1=\2/p' "$BOOTSTRAP")"
-eval "$(sed -n '/^start_anchor_service() {/,/^}/p' "$BOOTSTRAP")"
+START_FN="$(sed -n '/^start_anchor_service() {/,/^}/p' "$BOOTSTRAP")"
+eval "$START_FN"
 eval "$(sed -n '/^wait_for_service() {/,/^}/p' "$BOOTSTRAP")"
 command -v start_anchor_service >/dev/null 2>&1 \
   || die "could not read start_anchor_service out of $BOOTSTRAP"
@@ -99,6 +100,51 @@ if [ ! -f "$ANCHOR_ENV" ] && ! $SUDO test -f "$ANCHOR_ENV" 2>/dev/null; then
   warn "$ANCHOR_ENV is not there; the container would start with no key"
 fi
 
+
+# WHAT THE WIZARD'S FUNCTION WOULD PUBLISH, counted from the function itself
+# rather than assumed to be one -- if bootstrap-pi.sh ever publishes a second
+# port, this follows it instead of going stale against it.
+WOULD="$(printf '%s' "$START_FN" | grep -vE '^[[:space:]]*#' \
+         | grep -cE '(^|[[:space:]])-p[[:space:]]')"
+
+# The override that reproduces the extra binding, looked for in the same three
+# places xl1-menu looks, and named only when one is actually there.
+OVERRIDE=""
+for _o in ${XL1_COMPOSE_OVERRIDE:-} "$HOME/xl1-deploy/docker-compose.tailnet.yml" \
+          "$SVC/docker-compose.override.yml"; do
+  [ -n "$_o" ] && [ -f "$_o" ] && { OVERRIDE="$_o"; break; }
+done
+
+# REFUSED BEFORE ANYTHING IS TOUCHED, not diagnosed afterwards.
+#
+# On 2026-09-23 this exact shortfall took the site's live standings down for
+# eight hours: the anchor came back publishing loopback alone, Render could no
+# longer reach the Pi, and the panel sat on "last chain count -- retrying"
+# while the node itself looked perfectly healthy and went on anchoring.
+#
+# The port comparison further down would SPOT that, but its remedy cannot fix
+# it: restore_previous re-tags the IMAGE and starts it through the same
+# function, which publishes the same single binding. So the rollback would
+# report success and leave the node exactly as broken. A check whose repair
+# cannot work has to refuse first instead.
+if [ "${HAD:-0}" -gt "${WOULD:-1}" ]; then
+  err "this container publishes $HAD bindings; the wizard's"
+  err "start_anchor_service publishes $WOULD, so this would drop"
+  err "$((HAD - WOULD)) of them -- and rolling back would not put it back."
+  say ""
+  if [ -n "$OVERRIDE" ]; then
+    err "This node is a compose deployment. Use its own two-file form:"
+    err "  cd $SVC && sudo docker compose \\"
+    err "    -f docker-compose.pi.yml -f $OVERRIDE up -d --build"
+  else
+    err "No compose override was found to reproduce the extra binding."
+    err "Point XL1_COMPOSE_OVERRIDE at the file that does, and deploy with"
+    err "compose rather than through this script."
+  fi
+  say ""
+  err "Nothing done. The container is untouched and still serving."
+  exit 1
+fi
 if [ "$DRY" = 1 ]; then
   note ""
   note "would run:"

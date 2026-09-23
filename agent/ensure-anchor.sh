@@ -123,6 +123,17 @@ check_anchor() {
 }
 
 # --- the remedy --------------------------------------------------------------
+# WHETHER COMPOSE MADE THIS CONTAINER, which decides whether compose can
+# replace it. A container created by `docker run --name` -- which is what
+# bootstrap-pi.sh does, taking by hand the exact name compose would use --
+# carries no compose project label, and compose will not adopt it. It fails
+# instantly with "the container name is already in use", which is a different
+# thing from a deploy that went wrong.
+compose_owns() {
+  [ -n "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' \
+          "$CONTAINER" 2>/dev/null)" ]
+}
+
 recreate() {
   if [ -z "$UP_CMD" ]; then
     # Nothing is worse here than guessing. Reconstructing the Pi 4's docker
@@ -132,11 +143,39 @@ recreate() {
     return 1
   fi
   log "recreating with: $UP_CMD"
-  if bash -c "$UP_CMD"; then
+  # THE OUTPUT IS THE DIAGNOSIS, and throwing it away is why this went unread
+  # for eight hours on 2026-09-23: five hourly attempts, each failing in under
+  # a second, each logged as four words that say nothing about the cause. A
+  # remedy that reports only that it failed is barely better than one that
+  # reports nothing.
+  _out="$(bash -c "$UP_CMD" 2>&1)"; _rc=$?
+  if [ "$_rc" = 0 ]; then
     log "recreate returned ok"
     return 0
   fi
-  log "FAILED: recreate did not succeed"
+  log "FAILED: recreate exited $_rc"
+  printf '%s\n' "$_out" | tail -6 | while IFS= read -r _l; do log "  | $_l"; done
+
+  # THE ONE FAILURE WITH A KNOWN REMEDY. A wizard run recreates the anchor
+  # with `docker run`, so the next compose deploy hits a name it may not take.
+  # Removing it is safe here in a way it is not in general: this runs only
+  # after the anchor has failed its check STREAK times in a row, so the
+  # container being replaced is already not serving.
+  if docker inspect "$CONTAINER" >/dev/null 2>&1 && ! compose_owns; then
+    log "$CONTAINER was not created by compose, so compose cannot replace it"
+    log "removing it and trying once more"
+    if ! docker rm -f "$CONTAINER" >/dev/null 2>&1; then
+      log "FAILED: could not remove $CONTAINER -- this needs a person"
+      return 1
+    fi
+    _out="$(bash -c "$UP_CMD" 2>&1)"; _rc=$?
+    if [ "$_rc" = 0 ]; then
+      log "recreate returned ok after the handover"
+      return 0
+    fi
+    log "FAILED: still $_rc after removing it"
+    printf '%s\n' "$_out" | tail -6 | while IFS= read -r _l; do log "  | $_l"; done
+  fi
   return 1
 }
 

@@ -503,13 +503,39 @@ deploy_line() {
   say ""
   note "This does not deploy. What would run the code now on disk:"
   if [ -z "$COMPOSE_BIN" ]; then
-    note "  choice 4 -- the wizard rebuilds the image and re-creates the"
-    note "  container. There is no compose here, by design."
+    note "  choice r -- rebuilds from this checkout and puts the"
+    note "  container on it, keeping the image it replaced."
   else
     note "  $(compose_cmd) up -d --build"
     note "  A wizard-made container is removed first; compose will not adopt"
     note "  one it did not create."
   fi
+}
+
+# THE MISSING HALF. Moving the pins changes the checkout; the container goes
+# on running the image it was built from. A node with compose closes that with
+# `up -d --build`; a wizard-built one had no answer narrower than re-running
+# the whole wizard, which also re-fetches main and would throw a local bump
+# away. redeploy-anchor.sh builds from what is on disk and puts the container
+# on it using the wizard's OWN run flags, read out of bootstrap-pi.sh -- so
+# there is still one copy of that list, and this follows it.
+a_redeploy() {
+  say "${B}Redeploy the anchor service${X}"
+  _rd=""
+  for _c in "${REPO_AGENT:-/nonexistent}/redeploy-anchor.sh"; do
+    [ -f "$_c" ] && _rd="$_c"
+  done
+  if [ -z "$_rd" ]; then
+    err "no redeploy-anchor.sh in this checkout. The wizard (choice 4)"
+    err "re-fetches main, which brings it."
+    return 1
+  fi
+  note "Rebuilds the image from $SERVICE_DIR and puts the container on it,"
+  note "with the run flags taken from the wizard rather than copied."
+  note "The image it replaces is kept as xl1-service:previous, and a build"
+  note "that fails, a service that will not answer, or a container that"
+  note "comes back publishing fewer ports all put it back."
+  do_cmd "sudo bash $_rd" || return 1
 }
 
 a_agent() {
@@ -621,6 +647,7 @@ ITEMS="
 7|Update the XYO SDK (no deploy)|a_service
 8|Update the heartbeat agent|a_agent
 9|Logs|a_logs
+r|Redeploy the anchor service (rebuild + restart)|a_redeploy
 u|Update xl1-menu and xl1-help|a_selfupdate
 h|The help reference (xl1-help)|a_help
 "

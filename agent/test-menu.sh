@@ -380,12 +380,19 @@ else
       "bash still has the old file open; the next run is the first new one"
 fi
 
-# TWO DIFFERENT NOTHINGS. No checkout at all is not the same as a checkout
-# with the command missing, and neither may be answered by acting anyway.
+# A CLONE IS NOT THE ONLY SOURCE. The CM4 -- the only machine running the
+# published layout -- has a directory of files with no .git at all, because
+# the wizard fetched them one by one. `git pull` there is not a slow path, it
+# is a fatal error, and this option refused outright on the one machine that
+# most needed it. The published repo is where the wizard got them; fetching
+# them again is the same act.
 OUT="$(dry u)"
-if printf '%s' "$OUT" | grep -q 'no checkout on this machine'; then
-  ok "with no checkout it says so rather than guessing at a source"
-else bad "it tried to update from a checkout it does not have" "$OUT"; fi
+if printf '%s' "$OUT" | grep -q 'fetched from the published repository'; then
+  ok "with no clone it fetches rather than refusing"
+else bad "it refuses where there is no clone" "$OUT"; fi
+if printf '%s' "$OUT" | grep -q 'git pull'; then
+  bad "it still tries to pull a directory that is not a clone"       "that is a fatal error, not a slow path"
+else ok "it does not try to pull something that is not a clone"; fi
 
 # EXPORTED, not prefixed. A prefix on a function call sets a shell variable,
 # and the `bash "$SCRIPT"` inside the function never sees it -- so the override

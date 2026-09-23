@@ -125,6 +125,14 @@ find_repo() {
   done
 }
 REPO="$(find_repo)"
+# A CHECKOUT IS NOT NECESSARILY A CLONE. The wizard can fetch its files one by
+# one, and the CM4 -- the only machine running the published layout -- has a
+# directory of them with no .git at all. `git pull` there is not a slow path,
+# it is a fatal error, and every option that began with one silently did
+# nothing useful afterwards. Asked, so the answer can be "fetch instead".
+REPO_IS_CLONE=0
+[ -n "$REPO" ] && [ -d "$REPO/.git" ] && REPO_IS_CLONE=1
+PUBLIC_REPO="${PUBLIC_REPO:-${XL1_AGENT_RAW:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}}"
 # The agent and service live under different names in the two checkouts: the
 # private tree calls them pi-agent/ and xl1-service/, the published one agent/
 # and service/. Asked rather than assumed, so either works.
@@ -240,7 +248,12 @@ a_wizard() {
   warn "It RESTARTS the producer at the end."
   if [ -n "$REPO_AGENT" ] && [ -f "$REPO_AGENT/bootstrap-pi.sh" ]; then
     note "Running this checkout's copy, not the internet's."
-    do_cmd "cd $REPO && git pull --ff-only && bash ${REPO_AGENT#"$REPO/"}/bootstrap-pi.sh"
+    if [ "$REPO_IS_CLONE" = 1 ]; then
+      do_cmd "cd $REPO && git pull --ff-only && bash ${REPO_AGENT#"$REPO/"}/bootstrap-pi.sh"
+    else
+      note "this checkout is not a clone, so there is nothing to pull first"
+      do_cmd "bash $REPO_AGENT/bootstrap-pi.sh"
+    fi
   else
     do_cmd "curl -fsSL ${XL1_AGENT_RAW:-https://raw.githubusercontent.com/jebscc/xl1-node-monitor/main/agent}/bootstrap-pi.sh | bash"
   fi
@@ -448,7 +461,12 @@ a_service() {
   note "the XYO stack this checkout pins right now:"
   printf '%s%s%s
 ' "$D" "$_before" "$X"
-  do_cmd "cd $REPO && git pull --ff-only"
+  if [ "$REPO_IS_CLONE" = 1 ]; then
+    do_cmd "cd $REPO && git pull --ff-only"
+  else
+    warn "this checkout is not a clone, so a merged bump cannot be collected"
+    warn "here. The rebuild below uses whatever is already on disk."
+  fi
   _after="$(xyo_stack)"
   # THE DIFFERENCE, NOT TWO LISTS. Nine lines before and nine after is a
   # spot-the-difference puzzle at the exact moment somebody is tired, and the
@@ -501,7 +519,12 @@ a_agent() {
     err "the repository, or re-run the wizard (option 4) to take a new agent."
     [ "$DRY_RUN" = 1 ] || return 1
   fi
-  do_cmd "cd $REPO && git pull --ff-only && sudo cp ${REPO_AGENT#"$REPO/"}/xl1_heartbeat.py $AGENT_DIR/ && sudo systemctl restart xl1-heartbeat"
+  if [ "$REPO_IS_CLONE" = 1 ]; then
+    do_cmd "cd $REPO && git pull --ff-only && sudo cp ${REPO_AGENT#"$REPO/"}/xl1_heartbeat.py $AGENT_DIR/ && sudo systemctl restart xl1-heartbeat"
+  else
+    note "not a clone, so the agent is fetched the way the wizard fetches it"
+    do_cmd "curl -fsSL $PUBLIC_REPO/xl1_heartbeat.py -o /tmp/xl1_heartbeat.py && sudo install -m 644 /tmp/xl1_heartbeat.py $AGENT_DIR/xl1_heartbeat.py && rm -f /tmp/xl1_heartbeat.py && sudo systemctl restart xl1-heartbeat"
+  fi
   do_cmd "journalctl -u xl1-heartbeat -n 20 --no-pager"
 }
 
@@ -514,15 +537,22 @@ a_logs() {
 
 a_selfupdate() {
   say "${B}Update these commands${X}"
-  if [ -z "$REPO" ] || { [ ! -d "$REPO/.git" ] && [ "$DRY_RUN" != 1 ]; }; then
-    err "no checkout on this machine to update them from."
-    err "Clone the repository, or re-run the wizard, which installs them."
-    return 1
+  # NO CLONE IS NOT NO SOURCE. The published repo is where the wizard got
+  # these in the first place, and fetching them again is the same act. This
+  # used to refuse outright, on the one machine that most needed it.
+  if [ "$REPO_IS_CLONE" = 1 ]; then
+    do_cmd "cd $REPO && git pull --ff-only"
+  else
+    note "not a clone, so these are fetched from the published repository"
   fi
-  do_cmd "cd $REPO && git pull --ff-only"
 
   for _c in xl1-menu xl1-help; do
-    _src="$REPO_AGENT/$_c.sh"
+    if [ "$REPO_IS_CLONE" = 1 ] && [ -f "$REPO_AGENT/$_c.sh" ]; then
+      _src="$REPO_AGENT/$_c.sh"
+    else
+      _src="/tmp/$_c.fetched.sh"
+      do_cmd "curl -fsSL $PUBLIC_REPO/$_c.sh -o $_src" || { note "could not fetch $_c"; continue; }
+    fi
     # WHERE IT ACTUALLY IS, not where it is usually put. Same rule as every
     # other path here: /usr/local/bin is a convention, not a fact about this
     # machine, and installing beside a copy rather than over it leaves two.

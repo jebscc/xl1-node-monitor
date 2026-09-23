@@ -624,6 +624,17 @@ if [ -n "$_ref" ] && [ -n "$_rm" ] && [ "$_ref" -lt "$_rm" ]; then
 else
   bad "the check comes after the container is already being handed over"
 fi
+# AND SAYS HOW ONE EVER ARRIVES. "a merged bump cannot be collected here",
+# on its own, reads as a node that can never receive an update. It can:
+# bootstrap-pi.sh fetches main as a tarball every run and unpacks it over the
+# checkout -- that is how the checkout got there. Naming the limit without
+# naming the way round it is the half that sends somebody looking.
+if printf '%s' "$SVC" | grep -q 're-fetches main'; then
+  ok "the not-a-clone limit is given with the way a bump still arrives"
+else
+  bad "it says a bump cannot be collected and stops there" \
+      "which reads as a node that can never be updated at all"
+fi
 # AND POINTS AT THE ROAD THIS NODE IS ON. The first version said "sudo apt
 # install docker-compose-plugin", which reads as a missing dependency. It is
 # not one: bootstrap-pi.sh creates the anchor with `docker run` deliberately,

@@ -538,6 +538,12 @@ a_service() {
   else
     warn "this checkout is not a clone, so a merged bump cannot be collected"
     warn "here. Any rebuild uses whatever is already on disk."
+    # THE OTHER HALF. Saying a bump cannot be collected, and stopping, reads
+    # as a node that can never receive one. It can: bootstrap-pi.sh fetches
+    # main as a tarball on every run and unpacks it over this directory,
+    # which is how the checkout got here in the first place.
+    note "The wizard -- choice 4 -- re-fetches main as a tarball and"
+    note "unpacks it here, which is how a bump reaches a node like this."
   fi
   _after="$(xyo_stack)"
   # THE DIFFERENCE, NOT TWO LISTS. Nine lines before and nine after is a

@@ -316,7 +316,12 @@ a_promote() {
 # to show before and after is the group.
 xyo_stack() {
   [ -f "$SERVICE_DIR/package.json" ] || { printf '<no checkout>\n'; return; }
-  sed -n 's/.*"\(@\(xyo-network\|xylabs\)\/[^"]*\)": *"\([^"]*\)".*/  \1 \3/p' \
+  # ALL THREE SCOPES, the same set bump-xyo-stack.sh takes. This read two of
+  # them while the service also pins @ariestools/sdk, so on 2026-09-23 the
+  # screen listed four packages, said every pinned package was the newest
+  # published, and had never asked npm about the fifth. A report that leaves a
+  # package out is worse than one that cannot run: it answers the question.
+  sed -n 's/.*"\(@\(xyo-network\|xylabs\|ariestools\)\/[^"]*\)": *"\([^"]*\)".*/  \1 \3/p' \
     "$SERVICE_DIR/package.json" | sort
 }
 

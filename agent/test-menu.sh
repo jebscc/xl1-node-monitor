@@ -553,5 +553,42 @@ if printf '%s' "$SRC" | grep -q '7|Update the XYO SDK'; then
 else
   bad "the menu still offers a redeploy" "the line is read before the screen is"
 fi
+printf '\nthe stack it reports on\n'
+# THE SAME PACKAGES THE BUMP TAKES, or the report answers a different question
+# from the one the update acts on. On 2026-09-23 this read @xyo-network and
+# @xylabs while bump-xyo-stack.sh also took @ariestools: the screen listed
+# four packages, said every one was the newest published, and had never asked
+# npm about the fifth. The menu gates the bump on its own report, so a scope
+# missing here is a package that can never be updated from this choice.
+#
+# CHECKED ACROSS THE TWO FILES, because that is where the disagreement lives.
+BUMP=""
+for _b in "$(dirname "$SCRIPT")/../scripts/bump-xyo-stack.sh" \
+          "$(dirname "$SCRIPT")/../service/scripts/bump-xyo-stack.sh"; do
+  [ -f "$_b" ] && BUMP="$_b"
+done
+if [ -z "$BUMP" ]; then
+  # NOT A PASS. "could not look" must never read as "nothing wrong".
+  bad "bump-xyo-stack.sh was not found beside this checkout" \
+      "the scopes could not be compared, which is not the same as agreeing"
+else
+  # CODE ONLY. The comment inside xyo_stack names @ariestools/sdk as the
+  # package that was being missed, so reading the whole function passed
+  # against a body with that scope taken back out -- the sixth guard this
+  # session satisfied by the prose describing the thing it checks.
+  STACK_FN="$(printf '%s' "$SRC" | sed -n '/^xyo_stack() {/,/^}/p' | grep -vE '^[[:space:]]*#')"
+  WANT="$(sed -n '/^pinned() {/,/^}/p' "$BUMP" | grep -oE '@[a-z][a-z-]+' | sort -u)"
+  MISSING=""
+  for _s in $WANT; do
+    printf '%s' "$STACK_FN" | grep -q "${_s#@}" || MISSING="$MISSING $_s"
+  done
+  if [ -z "$MISSING" ]; then
+    ok "it reports every scope the bump script takes"
+  else
+    bad "the report leaves out:$MISSING" \
+        "those packages are never checked, and the choice gates on this report"
+  fi
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -163,22 +163,7 @@ else
   bad "docker-compose.pi.yml is spelt $STRAY times outside compose_cmd" \
       "copies drift, and the copy that loses drops the override"
 fi
-if printf '%s' "$DEPLOY" | grep -q 'TAILNET_OVERRIDE'; then
-  ok "it checks the override before deploying"
-else
-  bad "it deploys without checking for the override"
-fi
 
-# AN ABSENT OVERRIDE IS NOT ITSELF A FAULT. A wizard-built node publishes one
-# port and has no second compose file; refusing there made the option unusable
-# on the ordinary shape -- and printed "no override at " with nothing after
-# it, a path nobody can go and look at. The question is whether the deploy
-# would publish FEWER ports than the container already has.
-if printf '%s' "$DEPLOY" | grep -q '_have.*-gt 1'; then
-  ok "a missing override stops the deploy only when a publish would be lost"
-else
-  bad "a missing override is refused unconditionally"       "that is right for one node and wrong for every wizard-built one"
-fi
 CC="$(printf '%s' "$SRC" | sed -n '/^compose_cmd() {/,/^}/p')"
 if printf '%s' "$CC" | grep -q 'if \[ -n "\$TAILNET_OVERRIDE" \]'; then
   ok "the compose command omits an override it does not have"
@@ -212,7 +197,7 @@ fi
 # looks exactly like a successful update and installs nothing. Jim asked "how
 # do I update the SDK with this" and the honest answer was that you could not.
 if printf '%s' "$DEPLOY" | grep -q 'git pull'; then
-  ok "it pulls before it builds"
+  ok "it collects the merged bump first"
 else
   bad "the SDK update never collects the merged bump"       "rebuilding the checkout on disk is not an update, and cannot be told from one"
 fi
@@ -224,9 +209,9 @@ CODE="$(printf '%s' "$DEPLOY" | grep -vE '^\s*#')"
 PULL_AT="$(printf '%s' "$CODE" | grep -n 'git pull' | head -1 | cut -d: -f1)"
 BUILD_AT="$(printf '%s' "$CODE" | grep -n 'compose_cmd' | head -1 | cut -d: -f1)"
 if [ -n "$PULL_AT" ] && [ -n "$BUILD_AT" ] && [ "$PULL_AT" -lt "$BUILD_AT" ]; then
-  ok "the pull happens before the build, not after it"
+  ok "the collect happens before the deploy line is offered"
 else
-  bad "the build runs before the pull" "it would build the version being replaced"
+  bad "the deploy line comes before the collect" "it names the version being replaced"
 fi
 if [ "$(printf '%s' "$DEPLOY" | grep -c 'xyo_stack')" -ge 2 ]; then
   ok "it reports the pinned stack before and after"
@@ -258,48 +243,6 @@ fi
 # not create. Every wizard run puts the node back into that state, and the
 # failure arrives AFTER a successful build -- which is why it read twice as
 # "the deploy worked and then did not".
-printf '\nhanding the anchor to compose\n'
-SWAP="$(printf '%s' "$SRC" | sed -n '/^swap_anchor_to_compose() {/,/^}/p')"
-SWAP_CODE="$(printf '%s' "$SWAP" | grep -vE '^[[:space:]]*#')"
-
-if printf '%s' "$DEPLOY" | grep -q 'compose_owns_anchor'; then
-  ok "it checks who made the container before building"
-else
-  bad "it builds first and discovers the conflict afterwards" \
-      "two minutes of successful build, then the one step that mattered fails"
-fi
-SWAP_AT="$(printf '%s' "$CODE" | grep -n 'swap_anchor_to_compose' | head -1 | cut -d: -f1)"
-UP_AT="$(printf '%s' "$CODE" | grep -n 'up -d --build' | head -1 | cut -d: -f1)"
-if [ -n "$SWAP_AT" ] && [ -n "$UP_AT" ] && [ "$SWAP_AT" -lt "$UP_AT" ]; then
-  ok "the handover is offered before the build, not after it"
-else
-  bad "the handover happens after the build" "which is the order that already failed twice"
-fi
-
-# THE ONE THAT MATTERS. The wizard's container publishes the loopback port and,
-# on this machine, a tailnet one the Render backend reads. Remove it when
-# compose would give fewer and the anchor comes back healthy, reachable by
-# nothing, with the chain height quietly gone from the site.
-if printf '%s' "$SWAP_CODE" | grep -q '_will.*-lt.*_had'; then
-  ok "it refuses to remove a container compose would publish less than"
-else
-  bad "it removes the container without comparing the publishes" \
-      "a lost binding comes back healthy and unreachable"
-fi
-if printf '%s' "$SWAP_CODE" | grep -q '_now.*-lt.*_had'; then
-  ok "it checks what actually came back, not only what was promised"
-else
-  bad "it trusts the compose config and never looks at the result" \
-      "docker port afterwards is the only thing that proves the publish exists"
-fi
-RM_AT="$(printf '%s' "$SWAP_CODE" | grep -n 'docker rm -f' | head -1 | cut -d: -f1)"
-CMP_AT="$(printf '%s' "$SWAP_CODE" | grep -n '_will.*-lt' | head -1 | cut -d: -f1)"
-if [ -n "$RM_AT" ] && [ -n "$CMP_AT" ] && [ "$CMP_AT" -lt "$RM_AT" ]; then
-  ok "the comparison happens before the removal"
-else
-  bad "it removes the container before comparing" "the check is then an epitaph"
-fi
-
 # --- falling behind ----------------------------------------------------------
 #
 # A merged bump reaches the node only when the checkout is pulled, so a node
@@ -543,118 +486,48 @@ fi
 # where the running container publishes 1" -- a command that could not run,
 # quoted back as a fact about the deploy, sending somebody to look at an
 # override file for a problem that was a missing package.
-printf '\na compose that cannot answer\n'
-SWAP="$(printf '%s' "$SRC" | sed -n '/^swap_anchor_to_compose() {/,/^}/p')"
-
-# The function driven with compose failing exactly as it did on that machine.
-verdict() { # verdict <compose exit status> -> what it decided
-  ( eval "$(printf '%s' "$SRC" | sed -n '/^override_hint() {/,/^}/p')"
-    eval "$SWAP" 2>/dev/null
-    SERVICE_DIR=/nonexistent; TAILNET_OVERRIDE=""; ANCHOR_CONTAINER=c; DRY_RUN=1
-    COMPOSE_BIN="stub"; RC="$1"
-    warn() { :; }; note() { :; }; say() { :; }; ok() { :; }
-    err()  { printf 'ERR %s\n' "$1"; }
-    do_cmd() { return 0; }
-    docker() { [ "$1" = port ] && printf '8090/tcp -> 127.0.0.1:8090\n'; return 0; }
-    compose_cmd() { printf 'exit %s #' "$RC"; }
-    swap_anchor_to_compose ) 2>/dev/null
-}
-
-OUT="$(verdict 1)"
-if printf '%s' "$OUT" | grep -qi 'could not read'; then
-  ok "a compose that fails is reported as a failure, not as zero ports"
-else
-  bad "a failed compose is counted as publishing nothing" \
-      "${OUT:-it said nothing at all}"
-fi
-if printf '%s' "$OUT" | grep -qi 'would publish 0'; then
-  bad "it still quotes the count from a command that did not run" "$OUT"
-else
-  ok "it does not quote a count it could not take"
-fi
-
-# AND NOT THE OTHER WAY. A function that refuses every compose refuses the
-# working ones too, which would make the option unusable on the node it was
-# written for.
-OUT0="$(verdict 0)"
-if printf '%s' "$OUT0" | grep -qi 'could not read'; then
-  bad "a compose that ran fine is called a failure" "$OUT0"
-else
-  ok "a compose that answers is not called a failure"
-fi
-
-# --- nobody is sent to an empty path -----------------------------------------
-printf '\nwhere it sends you\n'
-# OUTSIDE THE ONE FUNCTION THAT CHECKS FIRST. override_hint names the path in
-# its set branch, which is the whole point of it; anywhere else the value can
-# be empty and the line goes out with nothing on the end of it.
-ELSEWHERE="$(printf '%s' "$SRC" | sed '/^override_hint() {/,/^}/d' | grep -vE '^[[:space:]]*#')"
-if printf '%s' "$ELSEWHERE" | grep -qE '(err|warn|note) .*\$TAILNET_OVERRIDE'; then
-  bad "a message names the override path without checking it is set" \
-      "$(printf '%s' "$ELSEWHERE" | grep -nE '(err|warn|note) .*\$TAILNET_OVERRIDE' | head -2)"
-else
-  ok "the override is only named where one was actually found"
-fi
-HINT="$(printf '%s' "$SRC" | sed -n '/^override_hint() {/,/^}/p')"
-if printf '%s' "$HINT" | grep -q 'TAILNET_OVERRIDE' && printf '%s' "$HINT" | grep -qi 'no compose override'; then
-  ok "both cases are answered -- an override that exists, and none"
-else
-  bad "the hint has only one branch" "one of the two nodes gets a useless line"
-fi
-
-# --- no compose at all is refused before anything is removed -----------------
+printf '\nit collects, and stops there\n'
+# OPTION 7 IS THE SDK, NOT THE DEPLOY. It used to be both, and the deploy
+# half assumed the board it was written on: compose installed, an override
+# file beside the checkout, a container compose was willing to adopt. None of
+# that holds on a wizard-built node, and the result was three wrong answers
+# in one run. Collecting a bump and running it are different acts with
+# different risks, and only the first belongs behind this choice.
 #
-# The wizard creates the anchor with `docker run` and never installs compose,
-# so this is the ORDINARY shape of a node, not an exotic one. The whole of
-# option 7's deploy is compose, and the report above it is worth having either
-# way -- so the refusal belongs after the report and before the first command
-# that changes something.
-printf '\na machine with no compose\n'
+# CODE ONLY: the note that prints the deploy command necessarily contains it.
 SVC="$(printf '%s' "$SRC" | sed -n '/^a_service() {/,/^}/p')"
-if printf '%s' "$SVC" | grep -q 'COMPOSE_BIN'; then
-  ok "option 7 checks there is a compose before deploying with one"
+SVC_CODE="$(printf '%s' "$SVC" | grep -vE '^[[:space:]]*#')"
+if printf '%s' "$SVC_CODE" | grep -qE 'do_cmd .*(up -d|docker rm|docker run)'; then
+  bad "option 7 still deploys" \
+      "$(printf '%s' "$SVC_CODE" | grep -nE 'do_cmd .*(up -d|docker rm|docker run)' | head -2)"
 else
-  bad "it deploys with a compose it never looked for" \
-      "on a wizard-built node every command in the deploy is a usage screen"
+  ok "it never starts, removes or rebuilds a container"
 fi
-_ref="$(printf '%s' "$SVC" | grep -n 'COMPOSE_BIN' | head -1 | cut -d: -f1)"
-_rm="$(printf '%s' "$SVC" | grep -n 'swap_anchor_to_compose\|up -d' | head -1 | cut -d: -f1)"
-if [ -n "$_ref" ] && [ -n "$_rm" ] && [ "$_ref" -lt "$_rm" ]; then
-  ok "it refuses before the first command that would change anything"
+# AND SAYS WHAT WOULD. Stopping without naming the next step leaves a checkout
+# that moved and a container that did not -- the one state that looks like a
+# finished update and is not.
+# SVC_CODE, NOT SVC. The comment block at the top of the function says "IT
+# DOES NOT DEPLOY" in as many words, so reading the whole function passed
+# against a body whose message had been replaced by "Done." -- the fifth
+# guard this session satisfied by the prose describing what it checks.
+if printf '%s' "$SVC_CODE" | grep -qi 'does not deploy'; then
+  ok "it says plainly that nothing was deployed"
 else
-  bad "the check comes after the container is already being handed over"
+  bad "it stops without saying the container is still on the old code" \
+      "a moved checkout and an unchanged container look like success"
 fi
-# AND SAYS HOW ONE EVER ARRIVES. "a merged bump cannot be collected here",
-# on its own, reads as a node that can never receive an update. It can:
-# bootstrap-pi.sh fetches main as a tarball every run and unpacks it over the
-# checkout -- that is how the checkout got there. Naming the limit without
-# naming the way round it is the half that sends somebody looking.
-if printf '%s' "$SVC" | grep -q 're-fetches main'; then
-  ok "the not-a-clone limit is given with the way a bump still arrives"
+if printf '%s' "$SVC_CODE" | grep -q 'COMPOSE_BIN' && \
+   printf '%s' "$SVC_CODE" | grep -q 'compose_cmd'; then
+  ok "the command it names is the one for this node's shape"
 else
-  bad "it says a bump cannot be collected and stops there" \
-      "which reads as a node that can never be updated at all"
+  bad "it names one deploy command for every node" \
+      "the wizard shape and the compose shape need different ones"
 fi
-# AND POINTS AT THE ROAD THIS NODE IS ON. The first version said "sudo apt
-# install docker-compose-plugin", which reads as a missing dependency. It is
-# not one: bootstrap-pi.sh creates the anchor with `docker run` deliberately,
-# and says so at start_anchor_service -- docker.io ships no compose plugin and
-# this is one container. So the route is the wizard, which already keeps the
-# run flags in one place; installing compose makes the node unlike a fresh
-# install, and is a choice rather than a fix.
-if printf '%s' "$SVC" | grep -qi 'the wizard -- choice'; then
-  ok "it names the route this node actually has"
+# The label has to agree with it, or the menu promises a deploy it will not do.
+if printf '%s' "$SRC" | grep -q '7|Update the XYO SDK'; then
+  ok "the menu line says what the choice now does"
 else
-  bad "it reports the gap without saying how to close it" \
-      "or closes it by making this node unlike every other one"
+  bad "the menu still offers a redeploy" "the line is read before the screen is"
 fi
-# It is found rather than assumed, and both spellings are known.
-BIN="$(printf '%s' "$SRC" | sed -n '/^compose_bin() {/,/^}/p')"
-if printf '%s' "$BIN" | grep -q 'docker compose version' && printf '%s' "$BIN" | grep -q 'command -v docker-compose'; then
-  ok "both the plugin and the standalone binary are looked for"
-else
-  bad "only one spelling of compose is known" "the other machine has the other one"
-fi
-
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

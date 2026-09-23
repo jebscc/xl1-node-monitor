@@ -346,84 +346,8 @@ compose_cmd() { # the compose command for THIS node, spelt once
   fi
 }
 
-# WHO MADE THE CONTAINER, which decides whether compose may touch it at all.
-# bootstrap-pi.sh creates xl1-service-anchor-1 with `docker run --name`, taking
-# by hand the exact name compose would use -- and compose will not adopt a
-# container it did not create. It fails with "the container name is already in
-# use", having already built the image, so the build succeeds and the swap
-# does not. Every wizard run puts the node back into this state.
-compose_owns_anchor() {
-  [ -n "$ANCHOR_CONTAINER" ] || return 1
-  [ -n "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' \
-          "$ANCHOR_CONTAINER" 2>/dev/null)" ]
-}
 
-# AN EMPTY PATH IS NOT SOMEWHERE TO LOOK. "check the override at " with
-# nothing after it was printed on a node that has no override and needs none.
-override_hint() {
-  if [ -n "$TAILNET_OVERRIDE" ]; then
-    err "Check the override at $TAILNET_OVERRIDE before trying again."
-  else
-    err "No compose override was found on this machine. If a binding here is"
-    err "not in the base deploy file, point XL1_COMPOSE_OVERRIDE at the one"
-    err "that reproduces it."
-  fi
-}
 
-# Hand the container over to compose, without losing what the running one has.
-#
-# THE ONLY DANGER HERE IS THE PUBLISHES. The wizard's container carries the
-# loopback publish and, on this machine, a tailnet one the Render backend
-# reads; the compose override file is what reproduces both, plus the DNS the
-# container needs to resolve anything at all. Remove the old container when
-# compose would give you fewer, and the anchor comes back healthy, reachable
-# by nothing, with the chain height quietly gone from the site.
-#
-# So this counts them on both sides and refuses on a shortfall. It does not
-# try to be clever about which port is which: fewer is fewer.
-swap_anchor_to_compose() {
-  warn "This container was made by the wizard, not by compose, so compose"
-  warn "cannot adopt it -- that is the name conflict above. Handing it over"
-  warn "means removing it and letting compose create its own."
-  _had="$(docker port "$ANCHOR_CONTAINER" 2>/dev/null | grep -c ':')"
-  note "the running container publishes $_had:"
-  do_cmd "docker port $ANCHOR_CONTAINER"
-  note "what compose would create instead:"
-  do_cmd "$(compose_cmd) config | grep -E 'published:|dns:|- \"?[0-9.]*:?[0-9]+:' "
-  # THE EXIT STATUS, BEFORE THE COUNT. Piping straight into `grep -c` throws
-  # away whether compose ran at all, and a command that cannot run matches
-  # nothing -- so on 2026-09-22 a docker usage screen was counted, came to 0,
-  # and the menu announced that "compose would publish 0 where the running
-  # container publishes 1". That is a failure quoted back as a measurement,
-  # and it sent somebody to look at an override for a problem that was a
-  # missing compose plugin.
-  _cfg="$(sh -c "$(compose_cmd) config" 2>/dev/null)"; _rc=$?
-  if [ "$_rc" -ne 0 ]; then
-    err "compose could not read the deploy in $SERVICE_DIR (exit $_rc), so"
-    err "there is nothing to compare the running container against. Nothing"
-    err "done -- run the command above by hand to see what it says."
-    return 1
-  fi
-  _will="$(printf '%s
-' "$_cfg" | grep -c 'published:')"
-  if [ "${_will:-0}" -lt "${_had:-0}" ]; then
-    err "compose would publish $_will where the running container publishes $_had."
-    err "Removing it would lose a binding. Nothing done."
-    override_hint
-    return 1
-  fi
-  note "compose publishes $_will, which is not fewer. Safe to hand over."
-  do_cmd "sudo docker rm -f $ANCHOR_CONTAINER" || return 1
-  do_cmd "$(compose_cmd) up -d" || return 1
-  _now="$(docker port "$ANCHOR_CONTAINER" 2>/dev/null | grep -c ':')"
-  if [ "${_now:-0}" -lt "${_had:-0}" ]; then
-    err "it came back publishing $_now where it had $_had. The Render proxy"
-    err "reads the second one -- check docker port."
-    override_hint
-    return 1
-  fi
-  ok "handed over to compose, still publishing $_now"
-}
 
 # WHAT NPM HAS, BESIDE WHAT WE PIN. Dependabot proposes a bump weekly and a
 # merged one only arrives when the checkout is pulled -- so a node can sit a
@@ -517,33 +441,27 @@ report_behind() {
 }
 
 a_service() {
-  say "${B}Update the service XYO stack (SDK) and redeploy${X}"
-  # THE PULL IS THE UPDATE, and the first version of this had no pull at all.
-  # `@xyo-network/xl1-sdk` is pinned to an exact version in package.json, so
-  # the bump is a change to that file: Dependabot proposes it, CI typechecks
-  # it, you merge it, and it reaches this machine only when the checkout is
-  # pulled. `docker compose up --build` alone rebuilds whatever is already on
-  # disk -- which looks exactly like a successful update and installs nothing.
+  say "${B}Update the XYO SDK${X}"
+  # THIS COLLECTS AND REPORTS. IT DOES NOT DEPLOY, and the difference is the
+  # whole of it: `@xyo-network/*` is pinned to exact versions in package.json,
+  # so a bump is a change to that file -- Dependabot proposes it, CI
+  # typechecks it, you merge it, and it reaches this machine when the checkout
+  # is refreshed. The container goes on running the code it was BUILT from
+  # until something rebuilds it, which is a separate act on a separate line.
   if [ -z "$REPO_SERVICE" ]; then
-    err "this machine has no checkout of the anchor service, so there is"
-    err "nothing here to update it from."
+    err "no checkout of the anchor service here, so nothing to update."
     return 1
   fi
   _before="$(xyo_stack)"
-  note "the XYO stack this checkout pins right now:"
-  printf '%s%s%s
-' "$D" "$_before" "$X"
+  note "pinned in this checkout now:"
+  printf '%s%s%s\n' "$D" "$_before" "$X"
   if [ "$REPO_IS_CLONE" = 1 ]; then
     do_cmd "cd $REPO && git pull --ff-only"
   else
-    warn "this checkout is not a clone, so a merged bump cannot be collected"
-    warn "here. Any rebuild uses whatever is already on disk."
-    # THE OTHER HALF. Saying a bump cannot be collected, and stopping, reads
-    # as a node that can never receive one. It can: bootstrap-pi.sh fetches
-    # main as a tarball on every run and unpacks it over this directory,
-    # which is how the checkout got here in the first place.
-    note "The wizard -- choice 4 -- re-fetches main as a tarball and"
-    note "unpacks it here, which is how a bump reaches a node like this."
+    # NOT A DEAD END, and saying only the first half made it read like one.
+    # bootstrap-pi.sh fetches main as a tarball every run and unpacks it here.
+    note "not a clone; the wizard (choice 4) re-fetches main and unpacks it"
+    note "here, which is how a merged bump reaches this node."
   fi
   _after="$(xyo_stack)"
   # THE DIFFERENCE, NOT TWO LISTS. Nine lines before and nine after is a
@@ -552,76 +470,25 @@ a_service() {
   report_behind
   report_running
   if [ "$_before" = "$_after" ]; then
-    note "nothing moved -- there was nothing merged to collect, which is not a failure"
+    note "nothing moved."
   else
-    ok "the stack moved:"
-    printf '%s
-' "$_after" | comm -13 <(printf '%s
-' "$_before") - | sed "s/^/   ${G}now${X} /"
+    ok "moved:"
+    printf '%s\n' "$_after" | comm -13 <(printf '%s\n' "$_before") - \
+      | sed "s/^/   ${G}now${X} /"
   fi
-  # THE TWO-FILE FORM OR NOTHING. The bare -f docker-compose.pi.yml drops the
-  # tailnet publish AND the container's DNS: every chain read then fails
-  # EAI_AGAIN while the producer beside it stays perfectly fine. That is not a
-  # hypothesis, it happened on 2026-09-18 from a one-file command quoted out
-  # of a note.
-  # AN ABSENT OVERRIDE IS ONLY A PROBLEM IF SOMETHING NEEDS IT. This refused
-  # outright, which was right for the node it was written on -- that one
-  # publishes a tailnet address as well as loopback, and the override is the
-  # only thing that reproduces it. On a wizard-built node there is one
-  # publish, no override and nothing to lose, so refusing there made the
-  # option unusable on the ordinary shape. It also printed "no override at "
-  # with nothing after it, which is a path nobody can go and look at.
-  #
-  # The question is not "is there an override" but "would this deploy publish
-  # fewer ports than the container already has". The count answers it either
-  # way, and needs no knowledge of which node this is.
-  # AND NOT A GAP TO BE FILLED. The wizard creates the anchor with `docker
-  # run` deliberately -- bootstrap-pi.sh says so at start_anchor_service:
-  # docker.io from apt ships no compose plugin, and this is one container.
-  # So the answer here is not "install compose", which would make this node
-  # unlike a fresh install; it is the wizard, which rebuilds the image from
-  # the checkout and re-creates the container with the flags it keeps in one
-  # place. Naming a fourth copy of that flag list here is exactly what the
-  # wizard warns against: it drifted once and cost a clean install.
-  if [ -z "$COMPOSE_BIN" ]; then
-    err "this machine has no docker compose, and the redeploy is entirely"
-    err "compose. That is by design, not a gap: the wizard creates the"
-    err "anchor with docker run, because docker.io ships no compose plugin."
-    err ""
-    err "On a node of this shape the deploy is the wizard -- choice 4."
-    err "It rebuilds the image from the checkout and re-creates the"
-    err "container with the flags it keeps in one place."
-    err ""
-    err "Installing the plugin and handing the container to compose is the"
-    err "other road, and leaves this node unlike a fresh install."
-    err "Nothing done. The versions above are still the truth about it."
-    return 1
-  fi
-  if [ -z "$TAILNET_OVERRIDE" ]; then
-    _have="$(docker port "$ANCHOR_CONTAINER" 2>/dev/null | grep -c ':')"
-    if [ "${_have:-0}" -gt 1 ]; then
-      err "this container publishes $_have ports and no compose override was"
-      err "found to reproduce them. Deploying would drop one, and the chain"
-      err "height goes with it. Set XL1_COMPOSE_OVERRIDE and try again."
-      [ "$DRY_RUN" = 1 ] || return 1
-    else
-      note "no compose override here, and none needed: the container"
-      note "publishes ${_have:-0}, which the base file already describes."
-    fi
-  fi
-  # BEFORE THE BUILD, not after it. Compose builds the image first and only
-  # then discovers it cannot have the name -- so the old shape spent two
-  # minutes succeeding and then failed at the one step that mattered, twice,
-  # on 2026-09-22. Asked first, the handover happens or the run stops.
-  if [ -n "$ANCHOR_CONTAINER" ] && ! compose_owns_anchor; then
-    swap_anchor_to_compose || return 1
-  fi
-  do_cmd "$(compose_cmd) up -d --build" || return 1
   say ""
-  note "Two published ports, or the Render proxy is down:"
-  do_cmd "docker port ${ANCHOR_CONTAINER:-xl1-service-anchor-1}"
-  warn "A healthy container nothing can talk to looks exactly like a working one."
-  warn "Check something can still authenticate, not merely that it came up."
+  # WHAT RUNS IT, spelt for THIS node and printed rather than done. The two
+  # shapes need different commands and getting it wrong is expensive: the
+  # one-file compose form drops the tailnet publish and the container's DNS.
+  note "This does not deploy. What would run the code now on disk:"
+  if [ -z "$COMPOSE_BIN" ]; then
+    note "  choice 4 -- the wizard rebuilds the image and re-creates the"
+    note "  container. There is no compose here, by design."
+  else
+    note "  $(compose_cmd) up -d --build"
+    note "  A wizard-made container is removed first; compose will not adopt"
+    note "  one it did not create."
+  fi
 }
 
 a_agent() {
@@ -730,7 +597,7 @@ ITEMS="
 4|Run the wizard (bootstrap-pi.sh)|a_wizard
 5|Build a new node image (CLI update)|a_build_image
 6|Promote an image and restart onto it|a_promote
-7|Update the service SDK and redeploy|a_service
+7|Update the XYO SDK (no deploy)|a_service
 8|Update the heartbeat agent|a_agent
 9|Logs|a_logs
 u|Update xl1-menu and xl1-help|a_selfupdate

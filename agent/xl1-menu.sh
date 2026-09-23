@@ -205,11 +205,50 @@ a_status() {
   do_cmd "curl -s localhost:8090/health"
 }
 
+# HOW THIS NODE REHEARSES ITS CONFIG, and there are two shapes of node.
+#
+# A unit-supervised node keeps its environment in a file and its presets in a
+# mounted directory, and a restart re-reads BOTH -- so the rehearsal is a
+# fresh container handed that same pair, which is exactly what the next start
+# would get.
+#
+# A wizard-built node has no unit. bootstrap-pi.sh starts the producer with
+# `docker run --env-file <runtime file>` and then DELETES that file on
+# purpose: a second copy of the mnemonic on disk is the thing to avoid, and it
+# says so. So there is no env file to hand a fresh container, and building one
+# out of `docker inspect` would put back precisely what the wizard refused to
+# leave lying about. `docker restart` reuses the environment already baked
+# into the container and re-reads the mounted presets -- so running the dump
+# INSIDE the running container asks the question a restart answers, copies
+# nothing and writes nothing.
+#
+# SPELT ONCE. The gate below runs whatever this prints, so the command that is
+# shown and the command that decides are the same string; two copies would
+# drift into rehearsing one thing and displaying another.
+dump_config_cmd() {   # the command, or nothing when this node cannot be asked
+  if [ -n "$PRODUCER_ENV" ]; then
+    printf 'sudo docker run --rm --env-file %s %s xl1:local --dump-config' \
+      "$PRODUCER_ENV" "$PRESET_ARGS"
+  elif [ -n "$PRODUCER_CONTAINER" ]; then
+    printf 'sudo docker exec %s node /opt/xl1/lib/entrypoint.mjs --dump-config' \
+      "$PRODUCER_CONTAINER"
+  fi
+}
+
 a_dump() {
   say "${B}Check the producer's configuration${X}"
   note "Resolves presets, env file and flags and exits WITHOUT starting an actor."
-  need "producer env file" "$PRODUCER_ENV" || return 1
-  do_cmd "sudo docker run --rm --env-file $PRODUCER_ENV $PRESET_ARGS xl1:local --dump-config"
+  _cmd="$(dump_config_cmd)"
+  if [ -z "$_cmd" ]; then
+    err "this node has no producer env file and no running producer container,"
+    err "so there is nothing here to rehearse the configuration from."
+    return 1
+  fi
+  if [ -z "$PRODUCER_ENV" ]; then
+    note "No unit on this node, so this asks the running container, which is"
+    note "the environment a restart reuses."
+  fi
+  do_cmd "$_cmd"
 }
 
 # THE GATE, and the reason this menu is worth having over typing the commands.
@@ -221,10 +260,10 @@ config_refused() {
   # must not answer: reporting "the node refuses this" because we could not
   # find the file would stop a healthy node on the strength of our own
   # ignorance, which is the opposite of what the gate is for.
-  [ -n "$PRODUCER_ENV" ] || return 1
+  _cmd="$(dump_config_cmd)"
+  [ -n "$_cmd" ] || return 1
   [ "$DRY_RUN" = 1 ] && return 1
-  sudo docker run --rm --env-file "$PRODUCER_ENV" $PRESET_ARGS \
-    xl1:local --dump-config >/dev/null 2>&1
+  sh -c "$_cmd" >/dev/null 2>&1
   [ $? = 78 ]
 }
 

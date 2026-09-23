@@ -113,13 +113,21 @@ fi
 # Run the real function against a docker that answers 78, which is the node
 # refusing the configuration it is about to be given.
 printf '\nthe config gate\n'
-gate_says() { # gate_says <docker exit code> -> "refused" | "fine"
-  ( eval "$(printf '%s' "$SRC" | sed -n '/^config_refused() {/,/^}/p')"
-    PRODUCER_ENV=/tmp/env; PRESET_ARGS=""; DRY_RUN=0
-    sudo() { shift 0; return "$FAKE"; }
-    docker() { return "$FAKE"; }
-    FAKE="$1"
-    config_refused && echo refused || echo fine )
+# STUBBED THROUGH PATH, not through shell functions. The gate runs its command
+# with `sh -c` so that what it rehearses is the same string the menu shows, and
+# a function named `sudo` does not exist inside that child shell. A stub on
+# PATH does, and is closer to the real thing besides.
+gate_says() { # gate_says <exit code> [container] [env file] -> "refused" | "fine"
+  ( _d="$(mktemp -d)"
+    printf '#!/bin/sh\nexit %s\n' "$1" > "$_d/sudo"
+    chmod +x "$_d/sudo"
+    PATH="$_d:$PATH"
+    eval "$(printf '%s' "$SRC" | sed -n '/^dump_config_cmd() {/,/^}/p')"
+    eval "$(printf '%s' "$SRC" | sed -n '/^config_refused() {/,/^}/p')"
+    PRODUCER_ENV="${3-/tmp/env}"; PRODUCER_CONTAINER="${2-}"
+    PRESET_ARGS=""; DRY_RUN=0
+    config_refused && echo refused || echo fine
+    rm -rf "$_d" )
 }
 [ "$(gate_says 78)" = refused ] && ok "exit 78 is read as a refusal" \
   || bad "exit 78 is not read as a refusal" "the one code the node actually uses"
@@ -132,6 +140,60 @@ if printf '%s' "$SRC" | sed -n '/^a_restart_producer() {/,/^}/p' | grep -q 'conf
   ok "the restart is gated on it"
 else
   bad "the restart no longer asks the node first" "this is the whole point of the menu"
+fi
+
+# --- and the node that has no unit -------------------------------------------
+#
+# A wizard-built node is the ordinary shape and has no systemd unit, so the
+# env file the old gate needed does not exist -- bootstrap-pi.sh deletes the
+# runtime copy on purpose rather than leave the mnemonic lying about. Before
+# this, option 2 refused outright there and option 3 restarted with no gate at
+# all: the check that exists to stop a crash-loop was simply absent on most
+# nodes.
+if [ "$(gate_says 78 xl1-producer "")" = refused ]; then
+  ok "a node with no unit is asked through its running container"
+else
+  bad "a node with no unit cannot be asked at all" \
+      "that is the ordinary shape, and it is the one with no gate"
+fi
+if [ "$(gate_says 0 xl1-producer "")" = fine ]; then
+  ok "and an accepted config there is still not a refusal"
+else
+  bad "the container path calls a healthy node refused"
+fi
+if [ "$(gate_says 78 "" "")" = fine ]; then
+  ok "a node with neither gives no verdict rather than a refusal"
+else
+  bad "no env file and no container reads as a refusal" \
+      "a gate that cannot ask must not answer"
+fi
+# AND IT ASKS THE CONTAINER, RATHER THAN COPYING WHAT THE CONTAINER HOLDS.
+# The env a wizard-built producer runs with contains the mnemonic, and
+# bootstrap-pi.sh deletes its runtime copy the moment the container is up
+# because a second copy on disk is the thing to avoid. Rebuilding one from
+# `docker inspect` to feed `--env-file` would undo that deliberately, and it
+# would pass every other check here: same command shape, same output, same
+# exit code. Only this says which of the two it is.
+DCC="$(printf '%s' "$SRC" | sed -n '/^dump_config_cmd() {/,/^}/p' | grep -vE '^[[:space:]]*#')"
+if printf '%s' "$DCC" | grep -q 'docker exec'; then
+  ok "the no-unit node is asked inside its own container"
+else
+  bad "it feeds the dump an env file instead of exec-ing the container" \
+      "the only env file there is one we would have written, holding the phrase"
+fi
+if printf '%s' "$DCC" | grep -qE 'env-file (/tmp|\$\(|/var/tmp)'; then
+  bad "it points --env-file at something it made" \
+      "that is a second copy of the mnemonic, which the wizard refuses to leave"
+else
+  ok "no env file is invented for it"
+fi
+# THE COMMAND IS SPELT ONCE, because the gate runs what the menu displays.
+STRAY="$(printf '%s' "$SRC" | grep -vE '^[[:space:]]*#' | grep -c 'dump-config')"
+if [ "$STRAY" -le 2 ]; then
+  ok "the rehearsal command lives in one place"
+else
+  bad "--dump-config is spelt $STRAY times" \
+      "the gate would decide on one command and the menu show another"
 fi
 
 # --- the service deploy ------------------------------------------------------

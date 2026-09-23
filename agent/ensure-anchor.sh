@@ -156,12 +156,24 @@ recreate() {
   log "FAILED: recreate exited $_rc"
   printf '%s\n' "$_out" | tail -6 | while IFS= read -r _l; do log "  | $_l"; done
 
-  # THE ONE FAILURE WITH A KNOWN REMEDY. A wizard run recreates the anchor
-  # with `docker run`, so the next compose deploy hits a name it may not take.
-  # Removing it is safe here in a way it is not in general: this runs only
-  # after the anchor has failed its check STREAK times in a row, so the
-  # container being replaced is already not serving.
-  if docker inspect "$CONTAINER" >/dev/null 2>&1 && ! compose_owns; then
+  # THE ONE FAILURE WITH A KNOWN REMEDY, and only where the remedy can work.
+  #
+  # A wizard run recreates the anchor with `docker run`, so the next compose
+  # deploy hits a name it may not take. Removing it is safe here in a way it
+  # is not in general: this runs only after the anchor has failed its check
+  # STREAK times in a row, so what is being replaced is already not serving.
+  #
+  # BUT ONLY IF UP_CMD CAN CREATE A CONTAINER. The CM4 has no compose and its
+  # command is `docker restart xl1-service-anchor-1` -- remove the container
+  # in front of that and the retry fails with "No such container", turning a
+  # service that was merely unhealthy into a node with no anchor at all. A
+  # restart repairs a wedged container; it cannot conjure a missing one.
+  case "$UP_CMD" in
+    *compose*up*) _can_create=1 ;;
+    *)            _can_create=0 ;;
+  esac
+  if [ "$_can_create" = 1 ] && docker inspect "$CONTAINER" >/dev/null 2>&1 \
+     && ! compose_owns; then
     log "$CONTAINER was not created by compose, so compose cannot replace it"
     log "removing it and trying once more"
     if ! docker rm -f "$CONTAINER" >/dev/null 2>&1; then

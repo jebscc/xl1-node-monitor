@@ -430,24 +430,33 @@ report_behind() {
   done)"
   if [ -n "$_behind" ]; then
     warn "newer releases are published than this checkout pins:"
-    printf '%s%s%s
-' "$Y" "$_behind" "$X"
-    note "scripts/bump-xyo-stack.sh --apply takes them and runs every gate."
-    note "It borrows node from the service's own image, so this host needs"
-    note "no toolchain. Commit and push after it, then pull here."
-  else
-    ok "every pinned package is the newest published"
+    printf '%s%s%s\n' "$Y" "$_behind" "$X"
+    return 1
   fi
+  ok "every pinned package is the newest published"
+  return 0
+}
+
+# WHERE THE BUMP SCRIPT IS. It ships inside the service in the published tree
+# and beside it in the private one, so both are looked at rather than one
+# being assumed -- the node has the published layout.
+find_bump() {
+  for _b in "$SERVICE_DIR/scripts/bump-xyo-stack.sh" \
+            "${REPO:-/nonexistent}/scripts/bump-xyo-stack.sh"; do
+    [ -f "$_b" ] && { printf '%s' "$_b"; return; }
+  done
 }
 
 a_service() {
   say "${B}Update the XYO SDK${X}"
-  # THIS COLLECTS AND REPORTS. IT DOES NOT DEPLOY, and the difference is the
-  # whole of it: `@xyo-network/*` is pinned to exact versions in package.json,
-  # so a bump is a change to that file -- Dependabot proposes it, CI
-  # typechecks it, you merge it, and it reaches this machine when the checkout
-  # is refreshed. The container goes on running the code it was BUILT from
-  # until something rebuilds it, which is a separate act on a separate line.
+  # THIS TAKES THE NEWEST PUBLISHED VERSIONS AND PROVES THEM. The pins are
+  # exact versions in package.json, so moving them is a change to that file;
+  # the bump script asks npm what is newest, writes it, resolves the lockfile
+  # and runs every gate in the tree, putting the files back if any fails.
+  #
+  # IT DOES NOT DEPLOY. The container goes on running the code it was built
+  # from until something rebuilds it, which is a separate act on a separate
+  # line -- and the line it needs differs by node, so it is named, not run.
   if [ -z "$REPO_SERVICE" ]; then
     err "no checkout of the anchor service here, so nothing to update."
     return 1
@@ -455,31 +464,43 @@ a_service() {
   _before="$(xyo_stack)"
   note "pinned in this checkout now:"
   printf '%s%s%s\n' "$D" "$_before" "$X"
-  if [ "$REPO_IS_CLONE" = 1 ]; then
-    do_cmd "cd $REPO && git pull --ff-only"
-  else
-    # NOT A DEAD END, and saying only the first half made it read like one.
-    # bootstrap-pi.sh fetches main as a tarball every run and unpacks it here.
-    note "not a clone; the wizard (choice 4) re-fetches main and unpacks it"
-    note "here, which is how a merged bump reaches this node."
+  [ "$REPO_IS_CLONE" = 1 ] && do_cmd "cd $REPO && git pull --ff-only"
+
+  if report_behind; then
+    report_running
+    deploy_line
+    return 0
   fi
+
+  _bump="$(find_bump)"
+  if [ -z "$_bump" ]; then
+    err "there are newer releases and no bump-xyo-stack.sh in this checkout"
+    err "to take them with. The wizard (choice 4) re-fetches main, which"
+    err "brings it."
+    return 1
+  fi
+  # IT BORROWS NODE FROM THE SERVICE'S OWN IMAGE, so this host needs no
+  # toolchain -- which is the point, the Pi has neither node nor pnpm.
+  do_cmd "sudo bash $_bump --apply" || return 1
+
   _after="$(xyo_stack)"
-  # THE DIFFERENCE, NOT TWO LISTS. Nine lines before and nine after is a
-  # spot-the-difference puzzle at the exact moment somebody is tired, and the
-  # answer that matters is usually "none of them".
-  report_behind
-  report_running
   if [ "$_before" = "$_after" ]; then
-    note "nothing moved."
-  else
-    ok "moved:"
-    printf '%s\n' "$_after" | comm -13 <(printf '%s\n' "$_before") - \
-      | sed "s/^/   ${G}now${X} /"
+    err "the pins did not move. The bump puts the files back when a gate"
+    err "fails, so this checkout is as it was -- read the gate above."
+    return 1
   fi
+  ok "the XYO SDK moved:"
+  printf '%s\n' "$_after" | comm -13 <(printf '%s\n' "$_before") - \
+    | sed "s/^/   ${G}now${X} /"
+  report_running
+  deploy_line
+}
+
+# WHAT WOULD RUN IT, spelt for THIS node and printed rather than done. The two
+# shapes need different commands and getting it wrong is expensive: the
+# one-file compose form drops the tailnet publish and the container's DNS.
+deploy_line() {
   say ""
-  # WHAT RUNS IT, spelt for THIS node and printed rather than done. The two
-  # shapes need different commands and getting it wrong is expensive: the
-  # one-file compose form drops the tailnet publish and the container's DNS.
   note "This does not deploy. What would run the code now on disk:"
   if [ -z "$COMPOSE_BIN" ]; then
     note "  choice 4 -- the wizard rebuilds the image and re-creates the"

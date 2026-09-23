@@ -207,7 +207,7 @@ fi
 # teaches people to delete it.
 CODE="$(printf '%s' "$DEPLOY" | grep -vE '^\s*#')"
 PULL_AT="$(printf '%s' "$CODE" | grep -n 'git pull' | head -1 | cut -d: -f1)"
-BUILD_AT="$(printf '%s' "$CODE" | grep -n 'compose_cmd' | head -1 | cut -d: -f1)"
+BUILD_AT="$(printf '%s' "$CODE" | grep -n 'deploy_line' | head -1 | cut -d: -f1)"
 if [ -n "$PULL_AT" ] && [ -n "$BUILD_AT" ] && [ "$PULL_AT" -lt "$BUILD_AT" ]; then
   ok "the collect happens before the deploy line is offered"
 else
@@ -495,7 +495,8 @@ printf '\nit collects, and stops there\n'
 # different risks, and only the first belongs behind this choice.
 #
 # CODE ONLY: the note that prints the deploy command necessarily contains it.
-SVC="$(printf '%s' "$SRC" | sed -n '/^a_service() {/,/^}/p')"
+SVC="$(printf '%s' "$SRC" | sed -n '/^a_service() {/,/^}/p')
+$(printf '%s' "$SRC" | sed -n '/^deploy_line() {/,/^}/p')"
 SVC_CODE="$(printf '%s' "$SVC" | grep -vE '^[[:space:]]*#')"
 if printf '%s' "$SVC_CODE" | grep -qE 'do_cmd .*(up -d|docker rm|docker run)'; then
   bad "option 7 still deploys" \
@@ -503,6 +504,29 @@ if printf '%s' "$SVC_CODE" | grep -qE 'do_cmd .*(up -d|docker rm|docker run)'; t
 else
   ok "it never starts, removes or rebuilds a container"
 fi
+# AND IT TAKES THEM. Saying a newer version exists is not updating to it --
+# that was the whole complaint: the choice read as an update and moved
+# nothing. The bump script is what writes the versions, resolves the lockfile
+# and runs the gates, so the choice has to actually run it.
+if printf '%s' "$SVC_CODE" | grep -q 'do_cmd .*--apply'; then
+  ok "it takes the newer versions rather than naming them"
+else
+  bad "it reports what is newer and stops"       "a choice called Update that updates nothing"
+fi
+# AND SHOWS WHAT MOVED. An update you cannot see is one you cannot tell from
+# a no-op -- and the bump restores the files when a gate fails, so "it ran"
+# is not the same as "it moved".
+if printf '%s' "$SVC_CODE" | grep -q 'comm -13'; then
+  ok "it shows the versions before against after"
+else
+  bad "it does not show what the versions did"       "a restored bump and a successful one would read the same"
+fi
+if printf '%s' "$SVC_CODE" | grep -q '_before" = "$_after'; then
+  ok "no movement after an apply is called out, not passed over"
+else
+  bad "a bump that put everything back reads as a success"
+fi
+
 # AND SAYS WHAT WOULD. Stopping without naming the next step leaves a checkout
 # that moved and a container that did not -- the one state that looks like a
 # finished update and is not.

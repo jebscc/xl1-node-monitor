@@ -338,9 +338,11 @@ s_service() {
   fi
   if [ -n "$SERVICE_DIR" ] && ! docker compose version >/dev/null 2>&1 &&
      ! command -v docker-compose >/dev/null 2>&1; then
-    n "THERE IS NO COMPOSE ON THIS MACHINE. The wizard installs none -- it"
-    n "creates the anchor with docker run -- so the command above needs"
-    n "sudo apt install docker-compose-plugin first."
+    n "THERE IS NO COMPOSE ON THIS MACHINE, and that is deliberate: the"
+    n "wizard creates the anchor with docker run, because docker.io from"
+    n "apt ships no compose plugin. The command above is for a node that"
+    n "has one. Here the redeploy is the wizard itself, which rebuilds"
+    n "the image from the checkout and re-creates the container."
   fi
   n "sudo because compose reads /etc/xl1-anchor.env, which is root-only."
   n "The SDK bump itself arrives as a Dependabot PR on the repo. Merging it"

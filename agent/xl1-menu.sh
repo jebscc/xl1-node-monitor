@@ -569,18 +569,26 @@ a_service() {
   # The question is not "is there an override" but "would this deploy publish
   # fewer ports than the container already has". The count answers it either
   # way, and needs no knowledge of which node this is.
-  # AND THE DEPLOY NEEDS A COMPOSE TO RUN IT. Everything above this line is
-  # reporting -- which versions are pinned, what npm has, what the container
-  # is running -- and all of it is worth having on a machine that cannot
-  # deploy. So the refusal goes here, after the report and before the first
-  # command that would change anything.
+  # AND NOT A GAP TO BE FILLED. The wizard creates the anchor with `docker
+  # run` deliberately -- bootstrap-pi.sh says so at start_anchor_service:
+  # docker.io from apt ships no compose plugin, and this is one container.
+  # So the answer here is not "install compose", which would make this node
+  # unlike a fresh install; it is the wizard, which rebuilds the image from
+  # the checkout and re-creates the container with the flags it keeps in one
+  # place. Naming a fourth copy of that flag list here is exactly what the
+  # wizard warns against: it drifted once and cost a clean install.
   if [ -z "$COMPOSE_BIN" ]; then
     err "this machine has no docker compose, and the redeploy is entirely"
-    err "compose. The wizard does not install one -- it creates the"
-    err "anchor with docker run -- so a node that has only met the wizard"
-    err "will not have it:"
-    err "  sudo apt install docker-compose-plugin"
-    err "Nothing done. The versions above are still the truth about this node."
+    err "compose. That is by design, not a gap: the wizard creates the"
+    err "anchor with docker run, because docker.io ships no compose plugin."
+    err ""
+    err "On a node of this shape the deploy is the wizard -- choice 4."
+    err "It rebuilds the image from the checkout and re-creates the"
+    err "container with the flags it keeps in one place."
+    err ""
+    err "Installing the plugin and handing the container to compose is the"
+    err "other road, and leaves this node unlike a fresh install."
+    err "Nothing done. The versions above are still the truth about it."
     return 1
   fi
   if [ -z "$TAILNET_OVERRIDE" ]; then

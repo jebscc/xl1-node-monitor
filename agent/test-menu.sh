@@ -624,10 +624,18 @@ if [ -n "$_ref" ] && [ -n "$_rm" ] && [ "$_ref" -lt "$_rm" ]; then
 else
   bad "the check comes after the container is already being handed over"
 fi
-if printf '%s' "$SVC" | grep -q 'docker-compose-plugin'; then
-  ok "it names the package to install rather than only the lack"
+# AND POINTS AT THE ROAD THIS NODE IS ON. The first version said "sudo apt
+# install docker-compose-plugin", which reads as a missing dependency. It is
+# not one: bootstrap-pi.sh creates the anchor with `docker run` deliberately,
+# and says so at start_anchor_service -- docker.io ships no compose plugin and
+# this is one container. So the route is the wizard, which already keeps the
+# run flags in one place; installing compose makes the node unlike a fresh
+# install, and is a choice rather than a fix.
+if printf '%s' "$SVC" | grep -qi 'the wizard -- choice'; then
+  ok "it names the route this node actually has"
 else
-  bad "it reports the gap without saying how to close it"
+  bad "it reports the gap without saying how to close it" \
+      "or closes it by making this node unlike every other one"
 fi
 # It is found rather than assumed, and both spellings are known.
 BIN="$(printf '%s' "$SRC" | sed -n '/^compose_bin() {/,/^}/p')"

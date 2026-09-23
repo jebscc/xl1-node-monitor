@@ -125,5 +125,54 @@ else
   ok "the env file is never defaulted"
 fi
 
+# --- the agent env is root-only ----------------------------------------------
+#
+# /etc/xl1-heartbeat.env holds the heartbeat token, so it is root-only and a
+# plain read as the operator returns nothing. On the CM4 that showed as
+# "BACKEND_URL ... not found on this machine" about a file that was there and
+# correct -- sending somebody to look for a configuration problem that was a
+# permission. bootstrap-pi.sh hit this first and answers it at its line 1082.
+printf '\nthe root-only agent env\n'
+# CODE ONLY. The comment above the fallback explains `sudo -n`, so grepping
+# the function wholesale passed against a body with the fallback deleted --
+# the guard was satisfied by the note describing the thing it was checking.
+EV="$(printf '%s' "$SRC" | sed -n '/^env_value() {/,/^}/p' | grep -vE '^[[:space:]]*#')"
+if printf '%s' "$EV" | grep -q 'sudo -n'; then
+  ok "it falls back to sudo -n, as the wizard does"
+else
+  bad "a root-only env file reads as empty" "a correct file then reports as missing"
+fi
+# AND NEVER PROMPTS. This is the command whose whole value is being safe to
+# run without thinking; a password prompt from a help screen is a command
+# people stop running.
+if printf '%s' "$EV" | grep -qE 'sudo +[^-]'; then
+  bad "it can prompt for a password" "a help command that asks for one is not run"
+else
+  ok "it never prompts -- only the non-interactive form is used"
+fi
+
+# THREE ANSWERS, NOT ONE. Absent, unreadable and unset are different problems
+# and only one of them is about configuration.
+WHY="$(printf '%s' "$SRC" | sed -n '/^env_why() {/,/^}/p')"
+MISSING=""
+for phrase in 'on this machine' 'root-only' 'not set in'; do
+  printf '%s' "$WHY" | grep -q -- "$phrase" || MISSING="$MISSING [$phrase]"
+done
+if [ -z "$MISSING" ]; then ok "absent, root-only and unset are told apart"
+else bad "env_why does not distinguish:$MISSING"; fi
+
+ENVTMP="$(mktemp)"; printf 'NODE_ID=cm4-01\n' > "$ENVTMP"
+OUT="$(AGENT_ENV="$ENVTMP" run where)"
+if printf '%s' "$OUT" | grep -q 'not set in'; then
+  ok "a key missing from a readable file says so"
+else bad "a missing key reads as a missing file" "$OUT"; fi
+# AND THE OVERRIDE IS HONOURED. A second, unconditional assignment further
+# down the file silently shadowed it, so every one of these answers named
+# /etc/xl1-heartbeat.env whatever it had actually read.
+if printf '%s' "$OUT" | grep -q "$ENVTMP"; then
+  ok "the env path it reports is the one it read"
+else bad "it names a different env file from the one it used" "$OUT"; fi
+rm -f "$ENVTMP"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

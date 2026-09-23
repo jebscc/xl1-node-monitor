@@ -71,9 +71,30 @@ PRESET_ARGS=""
 AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 
 env_value() { # env_value <KEY> -- from the agent's own config, commented or not
-  [ -r "$AGENT_ENV" ] || return
-  sed -n "s/^#\{0,1\} *$1=//p" "$AGENT_ENV" | head -1 \
-    | sed 's/^"//; s/"$//' | tr -d '[:cntrl:]'
+  # ROOT-ONLY, because it holds the heartbeat token. bootstrap-pi.sh hit this
+  # first and solved it the same way at its line 1082: try without sudo, then
+  # try `sudo -n`, which never prompts. What it must NOT do is prompt -- this
+  # is the command whose whole value is being safe to run without thinking,
+  # and a password prompt from a help screen is a command people stop running.
+  [ -f "$AGENT_ENV" ] || return
+  if [ -r "$AGENT_ENV" ]; then
+    sed -n "s/^#\{0,1\} *$1=//p" "$AGENT_ENV" | head -1 \
+      | sed 's/^"//; s/"$//' | tr -d '[:cntrl:]'
+  else
+    sudo -n sed -n "s/^#\{0,1\} *$1=//p" "$AGENT_ENV" 2>/dev/null | head -1 \
+      | sed 's/^"//; s/"$//' | tr -d '[:cntrl:]'
+  fi
+}
+
+# WHY a value is missing, which is three different answers and was one. "not
+# found on this machine" is wrong for a file that is there and unreadable:
+# it sends somebody looking for a configuration problem that is a permission.
+env_why() {
+  if [ ! -f "$AGENT_ENV" ]; then printf 'no %s on this machine' "$AGENT_ENV"
+  elif [ ! -r "$AGENT_ENV" ] && ! sudo -n true 2>/dev/null; then
+    printf 'root-only -- run this with sudo to see it'
+  else printf 'not set in %s' "$AGENT_ENV"
+  fi
 }
 
 # THE OPERATOR'S OWN BACKEND, not the one this was written against. The

@@ -150,17 +150,59 @@ else
       "that drops the tailnet publish AND the container's DNS -- 2026-09-18"
 fi
 # And nowhere else writes its own. A second spelling is how one of them drifts.
-STRAY="$(printf '%s' "$SRC" | grep -vE '^[[:space:]]*#' | grep -c 'docker-compose.pi.yml')"
-if [ "$STRAY" = 1 ]; then
-  ok "the two-file form is written in exactly one place"
+# OUTSIDE compose_cmd, which is the place it must not appear. Inside it there
+# are now two branches -- with an override and without -- and both name the
+# base file legitimately. Counting them all made the guard fire at the
+# function doing exactly what it exists to do, which is the point at which
+# somebody deletes a guard rather than reads it.
+STRAY="$(printf '%s' "$SRC" | grep -vE '^[[:space:]]*#' \
+  | sed '/^compose_cmd() {/,/^}/d' | grep -c 'docker-compose.pi.yml')"
+if [ "$STRAY" = 0 ]; then
+  ok "only compose_cmd spells the compose command"
 else
-  bad "docker-compose.pi.yml is spelt $STRAY times outside comments" \
+  bad "docker-compose.pi.yml is spelt $STRAY times outside compose_cmd" \
       "copies drift, and the copy that loses drops the override"
 fi
 if printf '%s' "$DEPLOY" | grep -q 'TAILNET_OVERRIDE'; then
-  ok "it checks the override exists before deploying"
+  ok "it checks the override before deploying"
 else
   bad "it deploys without checking for the override"
+fi
+
+# AN ABSENT OVERRIDE IS NOT ITSELF A FAULT. A wizard-built node publishes one
+# port and has no second compose file; refusing there made the option unusable
+# on the ordinary shape -- and printed "no override at " with nothing after
+# it, a path nobody can go and look at. The question is whether the deploy
+# would publish FEWER ports than the container already has.
+if printf '%s' "$DEPLOY" | grep -q '_have.*-gt 1'; then
+  ok "a missing override stops the deploy only when a publish would be lost"
+else
+  bad "a missing override is refused unconditionally"       "that is right for one node and wrong for every wizard-built one"
+fi
+CC="$(printf '%s' "$SRC" | sed -n '/^compose_cmd() {/,/^}/p')"
+if printf '%s' "$CC" | grep -q 'if \[ -n "\$TAILNET_OVERRIDE" \]'; then
+  ok "the compose command omits an override it does not have"
+else
+  bad "it names an override file even when there is none"       "compose then fails on every node without one"
+fi
+
+# THE OPTIONAL WEEKLY TIMER. It is deliberately not installed by the wizard --
+# it acts on a running producer, so it is opt-in -- and offering its unit
+# unconditionally failed with "Unit not found" on every node that took the
+# default, which reads as a broken menu rather than an absent extra.
+BUILD="$(printf '%s' "$SRC" | sed -n '/^a_build_image() {/,/^}/p')"
+if printf '%s' "$BUILD" | grep -q 'systemctl cat xl1-image-rebuild'; then
+  ok "it checks the rebuild timer exists before starting it"
+else
+  bad "it starts a unit that most nodes do not have"       "Unit not found reads as a broken menu, not an optional extra"
+fi
+# RUN, not merely mentioned. The error two lines below also names the script,
+# so a bare grep passed against a body with the fallback deleted -- the fourth
+# guard in this session satisfied by the text describing the thing it checks.
+if printf '%s' "$BUILD" | grep -qE 'do_cmd .*rebuild-xl1-image\.sh'; then
+  ok "and falls back to running the script directly"
+else
+  bad "with no timer there is nothing offered at all"       "naming the script in an error is not offering to run it"
 fi
 
 # THE PULL IS THE UPDATE. `@xyo-network/xl1-sdk` is pinned to an exact version

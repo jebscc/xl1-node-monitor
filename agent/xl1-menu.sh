@@ -261,9 +261,29 @@ a_wizard() {
 
 a_build_image() {
   say "${B}Build a new node image (CLI update)${X}"
-  note "BUILDS ONLY. It never retags xl1:local, stops a container or restarts"
-  note "the producer -- swapping the image under a live producer is option 6."
-  do_cmd "sudo systemctl start xl1-image-rebuild.service && journalctl -u xl1-image-rebuild -n 30 --no-pager"
+  note "BUILDS ONLY. It never retags xl1:local, stops a container or"
+  note "restarts the producer -- swapping the image is option 6."
+
+  # THE TIMER IS OPTIONAL AND DELIBERATELY NOT INSTALLED BY THE WIZARD: a
+  # component that acts on a running producer by itself is one an operator
+  # should switch on knowingly. So most nodes do not have it, and offering
+  # its unit unconditionally fails with "Unit not found" on every one of
+  # them -- which reads as a broken menu rather than an absent extra.
+  if systemctl cat xl1-image-rebuild.service >/dev/null 2>&1; then
+    do_cmd "sudo systemctl start xl1-image-rebuild.service && journalctl -u xl1-image-rebuild -n 30 --no-pager"
+    return
+  fi
+
+  note "the weekly rebuild timer is not installed here, which is the"
+  note "default -- it acts on a running producer, so it is opt-in."
+  if [ -n "$REPO_AGENT" ] && [ -f "$REPO_AGENT/rebuild-xl1-image.sh" ]; then
+    note "Running the script directly instead. Same work, once, now."
+    do_cmd "sudo bash $REPO_AGENT/rebuild-xl1-image.sh"
+  else
+    err "and there is no rebuild-xl1-image.sh on this machine to run"
+    err "instead. See the README for installing the weekly timer."
+    return 1
+  fi
 }
 
 a_promote() {
@@ -297,9 +317,17 @@ xyo_stack() {
     "$SERVICE_DIR/package.json" | sort
 }
 
-compose_cmd() { # the two-file form, spelt once
-  printf 'cd %s && sudo docker compose -f docker-compose.pi.yml -f %s' \
-    "$SERVICE_DIR" "$TAILNET_OVERRIDE"
+compose_cmd() { # the compose command for THIS node, spelt once
+  # THE OVERRIDE IS AN EXTRA, NOT A REQUIREMENT. A wizard-built node publishes
+  # one port and has no second compose file; the base file is the whole of its
+  # configuration. Naming a file that is not there makes compose fail on every
+  # such node, which is most of them.
+  if [ -n "$TAILNET_OVERRIDE" ]; then
+    printf 'cd %s && sudo docker compose -f docker-compose.pi.yml -f %s' \
+      "$SERVICE_DIR" "$TAILNET_OVERRIDE"
+  else
+    printf 'cd %s && sudo docker compose -f docker-compose.pi.yml' "$SERVICE_DIR"
+  fi
 }
 
 # WHO MADE THE CONTAINER, which decides whether compose may touch it at all.
@@ -486,14 +514,28 @@ a_service() {
   # EAI_AGAIN while the producer beside it stays perfectly fine. That is not a
   # hypothesis, it happened on 2026-09-18 from a one-file command quoted out
   # of a note.
-  if [ ! -f "$TAILNET_OVERRIDE" ]; then
-    err "no override at $TAILNET_OVERRIDE"
-    err "Deploying without it drops the tailnet publish and the container's DNS."
-    # SAID IN DRY RUN TOO, then carried on. A preview that hides the one
-    # condition that would stop the real run is a preview of a different
-    # command -- but stopping the preview would make it useless anywhere the
-    # file does not exist, which includes every laptop.
-    [ "$DRY_RUN" = 1 ] || return 1
+  # AN ABSENT OVERRIDE IS ONLY A PROBLEM IF SOMETHING NEEDS IT. This refused
+  # outright, which was right for the node it was written on -- that one
+  # publishes a tailnet address as well as loopback, and the override is the
+  # only thing that reproduces it. On a wizard-built node there is one
+  # publish, no override and nothing to lose, so refusing there made the
+  # option unusable on the ordinary shape. It also printed "no override at "
+  # with nothing after it, which is a path nobody can go and look at.
+  #
+  # The question is not "is there an override" but "would this deploy publish
+  # fewer ports than the container already has". The count answers it either
+  # way, and needs no knowledge of which node this is.
+  if [ -z "$TAILNET_OVERRIDE" ]; then
+    _have="$(docker port "$ANCHOR_CONTAINER" 2>/dev/null | grep -c ':')"
+    if [ "${_have:-0}" -gt 1 ]; then
+      err "this container publishes $_have ports and no compose override was"
+      err "found to reproduce them. Deploying would drop one, and the chain"
+      err "height goes with it. Set XL1_COMPOSE_OVERRIDE and try again."
+      [ "$DRY_RUN" = 1 ] || return 1
+    else
+      note "no compose override here, and none needed: the container"
+      note "publishes ${_have:-0}, which the base file already describes."
+    fi
   fi
   # BEFORE THE BUILD, not after it. Compose builds the image first and only
   # then discovers it cannot have the name -- so the old shape spent two

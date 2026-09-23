@@ -3620,14 +3620,23 @@ note "pending."
 # is no checkout to copy from, so they are fetched the same way this was.
 # Neither is required for the node to run, so a failure here is a note rather
 # than a death -- the producer is already up by this point.
+# A SUCCESSFUL DOWNLOAD IS NOT A SCRIPT. curl -f catches a 404, and catches
+# nothing at all about a 200 carrying an error page -- which is how this
+# project has been bitten twice already. Installing that as /usr/local/bin/xl1-help
+# would put a command on the machine that greets whoever runs it, at the
+# wrong hour, with a syntax error in a file they never wrote.
+_is_script() { head -1 "$1" 2>/dev/null | grep -q '^#!'; }
+
 _tools_src="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 for _t in xl1-help xl1-menu; do
   if [ -n "$_tools_src" ] && [ -f "$_tools_src/$_t.sh" ]; then
     $SUDO install -m 755 "$_tools_src/$_t.sh" "/usr/local/bin/$_t" 2>/dev/null       && ok "installed $_t" || warn "could not install $_t"
-  elif curl -fsSL "$PUBLIC_REPO/$_t.sh" -o "/tmp/$_t.sh" 2>/dev/null; then
+  elif curl -fsSL "$PUBLIC_REPO/$_t.sh" -o "/tmp/$_t.sh" 2>/dev/null &&
+       _is_script "/tmp/$_t.sh"; then
     $SUDO install -m 755 "/tmp/$_t.sh" "/usr/local/bin/$_t" 2>/dev/null       && ok "installed $_t" || warn "could not install $_t"
     rm -f "/tmp/$_t.sh"
   else
+    rm -f "/tmp/$_t.sh"
     warn "could not fetch $_t; the node runs without it"
   fi
 done

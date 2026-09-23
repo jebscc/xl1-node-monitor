@@ -192,7 +192,11 @@ n()  { printf '    %s%s%s\n' "$D" "$1" "$X"; }
 w()  { printf '  %s%s%s\n' "$Y" "$1" "$X"; }
 # A value this machine could not tell us. Named rather than defaulted, because
 # a plausible wrong path is worse than an obvious gap.
-q()  { if [ -n "${2:-}" ]; then printf '%s' "$2"; else printf '<%s not found on this machine>' "$1"; fi; }
+# SHORT, because this sits in a column on a terminal that may be 60 wide --
+# an SSH session on a phone is the normal way somebody reads this, and a line
+# that wraps mid-phrase is harder to read than a shorter one. The note under
+# the list already says what a missing entry means, so the marker need not.
+q()  { if [ -n "${2:-}" ]; then printf '%s' "$2"; else printf '<no %s found>' "$1"; fi; }
 
 # --- sections ----------------------------------------------------------------
 
@@ -203,7 +207,8 @@ s_where() {
   c "producer env file    $(q 'env-file' "$PRODUCER_ENV")"
   c "preset mount         $(q 'preset mount' "$PRESETS_DIR")"
   c "anchor container     $(q 'container' "$ANCHOR_CONTAINER")"
-  c "agent                $AGENT_DIR/xl1_heartbeat.py   (unit: xl1-heartbeat)"
+  c "agent                $AGENT_DIR/xl1_heartbeat.py"
+  c "agent unit           xl1-heartbeat"
   c "agent env            $AGENT_ENV"
   c "image recipe         $IMAGES_REPO"
   c "service checkout     $(q 'checkout' "$SERVICE_DIR")"
@@ -211,8 +216,8 @@ s_where() {
   c "backend              ${BACKEND:-<$(env_why)>}"
   c "this node            ${NODE_ID:-<$(env_why)>}"
   c "compose override     $(q 'override' "$TAILNET_OVERRIDE")"
-  n "These are read from the machine, not from defaults. A blank one means"
-  n "this node does not have it -- not that the default applies."
+  n "Read from the machine, not from defaults. A blank one means"
+  n "this node does not have it, not that the default applies."
 }
 
 s_status() {
@@ -220,15 +225,16 @@ s_status() {
   c "sudo systemctl status ${PRODUCER_UNIT:-xl1-producer} --no-pager"
   c "docker ps --format 'table {{.Names}}\t{{.Status}}'"
   c "journalctl -u xl1-heartbeat -n 40 --no-pager"
-  n "The node's OWN startup summary is the one reading that never lies about"
-  n "which address it signs as. NRestarts and ExecMainStatus are cumulative"
-  n "counters -- they describe a past the node may have long recovered from."
+  n "The node's own startup summary is the one reading that never"
+  n "lies about which address it signs as. NRestarts and"
+  n "ExecMainStatus are cumulative -- they describe a past the node"
+  n "may have long recovered from."
   c "docker logs --tail 80 ${PRODUCER_CONTAINER:-xl1-producer}"
   h "Is it producing?"
   c "curl -s $(q 'backend' "$BACKEND")/api/node/status | python3 -m json.tool | head -40"
   n "produced_share is counted against the SIGNING address, not the reward"
-  n "wallet. They differ on this fleet, which is why the share once read 0.0"
-  n "on a node taking 9.85% of the field."
+  n "wallet. They can differ, which is why a share once read 0.0 on"
+  n "a node taking 9.85% of the field."
 }
 
 s_producer() {
@@ -236,7 +242,7 @@ s_producer() {
   if [ -n "$PRODUCER_UNIT" ]; then
     c "sudo systemctl restart $PRODUCER_UNIT"
     w "systemd owns this container. Never docker restart/rm it directly --"
-    w "the unit will race you and win, and its ExecStart is what decides the"
+    w "the unit will race you and win, and its ExecStart decides the"
     w "env file, the preset mount and the heap cap."
   else
     c "sudo docker restart ${PRODUCER_CONTAINER:-xl1-producer}"
@@ -279,8 +285,9 @@ s_cli() {
   fi
   n "Roll back by tagging the previous version and repeating. Old versions"
   n "stay as xl1:<version> until pruned, so a rollback needs no rebuild."
-  w "A version bump is not evidence of a change. 5.3.3 was byte-identical to"
-  w "5.3.2 apart from its version string and git hash. What DOES change on a"
+  w "A version bump is not evidence of a change. 5.3.3 was"
+  w "byte-identical to 5.3.2 but for its version and git hash."
+  w "What DOES change on a"
   w "rebuild is the dependency tree: every runtime dep is a ~ range and the"
   w "image is built with npm install -g."
 }
@@ -289,7 +296,7 @@ s_service() {
   h "The anchor service (xl1-service) and its SDK"
   c "curl -s localhost:8090/health | python3 -m json.tool"
   c "docker port ${ANCHOR_CONTAINER:-xl1-service-anchor-1}"
-  w "TWO lines, or the Render proxy is down. One publish is loopback for the"
+  w "TWO lines, or the remote proxy is down. One publish is for the"
   w "agent, the other is the tailnet address the backend reads."
   h "Redeploy it after an SDK bump"
   c "cd $SERVICE_DIR"
@@ -333,8 +340,8 @@ s_wizard() {
   c "curl -fsSL $PUBLIC_RAW/bootstrap-pi.sh | bash -s -- --check"
   n "The report and the plan, changing nothing."
   n "Every question is also a flag, and anything given is not asked about:"
-  n "  --node-id my-pi-02 --location 'Indiana, US' --lat 39.5 --lon -87.4 --yes"
-  w "It is safe to re-run on a live node, but it restarts the producer. On a"
+  c "  --node-id my-pi-02 --location 'Indiana, US' --lat 39.5 --yes"
+  w "Safe to re-run on a live node, but it restarts the producer. On a"
   w "unit-owned node it writes the UNIT's env file, not its own default."
 }
 

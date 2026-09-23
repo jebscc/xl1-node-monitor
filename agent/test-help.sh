@@ -113,7 +113,10 @@ fi
 # unknown must read as unknown.
 printf '\nwhat it does not know\n'
 WHERE="$(run where)"
-if printf '%s' "$WHERE" | grep -q "not found on this machine"; then
+# `<no ... found>` since the markers were shortened for narrow terminals.
+# Matched on the SHAPE rather than the sentence, so trimming the wording again
+# does not break a guard that is about something else entirely.
+if printf '%s' "$WHERE" | grep -qE "<no .* found>"; then
   ok "an undiscoverable path says so"
 else
   bad "an undiscoverable path was filled in anyway" "$WHERE"
@@ -173,6 +176,35 @@ if printf '%s' "$OUT" | grep -q "$ENVTMP"; then
   ok "the env path it reports is the one it read"
 else bad "it names a different env file from the one it used" "$OUT"; fi
 rm -f "$ENVTMP"
+
+# --- it fits a narrow terminal -----------------------------------------------
+#
+# READ OVER SSH, OFTEN ON A PHONE. A line that wraps mid-phrase is harder to
+# read than a shorter one, and the first shipped version wrapped its longest
+# menu entry and half its markers -- `<env-file not found on this machine>`
+# broke across two lines on the CM4. 66 leaves room: the narrowest thing
+# anybody reads this on is around 70.
+printf '\nit fits a narrow terminal\n'
+# COMMANDS ARE EXEMT, and that is not a loophole. `journalctl --since
+# "$(systemctl show ... --value)"` is 122 columns and cannot be shortened
+# without being wrong, and a command is copied rather than read. What must fit
+# is what the eye SCANS: the where column, and the prose between commands.
+WIDE="$(AGENT_ENV=/dev/null run where | awk 'length > 66 { print length": "$0 }')"
+if [ -z "$WIDE" ]; then
+  ok "the where column fits 66 columns"
+else
+  bad "the where column wraps on a narrow terminal" "$WIDE"
+fi
+
+# Prose at the conventional 72. Measured in the SOURCE, because that is where
+# the distinction between a note and a command still exists -- by the time it
+# is printed they are both just lines.
+LONG="$(printf '%s' "$SRC" | grep -nE '^ +[nw] "'   | awk -F: '{ t=$0; sub(/^[0-9]+:/,"",t); if (length(t) > 76) print $1": "length(t) }' | head -4)"
+if [ -z "$LONG" ]; then
+  ok "no line of prose is wider than 72 columns"
+else
+  bad "prose wraps past 72 columns" "$LONG"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

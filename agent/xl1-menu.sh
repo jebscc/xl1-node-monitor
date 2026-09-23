@@ -591,16 +591,16 @@ a_help() {
 # and the action that runs cannot disagree -- two lists would, and the one that
 # lost would send somebody's keypress somewhere else.
 ITEMS="
-1|Status -- what is running, and is the anchor healthy|a_status
+1|Status -- containers, unit, anchor health|a_status
 2|Check the producer's config (no restart)|a_dump
 3|Restart the producer|a_restart_producer
 4|Run the wizard (bootstrap-pi.sh)|a_wizard
 5|Build a new node image (CLI update)|a_build_image
-6|Promote a built image and restart onto it|a_promote
-7|Update the service XYO stack (SDK) and redeploy|a_service
+6|Promote an image and restart onto it|a_promote
+7|Update the service SDK and redeploy|a_service
 8|Update the heartbeat agent|a_agent
 9|Logs|a_logs
-u|Update these commands (xl1-menu, xl1-help)|a_selfupdate
+u|Update xl1-menu and xl1-help|a_selfupdate
 h|The help reference (xl1-help)|a_help
 "
 

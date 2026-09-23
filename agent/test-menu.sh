@@ -418,5 +418,19 @@ else
   ok "a checkout path containing a space is found"
 fi
 
+# --- it fits a narrow terminal -----------------------------------------------
+#
+# READ OVER SSH, OFTEN ON A PHONE. The first shipped version's longest entry --
+# "Status -- what is running, and is the anchor healthy" -- wrapped onto two
+# lines on the CM4, breaking after "anchor". 66 leaves room: the narrowest
+# thing anybody reads this on is around 70.
+printf '\nit fits a narrow terminal\n'
+WIDE="$(dry --help | awk 'length > 66 { print length": "$0 }' | head -3)"
+if [ -z "$WIDE" ]; then
+  ok "no menu line is wider than 66 columns"
+else
+  bad "the menu wraps on a narrow terminal" "$WIDE"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

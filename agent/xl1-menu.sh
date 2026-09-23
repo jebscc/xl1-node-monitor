@@ -29,6 +29,9 @@
 set -u
 
 DRY_RUN="${DRY_RUN:-0}"
+# Set once the interactive loop is running. Only there may an update restart
+# the process; `xl1-menu u` is a one-shot and its next run is new anyway.
+MENU_LOOP=0
 [ -t 0 ] && [ -t 1 ] && TTY_OK=1 || TTY_OK=0
 
 # --- what this machine is, discovered not assumed -----------------------------
@@ -673,8 +676,27 @@ a_selfupdate() {
     do_cmd "sudo install -m 755 '$_src' '$_dir/.$_c.new' && sudo mv -f '$_dir/.$_c.new' '$_dst'"
   done
 
-  warn "The menu you are reading is still the old one -- bash has it open."
-  warn "Quit and run xl1-menu again to be sure you are on the new one."
+  # AND THEN RUN THE NEW ONE. A warning that has to be obeyed for the result
+  # to be right is a weaker thing than simply doing it. On 2026-09-22 the
+  # commands were installed, the session carried on in the old code because
+  # bash had the old inode open, and the next choice reproduced the exact bug
+  # that had just been fixed -- character for character, including a path it
+  # printed as empty. The report looked like the fix had not worked.
+  _self="$(command -v xl1-menu 2>/dev/null)"
+  if [ "$DRY_RUN" = 1 ] || [ "$MENU_LOOP" != 1 ] || [ -z "$_self" ]; then
+    note "The next xl1-menu you start is the new one; this process keeps the"
+    note "old one open until it exits."
+    return 0
+  fi
+  # NEVER INTO SOMETHING THAT DOES NOT PARSE. The old menu in memory still
+  # works, and replacing it with a half-downloaded file would leave nothing.
+  if ! bash -n "$_self" 2>/dev/null; then
+    err "the newly installed $_self does not parse, so it is not being run."
+    err "You are still in the old menu, which works. Fetch it again."
+    return 1
+  fi
+  ok "restarting into the new menu"
+  exec "$_self"
 }
 
 a_help() {
@@ -735,6 +757,7 @@ main() {
     err "or use DRY_RUN=1 to see what each choice would run."
     exit 1
   fi
+  MENU_LOOP=1
   while :; do
     menu
     printf 'choice: '

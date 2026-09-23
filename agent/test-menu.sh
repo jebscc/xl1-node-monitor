@@ -415,11 +415,71 @@ else
   bad "it assumes an install path" "a second copy would be left shadowing the first"
 fi
 
-if printf '%s' "$SELF" | grep -qi 'still the old one'; then
-  ok "it says the running menu is not the new one yet"
+# YOU END UP IN THE NEW ONE, rather than being told to get there yourself.
+# The old text warned that bash still had the old file open and asked you to
+# quit and start again. It was true, and on 2026-09-22 it was read past: the
+# commands were installed, option 7 ran in the old code, and reproduced the
+# bug that had just been fixed, character for character, down to a path it
+# printed as empty. The run looked like the fix had failed. A warning that
+# must be obeyed for the result to be right is weaker than doing the thing.
+#
+# Driven rather than read. `exec` is stubbed, so the four situations can be
+# told apart by what the function actually does in each.
+restart_verdict() { # restart_verdict <MENU_LOOP> <DRY_RUN> <new file parses?>
+  ( _tmpd="$(mktemp -d)"; _fake="$_tmpd/xl1-menu"
+    if [ "$3" = yes ]; then printf '#!/bin/sh\ntrue\n' > "$_fake"
+    else printf '#!/bin/sh\nif then fi\n' > "$_fake"; fi
+    chmod +x "$_fake"
+    MENU_LOOP="$1"; DRY_RUN="$2"; REPO_IS_CLONE=0; PUBLIC_REPO=http://stub.invalid
+    B=""; X=""; Y=""; G=""; R=""; D=""
+    say() { :; }; note() { printf 'NOTE %s\n' "$1"; }; warn() { :; }
+    ok()  { printf 'OK %s\n' "$1"; }; err() { printf 'ERR %s\n' "$1"; }
+    do_cmd() { return 0; }
+    command() { if [ "$1" = -v ]; then printf '%s\n' "$_fake"; else return 0; fi; }
+    exec() { printf 'EXEC %s\n' "$1"; }
+    eval "$SELF_CODE"
+    a_selfupdate
+    rm -rf "$_tmpd" ) 2>/dev/null
+}
+
+V="$(restart_verdict 1 0 yes)"
+if printf '%s' "$V" | grep -q '^EXEC '; then
+  ok "a successful update restarts the process into the new menu"
 else
-  bad "it leaves you believing you are on the new menu" \
-      "bash still has the old file open; the next run is the first new one"
+  bad "it only warns that the running menu is stale" \
+      "the warning was read past, and the old code answered the next choice"
+fi
+
+# NOT INTO A FILE THAT DOES NOT PARSE. The menu in memory still works; a
+# half-written download would replace it with nothing at all.
+V="$(restart_verdict 1 0 no)"
+if printf '%s' "$V" | grep -q '^EXEC '; then
+  bad "it execs a file it never checked" "a bad download would leave no menu at all"
+else
+  ok "a new file that does not parse is not run"
+fi
+
+# AND ONLY FROM THE INTERACTIVE LOOP. `xl1-menu u` is a one-shot; restarting
+# it would drop somebody into a menu they never asked for.
+V="$(restart_verdict 0 0 yes)"
+if printf '%s' "$V" | grep -q '^EXEC '; then
+  bad "a one-shot run is turned into an interactive one" "including from a script"
+else
+  ok "a one-shot run is not turned into an interactive one"
+fi
+
+V="$(restart_verdict 1 1 yes)"
+if printf '%s' "$V" | grep -q '^EXEC '; then
+  bad "DRY_RUN restarts the process" "the one mode that must change nothing"
+else
+  ok "DRY_RUN changes nothing, this included"
+fi
+
+# The paths that do not restart must still say where the new code is.
+if printf '%s' "$SELF" | grep -qi 'next xl1-menu'; then
+  ok "where it does not restart, it says which run will be the new one"
+else
+  bad "it says nothing about when the update takes effect"
 fi
 
 # A CLONE IS NOT THE ONLY SOURCE. The CM4 -- the only machine running the

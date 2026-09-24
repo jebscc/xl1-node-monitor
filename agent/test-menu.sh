@@ -652,5 +652,91 @@ else
   fi
 fi
 
+printf '\nthe image recipe\n'
+REC="$(printf '%s' "$SRC" | sed -n '/^a_recipe() {/,/^}/p')"
+REC_CODE="$(printf '%s' "$REC" | grep -vE '^[[:space:]]*#')"
+
+# A PATH WITH A SPACE IS STILL A PATH. The override was written unquoted
+# inside the loop -- `for _d in ${XL1_IMAGES_REPO:-} ...` -- which splits
+# "Code Projects" into two and finds nothing. find_repo was fixed for exactly
+# this earlier the same day, and this reintroduced it three functions later.
+FIR="$(printf '%s' "$SRC" | sed -n '/^find_images_repo() {/,/^}/p' | grep -vE '^[[:space:]]*#')"
+if printf '%s' "$FIR" | grep -qE 'for _d in \$\{XL1_IMAGES_REPO'; then
+  bad "the recipe override is expanded unquoted in the loop" \
+      "a checkout whose path contains a space is then never found"
+else
+  ok "the recipe override is checked on its own, quoted"
+fi
+# AND THE PATH IT HANDS TO A COMMAND MUST SURVIVE THE TRIP. Unquoted in the
+# command string, git reported `cannot change to 'C:/Users/.../Desktop/Code'`
+# -- and the fetch failing that way is the quiet kind: the comparison then
+# runs against a stale remote ref and reports the recipe as current.
+_bare="$(printf '%s' "$REC_CODE" | grep -c 'git -C \$_ir')"
+if [ "${_bare:-0}" -gt 0 ]; then
+  bad "a command is built with an unquoted path ($_bare of them)" \
+      "a space in the checkout path breaks the command, and a failed fetch reads as up to date"
+else
+  ok "every command it prints quotes the checkout path"
+fi
+
+# IT MUST NOT PULL. On the board that builds its own image the recipe checkout
+# is ALSO the live presets mount -- the producer reads roles/producer-rest.json
+# out of it while it runs, carrying this node's tuned check interval as a local
+# modification. `git pull` merges and can overwrite; ff-only refuses instead,
+# which is the difference between a refusal and a silently retuned producer.
+if printf '%s' "$REC_CODE" | grep -qE 'git .*pull'; then
+  bad "it pulls the recipe checkout" \
+      "that directory is the live presets mount; a pull can overwrite them"
+else
+  ok "it never pulls"
+fi
+if printf '%s' "$REC_CODE" | grep -q 'merge --ff-only'; then
+  ok "it takes upstream only where it fast-forwards"
+else
+  bad "it does not use merge --ff-only" "anything else can rewrite a live preset"
+fi
+
+# A COUNT OF COMMITS IS NOT A REASON TO REBUILD. Seventeen commits behind on
+# 2026-09-23 and every one touched .github/, README.md or CLAUDE.md -- nothing
+# the build copies. Reporting "17 behind" and stopping there invites a rebuild
+# that produces the identical image.
+if printf '%s' "$REC_CODE" | grep -q 'grep -vE ' && \
+   printf '%s' "$REC_CODE" | grep -q 'diff --name-only'; then
+  ok "it says which incoming files actually reach the image"
+else
+  bad "it reports a commit count and nothing about what changed" \
+      "docs and CI churn then reads as a reason to rebuild"
+fi
+
+# SAID BEFORE THE MERGE IS OFFERED, because afterwards is no use.
+_warn_at="$(printf '%s' "$REC_CODE" | grep -n 'status --short -- presets' | head -1 | cut -d: -f1)"
+_merge_at="$(printf '%s' "$REC_CODE" | grep -n 'merge --ff-only' | head -1 | cut -d: -f1)"
+# POSITION IS NOT REACHABILITY. The first version of this checked only that
+# the presets were LOOKED AT before the merge, so disabling the branch that
+# reports them left the line in place and the guard green. It must also be
+# spent: computed, tested, and told.
+_reported=0
+printf '%s' "$REC_CODE" | grep -q '\[ -n "$_dirty" \]' && _reported=1
+if [ -n "$_warn_at" ] && [ -n "$_merge_at" ] && [ "$_warn_at" -lt "$_merge_at" ]    && [ "$_reported" = 1 ]; then
+  ok "local preset changes are named before the merge is offered"
+else
+  bad "the live presets are mentioned after the merge, or never reported"       "looking at them and saying nothing is the same as not looking"
+fi
+
+# AND IT DOES NOT PRETEND TO HAVE CHANGED THE NODE.
+if printf '%s' "$REC" | grep -qi 'Nothing running has changed'; then
+  ok "it says the running node is untouched, and what would change it"
+else
+  bad "it implies the update reached the node" \
+      "the recipe is what an image is built FROM, not what is running"
+fi
+
+# A NODE WITHOUT ONE IS NOT BROKEN.
+if printf '%s' "$REC" | grep -qi 'prebuilt image'; then
+  ok "a node with no recipe is told that is normal"
+else
+  bad "a node given a built image reads as misconfigured"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

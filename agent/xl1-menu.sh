@@ -556,6 +556,95 @@ deploy_line() {
   fi
 }
 
+# WHERE THE NODE IMAGE RECIPE IS. XYO's xl1-docker-images, cloned by the
+# wizard on a machine that builds its own image. A node that was given a
+# built image has none, and that is not a fault.
+#
+# THE OVERRIDE IS CHECKED ON ITS OWN, QUOTED. Inside the loop it was
+# `for _d in ${XL1_IMAGES_REPO:-} ...` -- unquoted, so a checkout whose path
+# contains a space splits into fragments and is never found. find_repo above
+# was fixed for exactly this earlier in the same day and this reintroduced it
+# three functions later; the test below now covers both.
+find_images_repo() {
+  if [ -n "${XL1_IMAGES_REPO:-}" ] && [ -d "$XL1_IMAGES_REPO/.git" ]; then
+    printf '%s' "$XL1_IMAGES_REPO"; return
+  fi
+  for _d in /opt/xl1-docker-images "$HOME/xl1-docker-images"; do
+    [ -d "$_d/.git" ] && { printf '%s' "$_d"; return; }
+  done
+}
+
+# Update the recipe the node image is built FROM -- which is not where the
+# CLI version comes from.
+#
+# THE CLI COMES FROM npm AT BUILD TIME. rebuild-xl1-image.sh asks the registry
+# for @xyo-network/xl1-cli/latest and passes it as a build arg, so a plain
+# rebuild takes a newer CLI whatever state this checkout is in. Updating the
+# recipe is about the Dockerfile, the entrypoint and the presets in it.
+#
+# AND IT DOES NOT PULL. On the board that builds its own image this checkout
+# is also the LIVE PRESETS MOUNT -- the producer reads roles/producer-rest.json
+# out of it while it runs, local edits and all. A merge that would overwrite
+# one of those is refused by git rather than silently taken, and this says so
+# before asking for a yes instead of after.
+a_recipe() {
+  say "${B}Update the node image recipe${X}"
+  _ir="$(find_images_repo)"
+  if [ -z "$_ir" ]; then
+    err "no xl1-docker-images checkout here, so there is no recipe to update."
+    note "That is normal on a node given a prebuilt image. The CLI version"
+    note "does not come from here in any case -- the rebuild asks npm for it."
+    return 1
+  fi
+  note "recipe   $_ir"
+  do_cmd "git -C '$_ir' fetch --quiet origin" || return 1
+
+  _behind="$(git -C "$_ir" rev-list --count HEAD..@{u} 2>/dev/null)"
+  if [ -z "$_behind" ]; then
+    err "could not compare with upstream -- no tracking branch here."
+    return 1
+  fi
+  if [ "$_behind" = 0 ]; then
+    ok "the recipe is current with upstream"
+    return 0
+  fi
+  warn "$_behind commit(s) upstream that this checkout does not have:"
+  do_cmd "git -C '$_ir' log --oneline HEAD..@{u} | head -10" || true
+
+  # WHAT ACTUALLY REACHES THE IMAGE. On 2026-09-23 the Pi 4 was seventeen
+  # commits behind and every one of them touched .github/, README.md or
+  # CLAUDE.md -- nothing the build copies. Merging would have changed the
+  # node not at all, and a rebuild afterwards would have produced the same
+  # image. A count of commits is not a reason to rebuild anything.
+  _touch="$(git -C "$_ir" diff --name-only HEAD..@{u} 2>/dev/null \
+            | grep -vE '^\.github/|\.md$' | head -10)"
+  if [ -z "$_touch" ]; then
+    ok "none of it reaches the built image -- docs and CI only"
+    note "Taking it is harmless and changes nothing the node runs."
+  else
+    warn "these reach the built image:"
+    printf '%s%s%s\n' "$D" "$_touch" "$X"
+  fi
+
+  # THE LIVE PRESETS SIT IN THIS DIRECTORY. Said before the merge is offered,
+  # because afterwards is no use.
+  _dirty="$(git -C "$_ir" status --short -- presets 2>/dev/null | head -5)"
+  if [ -n "$_dirty" ]; then
+    warn "this checkout has local preset changes, which the producer is"
+    warn "reading right now:"
+    printf '%s%s%s\n' "$D" "$_dirty" "$X"
+    warn "git refuses a merge that would overwrite them rather than taking"
+    warn "it quietly. If it refuses, keep the local value -- it is the one"
+    warn "this node was tuned to."
+  fi
+
+  do_cmd "git -C '$_ir' merge --ff-only @{u}" || return 1
+  ok "recipe updated"
+  say ""
+  note "Nothing running has changed. Choice 5 builds an image from it, and"
+  note "choice 6 puts the node on the result."
+}
+
 # THE MISSING HALF. Moving the pins changes the checkout; the container goes
 # on running the image it was built from. A node with compose closes that with
 # `up -d --build`; a wizard-built one had no answer narrower than re-running
@@ -691,6 +780,7 @@ ITEMS="
 7|Update the XYO SDK (no deploy)|a_service
 8|Update the heartbeat agent|a_agent
 9|Logs|a_logs
+i|Update the node image recipe (xl1-docker-images)|a_recipe
 r|Redeploy the anchor service (rebuild + restart)|a_redeploy
 u|Update xl1-menu and xl1-help|a_selfupdate
 h|The help reference (xl1-help)|a_help

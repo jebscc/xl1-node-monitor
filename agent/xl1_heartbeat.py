@@ -44,7 +44,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.42.1"
+AGENT_VERSION = "1.42.2"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1366,7 +1366,7 @@ def fetch_cli_latest():
     return version
 
 
-_repo_cache = {"upstream_at": 0.0, "upstream": None, "behind": None,
+_repo_cache = {"upstream_at": 0.0, "upstream": None, "behind": None, "local": None,
                "local_tag": None, "upstream_tag": None}
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -1437,7 +1437,21 @@ def fetch_repo_upstream(local):
     if not IMAGES_REPO_API:
         return None, None, None, None
     now = time.monotonic()
-    if _repo_cache["upstream"] and now - _repo_cache["upstream_at"] < CLI_CHECK_INTERVAL:
+    # KEYED ON THE LOCAL COMMIT, not on time alone.
+    #
+    # Everything below is a statement ABOUT the local checkout -- how far
+    # behind it is, what tag it carries -- so the moment the checkout moves,
+    # the cached answer describes a commit this machine no longer has. Six
+    # hours is a sensible age for "what is upstream at"; it is no age at all
+    # for "how far behind are we", because a merge changes that instantly.
+    #
+    # Reported 2026-09-23: a recipe merged up to the current upstream showed
+    # "14 behind" for hours afterwards, comparing a freshly read local sha
+    # against an upstream cached before the merge -- and against a count taken
+    # when the checkout was two commits older still. The tile read as though
+    # the merge had not happened.
+    if (_repo_cache["upstream"] and _repo_cache["local"] == local
+            and now - _repo_cache["upstream_at"] < CLI_CHECK_INTERVAL):
         return (_repo_cache["upstream"], _repo_cache["behind"],
                 _repo_cache["local_tag"], _repo_cache["upstream_tag"])
     try:
@@ -1477,6 +1491,7 @@ def fetch_repo_upstream(local):
     _repo_cache["behind"] = behind
     _repo_cache["local_tag"] = tags.get(local) if local else None
     _repo_cache["upstream_tag"] = tags.get(upstream)
+    _repo_cache["local"] = local
     _repo_cache["upstream_at"] = now
     return (upstream, behind,
             _repo_cache["local_tag"], _repo_cache["upstream_tag"])

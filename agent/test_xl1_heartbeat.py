@@ -4087,3 +4087,52 @@ def test_the_docker_mapping_parser_takes_the_host_side():
         ["x 0.0.0.0:15432->5432/tcp"]) == {15432}
     assert agent._published_host_ports([]) == set()
     assert agent._published_host_ports(None) == set()
+
+
+def test_recipe_drift_cache_is_void_once_the_checkout_moves(monkeypatch):
+    """A merge makes the cached "how far behind" describe a commit we no longer have.
+
+    Reported 2026-09-23: the recipe was merged up to the current upstream and
+    the panel went on reading "14 behind" for hours. The local sha was read
+    fresh from git each beat, while the upstream sha and the count came from a
+    six-hour cache filled before the merge -- so the tile compared a commit
+    that existed against one that no longer mattered, and 14 was a count taken
+    when the checkout was older still.
+
+    Six hours is a sensible age for "what is upstream at". It is no age at all
+    for "how far behind are we".
+    """
+    import xl1_heartbeat as agent
+
+    calls = []
+
+    def fake_json(url):
+        calls.append(url)
+        if "/commits/" in url:
+            return {"sha": "f" * 40}
+        if "/compare/" in url:
+            return {"ahead_by": 0}
+        return []
+
+    monkeypatch.setattr(agent, "_github_json", fake_json)
+    agent._repo_cache.update({"upstream_at": 0.0, "upstream": None,
+                              "behind": None, "local": None,
+                              "local_tag": None, "upstream_tag": None})
+
+    # First beat: an old checkout, genuinely behind.
+    up, behind, _, _ = agent.fetch_repo_upstream("a" * 40)
+    assert up == "f" * 40
+    first = len(calls)
+    assert first > 0
+
+    # Same checkout again: answered from cache, no further calls.
+    agent.fetch_repo_upstream("a" * 40)
+    assert len(calls) == first, "the cache should still answer for an unchanged checkout"
+
+    # The operator merges. The local sha moves, so the cached comparison is
+    # about a commit this machine no longer has.
+    agent.fetch_repo_upstream("f" * 40)
+    assert len(calls) > first, (
+        "a moved checkout must be re-compared rather than answered from a "
+        "cache filled for the previous commit"
+    )

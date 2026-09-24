@@ -44,7 +44,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.43.0"
+AGENT_VERSION = "1.44.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")

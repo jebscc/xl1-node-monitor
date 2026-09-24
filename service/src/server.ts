@@ -22,6 +22,7 @@ import {
 import { anchorRecord } from './anchorRecord.ts'
 import { confirmAnchored } from './confirmAnchored.ts'
 import { getSignerAccount } from './getSignerAccount.ts'
+import { singleFlight } from './singleFlight.ts'
 
 const PORT = Number(process.env.XL1_SERVICE_PORT ?? 8090)
 
@@ -1128,12 +1129,53 @@ const PEER_BATCH = 2000
  */
 const PEER_WINDOW_MAX = 10000
 
-// A day of blocks is ~1,700 at this chain's pace, so a week is ~12,000. The
-// ceiling is a safety rail, not the answer: the scan stops on $epoch, and when
-// it stops on this instead it says so and the caller relabels the period.
-const FIELD_DAYS_MAX_BLOCKS = 25000
-const FIELD_DAYS_CACHE_MS = 10 * 60 * 1000
+/* THE CEILING AND THE CACHE ARE ONE DECISION, so they are set together.
+ *
+ * The ceiling is a safety rail, not the answer: the scan normally stops on
+ * $epoch passing the cutoff, and when it stops on this instead it says so and
+ * the caller relabels the period. At 25,000 it stopped on the rail every
+ * time -- a 30-day request measured against production on 2026-09-24 came
+ * back with TEN days, truncated, and a month's card quietly showed a third
+ * of a month.
+ *
+ * A day is ~2,500 blocks at this chain's present pace (25,000 blocks spanned
+ * 2026-09-15 to 09-24), so thirty days is ~75,000. 90,000 leaves room for a
+ * fifth again of speed-up before the rail bites, and if it ever does the card
+ * now says how far it reached rather than mislabelling what it has.
+ *
+ * THIS COSTS THE PRODUCER LESS, NOT MORE, because the cache went up with it.
+ * A scan is ~1,000 blocks a second measured end to end and ~3.1 MB per 1,000
+ * pulled over a home connection:
+ *
+ *   before   25,000 blocks x 6 an hour = 150,000/h  ~465 MB/h  ~150s/h
+ *   after    90,000 blocks x 1 an hour =  90,000/h  ~280 MB/h   ~90s/h
+ *
+ * Forty percent less of the Pi's attention, forty percent less transfer, and
+ * three times the history. An hour is the right window for a chart whose unit
+ * is a day; ten minutes was refreshing a daily figure six times between
+ * changes.
+ */
+const FIELD_DAYS_MAX_BLOCKS = 90000
+const FIELD_DAYS_CACHE_MS = 60 * 60 * 1000
 const fieldDaysCache: Record<string, { at: number, value: unknown }> = {}
+
+/** What a field-days scan answers with. Named so the in-flight table can be
+ * typed as tightly as the cache it shadows. */
+type FieldDays = {
+  network: string
+  days: { date: string, depth: number,
+          producers: { address: string, blocks: number }[] }[]
+  scanned: number
+  undated: number
+  truncated: boolean
+  complete: boolean
+  at: string
+}
+
+/* ONE SCAN AT A TIME PER KEY. Keyed exactly as the cache above is, which is
+ * the whole of what makes it mean anything. See src/singleFlight.ts for why
+ * a failure here is invisible to everything else. */
+const fieldDaysInFlight: Record<string, Promise<FieldDays>> = {}
 
 /** Who produced, bucketed by the day it actually happened.
  *
@@ -1170,7 +1212,9 @@ app.get('/field-days', async (req, res) => {
   const cached = fieldDaysCache[key]
   if (cached && Date.now() - cached.at < FIELD_DAYS_CACHE_MS) return res.json(cached.value)
 
-  try {
+  // Someone else may already be walking these blocks; if so, wait on their
+  // answer rather than starting a second walk of the same ninety thousand.
+  const { run } = singleFlight(fieldDaysInFlight, key, async () => {
     const { connection: { viewer } } = await getReadGateway(network)
     const head = Number(await viewer.block.currentBlockNumber())
     // Midnight UTC, `days` ago. The oldest bucket is therefore a WHOLE day
@@ -1270,7 +1314,11 @@ app.get('/field-days', async (req, res) => {
     const value = { network, days: out, scanned, undated, truncated,
                     complete: reachedCutoff, at: new Date().toISOString() }
     fieldDaysCache[key] = { at: Date.now(), value }
-    return res.json(value)
+    return value
+  })
+
+  try {
+    return res.json(await run)
   } catch (e) {
     // Said, not swallowed: an empty list would read as a week in which nobody
     // produced anything.

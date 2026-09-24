@@ -644,6 +644,15 @@ def read_statz(name):
         if value is not None:
             out[key] = value
 
+    # HOW LONG THE COUNTS COVER. Without it every counter above is a bare
+    # number: three blocks produced is excellent in a minute and alarming in a
+    # day. The node resets them when the actor restarts and says so in the
+    # same document, so the window comes from the node rather than from a
+    # guess about when the agent last looked.
+    value = _statz_number(doc, "actorUptimeMs")
+    if value is not None:
+        out["counts_window_ms"] = value
+
     # The percentile pair is what every reading here is anchored to. Without it
     # the rest is a handful of stage timings with nothing to measure them
     # against, and a panel would have to invent what their absence meant.

@@ -3927,6 +3927,10 @@ def test_it_reads_what_a_5_4_1_producer_counts(monkeypatch):
     assert got["idle_attempts"] == 10
     # The largest single cost on the path to a published block.
     assert got["time_payload_ms"] == 287
+    # AND THE WINDOW THE COUNTS COVER. Three blocks produced is excellent in a
+    # minute and alarming in a day; the counters are meaningless without it,
+    # and the node resets them when the actor restarts.
+    assert got["counts_window_ms"] == 30824
     # And the older readings still come through unchanged.
     assert got["head_p50_ms"] == 13
     assert got["cycle_p50_ms"] == 396

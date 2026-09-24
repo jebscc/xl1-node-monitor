@@ -3868,6 +3868,89 @@ def test_it_reads_the_shape_the_node_actually_serves(monkeypatch):
     # be handled -- getting one right is what hid this.
     assert got["publishes_rejected"] == 0
 
+# CAPTURED FROM A RUNNING 5.4.1 PRODUCER on 2026-09-24, not written by hand.
+#
+# The fixture above was captured from a node running an older CLI, before
+# XYO instrumented the producer's counters and the time payload. Keeping both
+# is the point: the agent has to read the document a node actually serves,
+# and which document that is depends on the CLI the node happens to run.
+#
+# The last statz bug survived precisely because its fixture had been written
+# flat rather than captured -- every timing read as None and the tile was
+# blank on both panels for as long as anyone had been looking at it.
+STATZ_541 = json.dumps({
+    "actor": "producer",
+    "actorStartedAt": "2026-09-24T02:03:33.676Z",
+    "actorUptimeMs": 30824,
+    "collectedSince": "2026-09-24T02:03:33.521Z",
+    "counts": {"actorStarts": 1, "blockProductionAttempts": 13,
+               "blockProductionChecks": 17, "blocksProduced": 3,
+               "blocksPublished": 3, "candidateRecoveries": 1,
+               "concurrentChecksSkipped": 2, "failedChecks": 0,
+               "idleAttempts": 10, "rejectedPublishes": 0},
+    "generatedAt": "2026-09-24T02:04:04.500Z",
+    "lastPublishedBlock": {"block": 625059, "payloadCount": 2,
+                           "publishedAt": "2026-09-24T02:03:56.827Z"},
+    "timings": {
+        "blockProduction": {"count": 13, "p50Ms": 235, "p95Ms": 12304, "maxMs": 12304},
+        "blockRewardTransfers": {"count": 3, "p50Ms": 2, "p95Ms": 6},
+        "headFetch": {"count": 15, "minMs": 8, "p50Ms": 13, "p95Ms": 347},
+        "mempoolPendingBlocksFetch": {"count": 3, "p50Ms": 187, "p95Ms": 233},
+        "mempoolPendingTransactionsFetch": {"count": 13, "p50Ms": 182, "p95Ms": 233},
+        "mempoolSubmitBlock": {"count": 3, "p50Ms": 91, "p95Ms": 265},
+        "productionCycle": {"count": 15, "p50Ms": 396, "p95Ms": 12919},
+        "timePayloadGeneration": {"count": 3, "p50Ms": 287, "p95Ms": 296},
+    },
+})
+
+
+def test_it_reads_what_a_5_4_1_producer_counts(monkeypatch):
+    """The counters that used to be reconstructed by grepping the log.
+
+    On 2026-09-23 the only way to ask "is this node losing candidates" was to
+    count `no longer pending` against `Building block` in docker logs. It
+    worked and it settled a bad experiment in five hours, but it is not
+    something an operator should have to invent -- and 5.4.1 counts all of it.
+    """
+    _stub_run(monkeypatch, [("statz", STATZ_541)])
+    got = agent.read_statz("xl1-producer")
+    assert got is not None, "the 5.4.1 document read as nothing at all"
+    # Produced against published, and what was lost between them.
+    assert got["blocks_produced"] == 3
+    assert got["blocks_published"] == 3
+    assert got["candidate_recoveries"] == 1
+    assert got["publishes_rejected"] == 0
+    # Whether a shorter check interval is buying anything ON THIS NODE: most
+    # checks find an empty mempool, so attempts against idle is the figure
+    # that answers it.
+    assert got["production_attempts"] == 13
+    assert got["idle_attempts"] == 10
+    # The largest single cost on the path to a published block.
+    assert got["time_payload_ms"] == 287
+    # And the older readings still come through unchanged.
+    assert got["head_p50_ms"] == 13
+    assert got["cycle_p50_ms"] == 396
+
+
+def test_the_older_document_still_reads_without_the_new_counters(monkeypatch):
+    """A node on an older CLI must not lose the readings it does have.
+
+    Both boards do not move together: one runs 5.4.1 and the other is mid
+    experiment on 5.4.0, so the agent has to serve both for as long as that is
+    true. An absent counter is absent, not zero -- a node that has never
+    rejected a publish and a node that cannot count them are different things.
+    """
+    _stub_run(monkeypatch, [("statz", STATZ_REAL)])
+    got = agent.read_statz("xl1-producer")
+    assert got is not None
+    assert got["head_p50_ms"] == 194
+    for absent in ("blocks_produced", "candidate_recoveries",
+                   "production_attempts", "time_payload_ms"):
+        assert absent not in got, (
+            "%s was invented for a node whose CLI does not count it" % absent
+        )
+
+
 
 def test_every_disk_branch_reports_the_total():
     """The volume size has to be set wherever the other two are.

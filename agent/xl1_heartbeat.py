@@ -44,7 +44,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.42.2"
+AGENT_VERSION = "1.43.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -608,15 +608,37 @@ def read_statz(name):
         ("mempool_tx_ms", ("mempoolPendingTransactionsFetch", "p50Ms")),
         ("mempool_blocks_ms", ("mempoolPendingBlocksFetch", "p50Ms")),
         ("submit_ms", ("mempoolSubmitBlock", "p50Ms")),
+        # THE LARGEST SINGLE COST ON THE PATH TO A PUBLISHED BLOCK, measured
+        # 2026-09-24 at p50 287ms against blockProduction's own 235ms. It runs
+        # once per produced block, before submission. It was visible only as a
+        # "[Slow] Generated time payload" log line until the node began timing
+        # it, and greping that line is how its cost was first established.
+        ("time_payload_ms", ("timePayloadGeneration", "p50Ms")),
     ):
         value = _statz_number(timings, *path)
         if value is not None:
             out[key] = value
 
     # Counts are not timings and do not move with them.
+    #
+    # PRODUCED AGAINST PUBLISHED, AND WHAT WAS LOST BETWEEN THEM. On
+    # 2026-09-23 the only way to ask "is this node losing candidates" was to
+    # grep the container log for `no longer pending` against `Building block`
+    # -- which worked, settled a bad experiment in five hours, and is not
+    # something an operator should have to invent. The node counts all of it.
+    #
+    # idle against attempts is the other half: most checks find an empty
+    # mempool, so a node sampling twice as often mostly finds nothing twice as
+    # often. It is the figure that says whether a shorter check interval is
+    # buying anything on THIS node rather than in general.
     for key, path in (
         ("checks_skipped", ("counts", "concurrentChecksSkipped")),
         ("publishes_rejected", ("counts", "rejectedPublishes")),
+        ("blocks_produced", ("counts", "blocksProduced")),
+        ("blocks_published", ("counts", "blocksPublished")),
+        ("candidate_recoveries", ("counts", "candidateRecoveries")),
+        ("production_attempts", ("counts", "blockProductionAttempts")),
+        ("idle_attempts", ("counts", "idleAttempts")),
     ):
         value = _statz_number(doc, *path)
         if value is not None:

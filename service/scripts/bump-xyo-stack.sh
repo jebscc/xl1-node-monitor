@@ -68,11 +68,24 @@ command -v curl >/dev/null 2>&1 || { fail "curl is not installed"; exit 2; }
 # built in containers. bootstrap-pi.sh says so in as many words.
 #
 # Applying needs a real toolchain, and where the host has none we borrow the
-# one the service is built with. Same form as rebuild-xl1-image.sh, which has
-# run this way on a weekly timer since it was written: root in the container,
-# corepack enable, the work mounted in. Following the pattern this repository
-# has already proven on that machine rather than inventing a tidier one that
-# has never run there.
+# one the service is built with: root in the container, the work mounted in.
+#
+# COREPACK IS NOT IN THE NODE 26 IMAGE, and this line assumed it was. Measured
+# on the Pi 2026-09-25, running option 7: every gate after the first died with
+#
+#   resolving the lockfile ... FAILED
+#     sh: 1: corepack: not found
+#
+# so the bump could not be applied at all. The service's own Dockerfile hit
+# exactly this on 2026-09-19 and carries the fix and the reasoning; this had
+# been copied from the version of it that predated that, and nothing linked
+# the two, so the same wall was hit twice.
+#
+# INSTALLED, NOT SWAPPED FOR `npm i -g pnpm`, for the Dockerfile's reason:
+# `packageManager` pins pnpm WITH a sha512 integrity hash, and corepack is
+# what verifies it. Installing pnpm directly runs whatever the registry
+# served and checks nothing -- on the one script whose whole job is to move
+# dependency versions, which is the worst place to stop checking.
 NODE_IMAGE="${NODE_IMAGE:-node:26-bookworm-slim}"
 if command -v pnpm >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
   RUNNER=host
@@ -86,7 +99,7 @@ svc_sh() { # svc_sh <shell command, run inside xl1-service>
   case "$RUNNER" in
     host)   ( cd "$SVC" && sh -c "$1" ) ;;
     docker) docker run --rm -e CI=true -v "$SVC:/app" -w /app "$NODE_IMAGE" \
-              sh -c "corepack enable && $1" ;;
+              sh -c "npm install -g corepack@latest >/dev/null 2>&1 && corepack enable && $1" ;;
     *)      return 127 ;;
   esac
 }

@@ -612,9 +612,15 @@ a_service() {
   # the bump script asks npm what is newest, writes it, resolves the lockfile
   # and runs every gate in the tree, putting the files back if any fails.
   #
-  # IT DOES NOT DEPLOY. The container goes on running the code it was built
-  # from until something rebuilds it, which is a separate act on a separate
-  # line -- and the line it needs differs by node, so it is named, not run.
+  # AND THEN IT DEPLOYS. Moving the pins changes a file; the container goes
+  # on running the code it was built from until something rebuilds it, and
+  # leaving that to a line printed on screen meant a checkout that said 5.7.1
+  # above a service still running 5.6.1 -- with nothing on the node saying so.
+  #
+  # The deploy is the node's own shape, not a generic one: compose where the
+  # node is compose-managed (carrying its tailnet override, which the one-file
+  # form drops), and redeploy-anchor.sh where the wizard built it. Both are
+  # asked for before they run, like everything else here.
   if [ -z "$REPO_SERVICE" ]; then
     err "no checkout of the anchor service here, so nothing to update."
     return 1
@@ -651,7 +657,79 @@ a_service() {
   printf '%s\n' "$_after" | comm -13 <(printf '%s\n' "$_before") - \
     | sed "s/^/   ${G}now${X} /"
   report_running
-  deploy_line
+  deploy_now
+}
+
+# THE DEPLOY, RUN RATHER THAN NAMED. The two shapes deploy_line describes,
+# done -- and checked afterwards, which is the half that matters.
+deploy_now() {
+  say ""
+  note "Now putting the service on it."
+  _ports_before="$(anchor_ports)"
+
+  if [ -n "$COMPOSE_BIN" ]; then
+    # COMPOSE WILL NOT ADOPT A CONTAINER IT DID NOT CREATE. A wizard-made one
+    # carries no project label and the up fails with "the container name is
+    # already in use" -- which reads as a name clash rather than as the two
+    # deployment shapes meeting.
+    if [ -n "$ANCHOR_CONTAINER" ] && ! compose_made "$ANCHOR_CONTAINER"; then
+      warn "this container was made by the wizard, not by compose, and"
+      warn "compose will not adopt it. It has to go first."
+      do_cmd "sudo docker rm -f $ANCHOR_CONTAINER" || return 1
+    fi
+    do_cmd "$(compose_cmd) up -d --build" || return 1
+  else
+    a_redeploy || return 1
+  fi
+
+  verify_anchor "$_ports_before"
+}
+
+# Whether compose made this container, asked of the label compose sets rather
+# than inferred from which files happen to be on disk.
+compose_made() {
+  docker inspect "$1" \
+    --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null \
+    | grep -q '[^[:space:]]'
+}
+
+# How many addresses the anchor publishes. A READ, so it does not go through
+# do_cmd -- the same rule config_refused follows.
+anchor_ports() {
+  [ -n "$ANCHOR_CONTAINER" ] || { printf '0'; return 0; }
+  docker port "$ANCHOR_CONTAINER" 2>/dev/null | grep -c ':' || printf '0'
+}
+
+# THE CHECK THAT WAS NOT MADE COST EIGHT HOURS ON 2026-09-23.
+#
+# This node publishes 8090 on TWO addresses: loopback for the agent, and the
+# tailnet address for the backend. A deploy that drops the second comes back
+# healthy on every surface -- container up, /health 200 on loopback, blocks
+# produced -- and the only symptom is on the website, which goes stale
+# because Render can no longer reach the node at all.
+#
+# So the count before is compared with the count after, and a drop is said
+# loudly rather than left to be discovered by a chart.
+verify_anchor() {
+  _ports_after="$(anchor_ports)"
+  if [ "${_ports_after:-0}" -lt "${1:-0}" ]; then
+    err "the anchor came back publishing ${_ports_after} binding(s); it had ${1}."
+    err "A lost publish is invisible from this machine: the container reads"
+    err "healthy, loopback answers, and the SITE goes stale because nothing"
+    err "off this box can reach it. Put it back before leaving this."
+    err "  $(compose_cmd) up -d --force-recreate"
+    return 1
+  fi
+  ok "publishes ${_ports_after} binding(s), as it did before"
+  # A read, and the one that says the new code actually serves.
+  _h="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+        http://127.0.0.1:8090/health 2>/dev/null || true)"
+  case "$_h" in
+    200) ok "the anchor answers /health" ;;
+    "" |000) warn "no answer on /health yet -- it reads 000 for a second or two"
+             warn "after an up; re-check with option 1 before concluding." ;;
+    *)   err "the anchor answers /health with $_h" ; return 1 ;;
+  esac
 }
 
 # WHAT WOULD RUN IT, spelt for THIS node and printed rather than done. The two
@@ -891,7 +969,7 @@ ITEMS="
 4|Run the wizard (bootstrap-pi.sh)|a_wizard
 5|Update the node CLI (build, promote, restart)|a_build_image
 6|Promote an image and restart onto it|a_promote
-7|Update the XYO SDK (no deploy)|a_service
+7|Update the XYO SDK (and deploy it)|a_service
 8|Update the heartbeat agent|a_agent
 9|Logs|a_logs
 i|Update the node image recipe (xl1-docker-images)|a_recipe

@@ -839,5 +839,79 @@ else
   bad "the prompt would be captured instead of shown"
 fi
 
+# --- the SDK update deploys what it just pinned ------------------------------
+#
+# Moving the pins changes a FILE. The container goes on running the code it
+# was built from until something rebuilds it, and while that was left to a
+# line printed on screen the checkout could say 5.7.1 over a service still
+# serving 5.6.1, with nothing on the node saying so.
+printf '\nthe SDK update deploys what it pinned\n'
+
+SVC="$(printf '%s' "$SRC" | sed -n '/^a_service() {/,/^}/p')"
+
+if printf '%s' "$SVC" | grep -q 'deploy_now'; then
+  ok "it deploys rather than printing what would"
+else
+  bad "the SDK update still only names the deploy" \
+      "a moved pin that nothing rebuilds is a checkout, not a deployment"
+fi
+
+# A BUMP THAT FAILED MUST NOT DEPLOY. The gates put the files back, so
+# deploying afterwards would rebuild the code that was already there and
+# report it as an update.
+B_BUMP="$(printf '%s' "$SVC" | grep -n 'bump.*--apply' | head -1 | cut -d: -f1)"
+B_MOVED="$(printf '%s' "$SVC" | grep -n 'the pins did not move' | head -1 | cut -d: -f1)"
+B_DEPLOY="$(printf '%s' "$SVC" | grep -n 'deploy_now' | head -1 | cut -d: -f1)"
+if [ -n "$B_BUMP" ] && [ -n "$B_MOVED" ] && [ -n "$B_DEPLOY" ] \
+   && [ "$B_BUMP" -lt "$B_MOVED" ] && [ "$B_MOVED" -lt "$B_DEPLOY" ]; then
+  ok "it deploys only after the pins are confirmed to have moved"
+else
+  bad "the deploy is not behind the check that the bump took" \
+      "bump=$B_BUMP moved=$B_MOVED deploy=$B_DEPLOY"
+fi
+
+DN="$(printf '%s' "$SRC" | sed -n '/^deploy_now() {/,/^}/p')"
+
+# THE TAILNET PUBLISH. The one-file compose form drops it, and a node that
+# loses it reads healthy from the box while the website goes stale.
+if printf '%s' "$DN" | grep -q 'compose_cmd'; then
+  ok "the compose path uses this node's own compose command"
+else
+  bad "the deploy spells its own compose line" \
+      "the one-file form drops the tailnet publish"
+fi
+
+if printf '%s' "$DN" | grep -q 'compose_made'; then
+  ok "a wizard-made container is removed before compose is asked to take over"
+else
+  bad "compose is asked to adopt a container it did not create" \
+      "it refuses with a name clash, which reads as something else entirely"
+fi
+
+# THE CHECK THAT WAS NOT MADE COST EIGHT HOURS. Counting before and after is
+# the whole of it: a dropped binding is invisible from the node.
+VA="$(printf '%s' "$SRC" | sed -n '/^verify_anchor() {/,/^}/p')"
+if printf '%s' "$DN" | grep -q '_ports_before="$(anchor_ports)"' \
+   && printf '%s' "$DN" | grep -q 'verify_anchor "$_ports_before"'; then
+  ok "it counts the published bindings before the deploy and after"
+else
+  bad "nothing compares the bindings across the deploy"
+fi
+
+if printf '%s' "$VA" | grep -q 'lt "${1:-0}"'; then
+  ok "and fewer than before is an error, not a shrug"
+else
+  bad "a dropped binding is not treated as a failure"
+fi
+
+# The label is the only thing most operators read before pressing the key.
+if printf '%s' "$SRC" | grep -q '7|Update the XYO SDK (and deploy it)|a_service'; then
+  ok "the menu says it deploys"
+elif printf '%s' "$SRC" | grep -q '7|.*no deploy'; then
+  bad "the menu still promises not to deploy" "it does now"
+else
+  bad "choice 7 is not in the table under a name this checks"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

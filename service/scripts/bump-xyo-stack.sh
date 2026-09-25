@@ -49,6 +49,12 @@ else
   SVC="$ROOT/xl1-service"
 fi
 PKG="$SVC/package.json"
+# The service's place INSIDE the repository, for the one gate that has to see
+# its siblings. "." in the published layout, where the service is the root.
+case "$SVC" in
+  "$ROOT") SVC_REL="." ;;
+  *)       SVC_REL="${SVC#"$ROOT"/}" ;;
+esac
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   B=$'\033[1m'; D=$'\033[2m'; G=$'\033[32m'; R=$'\033[31m'; Y=$'\033[33m'; X=$'\033[0m'
@@ -99,6 +105,34 @@ svc_sh() { # svc_sh <shell command, run inside xl1-service>
   case "$RUNNER" in
     host)   ( cd "$SVC" && sh -c "$1" ) ;;
     docker) docker run --rm -e CI=true -v "$SVC:/app" -w /app "$NODE_IMAGE" \
+              sh -c "npm install -g corepack@latest >/dev/null 2>&1 && corepack enable && $1" ;;
+    *)      return 127 ;;
+  esac
+}
+
+# THE ONE GATE THAT REACHES OUTSIDE THE SERVICE.
+#
+# test-signin-oracle.mjs imports ../frontend/src/frontier/services/
+# signInWitness.js -- the SITE's witness -- because the whole point of it is
+# that the browser's signature and the SDK's agree. Only $SVC is mounted, so
+# from inside the container that import resolves to /frontend and is not
+# there:
+#
+#   Cannot find module '/frontend/src/frontier/services/signInWitness.js'
+#
+# The script says elsewhere that this gate "lives only in the private tree, so
+# on a node it is absent and correctly so", and that was the assumption that
+# failed: this Pi has the PRIVATE tree checked out, so the file is present and
+# the gate ran and could not see half of itself.
+#
+# Mounting the repository rather than the service gives the import the sibling
+# it asks for. node_modules is where it was installed either way, because the
+# working directory is still the service.
+root_sh() { # root_sh <shell command, run inside the service, tree visible>
+  case "$RUNNER" in
+    host)   ( cd "$SVC" && sh -c "$1" ) ;;
+    docker) docker run --rm -e CI=true -v "$ROOT:/repo" -w "/repo/$SVC_REL" \
+              "$NODE_IMAGE" \
               sh -c "npm install -g corepack@latest >/dev/null 2>&1 && corepack enable && $1" ;;
     *)      return 127 ;;
   esac
@@ -193,13 +227,18 @@ for _m in $MOVES; do
 done
 good "package.json written"
 
+# WHICH RUNNER THE NEXT GATE USES. Set beside the gate that needs the wider
+# view and put back immediately, so no later gate inherits a mount it did not
+# ask for.
+GATE_SH=svc_sh
+
 gate() { # gate <label> <shell command, run inside the service>
   # SHIFTED OFF, which the first version forgot -- so the command it ran was
   # the label, and every gate reported `resolving the lockfile: command not
   # found`. It failed safely only because the restore trap was already armed.
   _label="$1"; shift
   printf '   %-32s ... ' "$_label"
-  if svc_sh "$*" >/tmp/bump-gate.$$ 2>&1; then
+  if "$GATE_SH" "$*" >/tmp/bump-gate.$$ 2>&1; then
     printf '%sok%s\n' "$G" "$X"; rm -f /tmp/bump-gate.$$; return 0
   fi
   printf '%sFAILED%s\n' "$R" "$X"
@@ -274,7 +313,9 @@ gate "installing as the build does" pnpm install --frozen-lockfile || exit 1
 gate "typecheck" pnpm run typecheck || exit 1
 gate_file "peer audit" scripts/peer-audit.mjs node scripts/peer-audit.mjs . || exit 1
 gate_file "the anchored hash" test-attestation-hash.mjs "$(py_prefix)node test-attestation-hash.mjs" || exit 1
+GATE_SH=root_sh
 gate_file "the sign-in witness" test-signin-oracle.mjs node test-signin-oracle.mjs || exit 1
+GATE_SH=svc_sh
 
 # Earned. Keep the new files and stop putting the old ones back.
 trap - EXIT INT TERM

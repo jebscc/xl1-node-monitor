@@ -190,6 +190,31 @@ do_cmd() { # do_cmd <command string>
   sh -c "$1"
 }
 
+# THE SAME RUNNER, WITH THE OUTPUT HANDED BACK.
+#
+# One action needs to read what a command said -- the CLI update reads the
+# version the rebuild script promoted, rather than asking npm a second time
+# and hoping the two answers agree. Everything else about it is do_cmd: the
+# same showing, the same asking, the same dry run. A second runner that
+# skipped either would be precisely the path the note above exists to forbid.
+#
+# The command's own output goes to STDERR so the operator watches it happen,
+# and to stdout so the caller can read it. Without that split, capturing the
+# output would silence the command -- and a several-minute image build with
+# nothing on screen reads as a hung menu.
+do_capture() { # do_capture <command string> -> the command's output on stdout
+  printf '   %s$ %s%s\n' "$B" "$1" "$X" >&2
+  if [ "$DRY_RUN" = 1 ]; then note "dry run, nothing done" >&2; return 0; fi
+  ask_yn "run it?" >&2 || { note "skipped" >&2; return 1; }
+  _cap="${TMPDIR:-/tmp}/xl1-menu.$$.out"
+  sh -c "$1" >"$_cap" 2>&1
+  _rc=$?
+  sed 's/^/   /' "$_cap" >&2
+  cat "$_cap"
+  rm -f "$_cap"
+  return $_rc
+}
+
 # A value this node could not tell us. Refuse rather than substitute: every
 # action below that needs one would act on the wrong thing without it.
 need() { # need <what> <value>
@@ -301,31 +326,120 @@ a_wizard() {
   fi
 }
 
+# THE WHOLE CLI UPDATE, IN ONE CHOICE: fetch the newest release, build it,
+# put the node on it, and undo that if the node will not have it.
+#
+# It used to build and stop, leaving the operator to read a version off the
+# screen and type it into option 6. That split is right for the unattended
+# weekly timer -- nobody should discover overnight that their producer moved
+# version -- and wrong here, where a person has just asked for the update and
+# is watching it happen.
+#
+# THE ORDER IS THE SAFETY, and each step is undoable until the next one:
+#
+#   build       nothing is running it; a failure leaves the node untouched
+#   smoke       the entrypoint answers --version, or the build is not promoted
+#   promote     a tag move, reversible for free -- the producer is still on
+#               the OLD image, because tagging restarts nothing
+#   config      ask the NEW image what it thinks of THIS node's env file
+#   restart     the only step that can leave a node down, and the only one
+#               taken after everything above has agreed
+#
+# THE CONFIG STEP IS THE ONE THAT EARNS ITS KEEP. A smoke test proves the
+# image runs; it says nothing about whether the CLI inside still understands
+# the settings this node is configured with. A release that renames or drops
+# a setting passes the smoke test and then exits 78 on start -- and a producer
+# that will not start is a producer signing nothing until someone notices.
 a_build_image() {
-  say "${B}Build a new node image (CLI update)${X}"
-  note "BUILDS ONLY. It never retags xl1:local, stops a container or"
-  note "restarts the producer -- swapping the image is option 6."
+  say "${B}Update the node CLI (build, promote, restart)${X}"
 
-  # THE TIMER IS OPTIONAL AND DELIBERATELY NOT INSTALLED BY THE WIZARD: a
-  # component that acts on a running producer by itself is one an operator
-  # should switch on knowingly. So most nodes do not have it, and offering
-  # its unit unconditionally fails with "Unit not found" on every one of
-  # them -- which reads as a broken menu rather than an absent extra.
-  if systemctl cat xl1-image-rebuild.service >/dev/null 2>&1; then
-    do_cmd "sudo systemctl start xl1-image-rebuild.service && journalctl -u xl1-image-rebuild -n 30 --no-pager"
-    return
-  fi
+  _rb=""
+  [ -n "$REPO_AGENT" ] && [ -f "$REPO_AGENT/rebuild-xl1-image.sh" ] \
+    && _rb="$REPO_AGENT/rebuild-xl1-image.sh"
 
-  note "the weekly rebuild timer is not installed here, which is the"
-  note "default -- it acts on a running producer, so it is opt-in."
-  if [ -n "$REPO_AGENT" ] && [ -f "$REPO_AGENT/rebuild-xl1-image.sh" ]; then
-    note "Running the script directly instead. Same work, once, now."
-    do_cmd "sudo bash $REPO_AGENT/rebuild-xl1-image.sh"
-  else
-    err "and there is no rebuild-xl1-image.sh on this machine to run"
-    err "instead. See the README for installing the weekly timer."
+  if [ -z "$_rb" ]; then
+    # THE UNIT CAN ONLY BUILD. Its ExecStart is fixed and carries no
+    # --promote, so this path is the old behaviour and says so rather than
+    # quietly doing half of what the menu offered.
+    if systemctl cat xl1-image-rebuild.service >/dev/null 2>&1; then
+      warn "no rebuild-xl1-image.sh in a checkout here, so the rebuild unit"
+      warn "is used instead -- it BUILDS ONLY. Promote with option 6."
+      do_cmd "sudo systemctl start xl1-image-rebuild.service && journalctl -u xl1-image-rebuild -n 30 --no-pager"
+      return
+    fi
+    err "no rebuild-xl1-image.sh on this machine and no rebuild unit either."
+    err "The wizard (choice 4) fetches the agent scripts, which brings it."
     return 1
   fi
+
+  _was="$(running_cli)"
+  note "the producer is running CLI ${_was:-<unreadable>}"
+  warn "This RESTARTS the producer if a newer release builds cleanly."
+
+  # --promote moves the tag inside the script, which is where the version
+  # just built is known without parsing a log line for it. The last two lines
+  # it prints are the contract between the two files.
+  # do_capture has already shown this as it ran; _out is for reading, not
+  # for printing again.
+  _out="$(do_capture "sudo bash $_rb --promote")" || {
+    err "the rebuild failed. Nothing was promoted and the node is untouched."
+    return 1
+  }
+
+  _new="$(printf '%s\n' "$_out" | sed -n 's/^PROMOTED=//p' | tail -1)"
+  _prev="$(printf '%s\n' "$_out" | sed -n 's/^PREVIOUS=//p' | tail -1)"
+  if [ -z "$_new" ]; then
+    note "nothing was promoted -- either the build was already current or it"
+    note "declined to promote. The producer is untouched."
+    return 0
+  fi
+  if [ "$_new" = "$_prev" ]; then
+    ok "already on $_new; nothing to restart onto."
+    return 0
+  fi
+
+  ok "xl1:local now points at $_new (was ${_prev:-unknown})"
+
+  # THE NEW IMAGE, ASKED ABOUT THIS NODE'S ENV, BEFORE ANYTHING RESTARTS.
+  if config_refused; then
+    err "the NEW CLI refuses this node's configuration (exit 78)."
+    err "Restarting would crash-loop it, so it has not been restarted."
+    rollback_cli "$_prev"
+    return 1
+  fi
+
+  a_restart_producer || {
+    err "the restart did not come up clean."
+    rollback_cli "$_prev"
+    return 1
+  }
+  ok "the producer is running CLI $_new"
+  note "roll back with: sudo docker tag xl1:${_prev:-<version>} xl1:local"
+  note "then option 3 to restart onto it."
+}
+
+# PUT THE POINTER BACK. Only ever called with a version this run recorded
+# before it moved the tag -- never a guess at which of the kept images was
+# the good one.
+rollback_cli() {
+  if [ -z "$1" ]; then
+    err "and the version xl1:local pointed at could not be named, so there is"
+    err "no automatic rollback. 'docker images xl1' lists what is still here;"
+    err "option 6 promotes one of them."
+    return 1
+  fi
+  warn "putting xl1:local back to $1"
+  do_cmd "sudo docker tag xl1:$1 xl1:local" \
+    && ok "xl1:local points at $1 again. The producer never left it." \
+    || err "could not retag xl1:local -- do it by hand before any restart."
+}
+
+# WHAT THE PRODUCER IS ACTUALLY RUNNING, asked of the container rather than of
+# the tag: xl1:local is a pointer and may already have been moved past what
+# the running container started from.
+running_cli() {
+  [ -n "$PRODUCER_CONTAINER" ] || return 0
+  docker exec "$PRODUCER_CONTAINER" xl1 --version 2>/dev/null | head -1 || true
 }
 
 a_promote() {
@@ -775,7 +889,7 @@ ITEMS="
 2|Check the producer's config (no restart)|a_dump
 3|Restart the producer|a_restart_producer
 4|Run the wizard (bootstrap-pi.sh)|a_wizard
-5|Build a new node image (CLI update)|a_build_image
+5|Update the node CLI (build, promote, restart)|a_build_image
 6|Promote an image and restart onto it|a_promote
 7|Update the XYO SDK (no deploy)|a_service
 8|Update the heartbeat agent|a_agent

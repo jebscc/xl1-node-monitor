@@ -2,12 +2,30 @@
 #
 # Rebuild the XL1 node image so it does not sit unpatched for years.
 #
-# It BUILDS ONLY. It never retags xl1:local, never stops a container, and never
-# restarts the producer. Swapping the image a live block producer runs on is a
-# decision for a human at a time of their choosing, not something to discover
-# happened overnight. The new image is tagged by version and left ready.
+# BY DEFAULT IT BUILDS ONLY. It never retags xl1:local, never stops a
+# container, and never restarts the producer. Swapping the image a live block
+# producer runs on is a decision for a human at a time of their choosing, not
+# something to discover happened overnight -- which is why the weekly timer
+# that runs this is opt-in and why this stays the default.
 #
-# Promotion, when you want it:
+#   --promote   also point xl1:local at what was just built
+#
+# WHAT --promote DOES NOT DO IS RESTART. Tagging changes nothing that is
+# running: the producer goes on using the image it started from until it is
+# restarted, so the tag is reversible for free right up to that moment. The
+# restart is where a bad image becomes a stopped node, and the check worth
+# making first -- does the NEW cli accept THIS node's env file -- needs the
+# node's env and preset paths, which live in xl1-menu and not here. So this
+# hands back a promoted tag and the name of what it replaced, and the caller
+# restarts or rolls back.
+#
+# THE SMOKE TEST IS NOT THAT CHECK. It asks the entrypoint for a version,
+# which proves the image runs; it says nothing about whether the CLI inside
+# still understands the settings this node is configured with. A release that
+# renames or drops a setting passes the smoke test and then refuses to start
+# with exit 78.
+#
+# Promotion by hand, when you want it:
 #
 #   docker tag xl1:<version> xl1:local
 #   docker rm -f xl1-producer
@@ -29,6 +47,17 @@ REGISTRY="${XL1_CLI_REGISTRY:-https://registry.npmjs.org/@xyo-network/xl1-cli/la
 # exist. Keeping only the current one turns a bad upgrade into a full rebuild
 # on a Pi. Set 0 to disable pruning entirely.
 KEEP_IMAGES="${XL1_KEEP_IMAGES:-3}"
+
+PROMOTE=0
+for arg in "$@"; do
+  case "$arg" in
+    --promote) PROMOTE=1 ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    # Refused rather than ignored. A typo in the one flag that touches what a
+    # live producer will start from must not read as the safe default.
+    *) printf 'unknown option: %s\n' "$arg" >&2; exit 2 ;;
+  esac
+done
 
 log() { printf '%s %s\n' "$(date -Is)" "$*"; }
 fail() { log "FAILED: $*"; exit 1; }
@@ -319,6 +348,54 @@ EOF
 }
 
 prune_old_images
+
+# --- promote ---------------------------------------------------------------
+# Only ever after the smoke test, and only on --promote.
+#
+# The version xl1:local pointed at is recorded BEFORE the tag moves, because
+# afterwards there is nothing left to read it from -- `xl1:local` is one
+# pointer and retagging overwrites it. Without that name a rollback means
+# guessing which of the kept images was the one that worked.
+promote() {
+  local was="" was_id=""
+  was_id="$(docker image inspect xl1:local --format '{{.Id}}' 2>/dev/null || true)"
+  if [ -n "$was_id" ]; then
+    # Each tag is inspected rather than matched on the short ID that
+    # `docker images` prints: that is a prefix of the full one inspect
+    # returns, and a prefix comparison is a coin toss dressed as a check.
+    local t full
+    for t in $(docker images xl1 --format '{{.Tag}}' 2>/dev/null \
+               | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true); do
+      full="$(docker image inspect "xl1:$t" --format '{{.Id}}' 2>/dev/null || true)"
+      if [ "$full" = "$was_id" ]; then was="$t"; break; fi
+    done
+  fi
+
+  if [ "$was" = "$LATEST" ]; then
+    log "xl1:local already points at $LATEST; nothing to promote"
+    printf 'PROMOTED=%s\nPREVIOUS=%s\n' "$LATEST" "$LATEST"
+    return 0
+  fi
+
+  docker tag "xl1:$LATEST" xl1:local || fail "could not retag xl1:local"
+  log "promoted: xl1:local now points at $LATEST (was ${was:-unknown})"
+  log "NOT restarted. The producer runs its old image until something restarts it."
+  if [ -n "$was" ]; then
+    log "roll back with: docker tag xl1:$was xl1:local"
+  else
+    log "WARNING: could not name the version xl1:local pointed at, so there is"
+    log "no one-line rollback. docker images xl1 lists what is still here."
+  fi
+  # LAST TWO LINES, PARSED BY THE CALLER. Printed on stdout without the log
+  # timestamp so xl1-menu can read them without matching prose that is free to
+  # change. PREVIOUS is empty when it could not be named, which the caller
+  # must treat as "no automatic rollback", not as "nothing to roll back to".
+  printf 'PROMOTED=%s\nPREVIOUS=%s\n' "$LATEST" "$was"
+}
+
+if [ "$PROMOTE" = 1 ]; then
+  promote
+fi
 
 if [ "$RUNNING" = "$LATEST" ]; then
   log "done: already running $LATEST"

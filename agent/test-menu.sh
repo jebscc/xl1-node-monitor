@@ -243,13 +243,17 @@ if printf '%s' "$BUILD" | grep -q 'systemctl cat xl1-image-rebuild'; then
 else
   bad "it starts a unit that most nodes do not have"       "Unit not found reads as a broken menu, not an optional extra"
 fi
-# RUN, not merely mentioned. The error two lines below also names the script,
-# so a bare grep passed against a body with the fallback deleted -- the fourth
-# guard in this session satisfied by the text describing the thing it checks.
-if printf '%s' "$BUILD" | grep -qE 'do_cmd .*rebuild-xl1-image\.sh'; then
-  ok "and falls back to running the script directly"
+# RUN, not merely mentioned. Two error branches below also name the script,
+# so a bare grep for its name passed against a body with the running deleted
+# -- a guard satisfied by the text describing the thing it checks.
+#
+# The path now goes through $_rb, so both halves are asserted: that _rb is
+# that script, and that a runner actually executes $_rb. Matching only the
+# second would pass if _rb were pointed at something else entirely.
+if printf '%s' "$BUILD" | grep -qE '_rb="\$REPO_AGENT/rebuild-xl1-image\.sh"'    && printf '%s' "$BUILD" | grep -qE 'do_(cmd|capture) "sudo bash \$_rb'; then
+  ok "and runs that script directly rather than only naming it"
 else
-  bad "with no timer there is nothing offered at all"       "naming the script in an error is not offering to run it"
+  bad "with no checkout there is nothing offered at all"       "naming the script in an error is not offering to run it"
 fi
 
 # THE PULL IS THE UPDATE. `@xyo-network/xl1-sdk` is pinned to an exact version
@@ -736,6 +740,103 @@ if printf '%s' "$REC" | grep -qi 'prebuilt image'; then
   ok "a node with no recipe is told that is normal"
 else
   bad "a node given a built image reads as misconfigured"
+fi
+
+
+# --- the CLI update, which promotes and restarts -----------------------------
+#
+# This is the only choice that changes what a live producer will start from
+# AND restarts it onto that. Every property below is about the order those
+# steps happen in, because each one is undoable right up until the next:
+#
+#   a build nothing runs         -> a failure leaves the node untouched
+#   a tag move                   -> free to reverse; the producer has not
+#                                   restarted, so it is still on the old image
+#   a restart                    -> the first step that can leave a node down
+#
+printf '\nthe CLI update promotes in an order that can be undone\n'
+
+BODY="$(printf '%s' "$SRC" | sed -n '/^a_build_image() {/,/^}/p')"
+line_of() { printf '%s' "$BODY" | grep -n "$1" | head -1 | cut -d: -f1; }
+
+L_PROMOTE="$(line_of 'bash \$_rb --promote')"
+L_CONFIG="$(line_of 'if config_refused')"
+L_RESTART="$(line_of 'a_restart_producer')"
+
+if [ -n "$L_PROMOTE" ] && [ -n "$L_CONFIG" ] && [ -n "$L_RESTART" ] \
+   && [ "$L_PROMOTE" -lt "$L_CONFIG" ] && [ "$L_CONFIG" -lt "$L_RESTART" ]; then
+  ok "it asks the NEW image about this node's config before restarting onto it"
+else
+  bad "the config gate is not between the promote and the restart" \
+      "promote=$L_PROMOTE config=$L_CONFIG restart=$L_RESTART"
+fi
+
+# THE SMOKE TEST IS NOT THIS CHECK. It proves the image runs; it says nothing
+# about whether the CLI still understands the settings this node has. A
+# release that renames a setting passes it and then exits 78 on start.
+if printf '%s' "$BODY" | grep -A 4 'if config_refused' | grep -q 'rollback_cli'; then
+  ok "a refused config puts xl1:local back"
+else
+  bad "a refused config leaves the node pointing at an image it will not run" \
+      "the next restart from any cause would crash-loop it"
+fi
+
+if printf '%s' "$BODY" | grep -A 4 'a_restart_producer ||' | grep -q 'rollback_cli'; then
+  ok "a restart that does not come up clean puts xl1:local back too"
+else
+  bad "a failed restart leaves the new image promoted"
+fi
+
+# Nothing to promote must mean nothing to restart. Restarting a producer that
+# is already on the newest CLI is an outage bought for no reason.
+#
+# THE RETURN, NOT THE SENTENCE. The first version of this grepped for the
+# message and passed against a body with the `return 0` deleted -- the code
+# said "nothing to restart onto" and then restarted. Saying the right thing
+# on the way past is not the same as stopping.
+if printf '%s' "$BODY" | grep -A 1 'already on \$_new; nothing to restart onto'    | grep -q 'return 0'; then
+  ok "it stops, rather than saying it will and carrying on"
+else
+  bad "it restarts even when nothing moved"       "the message is there; the return that makes it true is not"
+fi
+
+# ROLLING BACK TO A GUESS IS WORSE THAN NOT ROLLING BACK. The version is the
+# one this run recorded before it moved the tag, or there is no rollback.
+RB="$(printf '%s' "$SRC" | sed -n '/^rollback_cli() {/,/^}/p')"
+if printf '%s' "$RB" | grep -q 'if \[ -z "\$1" \]'; then
+  ok "rollback refuses without a version it was told"
+else
+  bad "rollback would guess at a version"
+fi
+
+# --- the second door ---------------------------------------------------------
+#
+# do_capture exists because the CLI update reads what the rebuild script
+# promoted rather than asking npm a second time. It is a second way to run
+# things, and a second way that skipped the showing or the asking would be
+# exactly the hole do_cmd was made to close.
+printf '\nthe capturing runner is still a door\n'
+CAP="$(printf '%s' "$SRC" | sed -n '/^do_capture() {/,/^}/p')"
+
+if printf '%s' "$CAP" | grep -q 'ask_yn'; then
+  ok "do_capture asks before it runs"
+else
+  bad "do_capture runs without asking" "one action would act on being chosen"
+fi
+
+if printf '%s' "$CAP" | grep -q 'DRY_RUN'; then
+  ok "do_capture honours a dry run"
+else
+  bad "a dry run would really run this one"
+fi
+
+# The prompt and the command's output go to stderr so the caller can capture
+# stdout. If the prompt went to stdout it would be swallowed -- the menu would
+# look hung, waiting for an answer to a question nobody saw.
+if printf '%s' "$CAP" | grep -q 'ask_yn "run it?" >&2'; then
+  ok "its prompt goes where a reader can see it"
+else
+  bad "the prompt would be captured instead of shown"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

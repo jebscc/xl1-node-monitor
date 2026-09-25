@@ -110,6 +110,11 @@ const python = (() => {
   return null
 })()
 
+// WHAT THE PINNED CHECKS ALONE SAID, kept so the verdict at the bottom can
+// tell "the hash moved" from "the second opinion could not be had". They are
+// different facts and only one of them is about the hash.
+const hashFailures = failures
+
 console.log('\nverify-attestation.py agrees, and still rejects a wrong hash')
 if (!python) {
   failures++
@@ -145,7 +150,15 @@ if (!python) {
 }
 
 if (failures) {
-  console.error(`\n${failures} failure(s). The anchored hash is not what it was.`)
+  // A VERDICT MAY NOT OUTRUN ITS EVIDENCE. With no python the verifier half
+  // does not run, and this said "the anchored hash is not what it was" about
+  // a comparison it had never made -- on a Pi, where that is the normal state
+  // of the borrowed container, so the sentence was not just wrong but
+  // routinely wrong. Still a failure either way; only the claim changes.
+  console.error(hashFailures
+    ? `\n${failures} failure(s). The anchored hash is not what it was.`
+    : `\n${failures} failure(s). The hash itself is unchanged -- what could `
+      + `not be shown is that the published verifier still agrees with it.`)
   process.exit(1)
 }
 console.log('\nThe anchored hash is unchanged, and the public verifier agrees.')

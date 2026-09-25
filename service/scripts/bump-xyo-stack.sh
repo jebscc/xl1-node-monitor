@@ -215,6 +215,27 @@ head_ "Earning it"
 # tree, so on a node it is absent and correctly so. Restoring a good bump
 # because a file was never there is the wrong answer, and so is passing
 # quietly -- what ran is named in the verdict.
+# THE ONE GATE THAT NEEDS MORE THAN NODE.
+#
+# verify-attestation.py is python on purpose: it is the file a stranger
+# downloads to check our proof, and a JS reimplementation of it would agree
+# with the JS by construction and prove nothing. node:26-bookworm-slim has no
+# python, so on a node -- where the toolchain is borrowed from a container --
+# that half could not run and the gate FAILED, announcing "the anchored hash
+# is not what it was" about a comparison it had never made. Measured on the Pi
+# 2026-09-25; on a host with python it had always passed, which is why it went
+# unseen.
+#
+# INSTALLED, NOT SKIPPED. That file's whole argument is that a check which
+# quietly does not run is the danger; making it skip on precisely the machines
+# where it is hardest to run would be the same hole with a nicer message over
+# it. ~25MB and a few seconds, once per bump.
+py_prefix() {
+  [ "$RUNNER" = docker ] || return 0
+  command -v python3 >/dev/null 2>&1 && return 0
+  printf 'apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 && '
+}
+
 SKIPPED=""
 gate_file() { # gate_file <label> <file that must exist> <command...>
   _lbl="$1"; _need="$2"; shift 2
@@ -231,7 +252,7 @@ gate "resolving the lockfile" pnpm install --no-frozen-lockfile || exit 1
 gate "installing as the build does" pnpm install --frozen-lockfile || exit 1
 gate "typecheck" pnpm run typecheck || exit 1
 gate_file "peer audit" scripts/peer-audit.mjs node scripts/peer-audit.mjs . || exit 1
-gate_file "the anchored hash" test-attestation-hash.mjs node test-attestation-hash.mjs || exit 1
+gate_file "the anchored hash" test-attestation-hash.mjs "$(py_prefix)node test-attestation-hash.mjs" || exit 1
 gate_file "the sign-in witness" test-signin-oracle.mjs node test-signin-oracle.mjs || exit 1
 
 # Earned. Keep the new files and stop putting the old ones back.

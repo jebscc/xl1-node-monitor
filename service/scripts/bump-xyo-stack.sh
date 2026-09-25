@@ -232,8 +232,29 @@ head_ "Earning it"
 # it. ~25MB and a few seconds, once per bump.
 py_prefix() {
   [ "$RUNNER" = docker ] || return 0
-  command -v python3 >/dev/null 2>&1 && return 0
-  printf 'apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 && '
+  # THE CHECK HAS TO RUN WHERE THE DEPENDENCY IS NEEDED.
+  #
+  # This asked THIS MACHINE whether python was present and returned early if
+  # it was -- and the Pi host has python3, because the heartbeat agent is
+  # written in it. So it decided the container needed nothing, printed no
+  # install, and the gate failed again with the same "no python on PATH" from
+  # inside a container that had never been asked. A check that answers about
+  # the wrong machine is worse than no check: it reports success.
+  #
+  # So the test travels with the command and runs in the container. Where
+  # python is already there it costs one `command -v`; where it is not, the
+  # install is part of the same chain and a failure to fetch it fails the
+  # gate rather than being discovered later as an absence.
+  # AN `if`, NOT `a || b`. sh gives && and || equal precedence and
+  # associates them left to right, so
+  #
+  #   corepack enable && command -v python3 || { apt-get ... } && node ...
+  #
+  # makes the apt group the fallback for the WHOLE chain before it: a
+  # corepack failure would be quietly "recovered" by installing python,
+  # and the gate would then run without the toolchain it was given one
+  # for. An if-block is its own statement and cannot be reached into.
+  printf 'if ! command -v python3 >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 >/dev/null; fi && '
 }
 
 SKIPPED=""

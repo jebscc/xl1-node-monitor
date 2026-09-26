@@ -44,7 +44,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.44.1"
+AGENT_VERSION = "1.44.2"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1281,7 +1281,7 @@ def producer_scan_due():
     return (time.monotonic() - _producer_cache["at"]) >= PRODUCER_INTERVAL
 
 
-_cli_cache = {"installed_at": 0.0, "installed": None,
+_cli_cache = {"installed_at": 0.0, "installed": None, "image": None,
               "latest_at": 0.0, "latest": None}
 
 
@@ -1300,6 +1300,36 @@ def read_cli_version(name):
     if not name or not CLI_REGISTRY:
         return None
     now = time.monotonic()
+
+    # THE IMAGE THE CONTAINER IS RUNNING, WHICH CANNOT HAVE CHANGED UNDER IT.
+    #
+    # Measured on the Pi 2026-09-25: this inspect is 42ms, and the `docker
+    # exec` below is 3.5 SECONDS -- on a machine whose job is producing
+    # blocks. That cost is why the version was cached for an hour, and the
+    # hour is why the panel showed the pre-update version for an hour after a
+    # successful update, which is the one time anybody reads it.
+    #
+    # An image ID is exact, not a guess about elapsed time: while it is
+    # unchanged the running code is byte for byte what it was, so the cached
+    # answer is not stale, it is correct. When it changes the container was
+    # recreated, which is the only way this number ever moves.
+    image = (run(["docker", "inspect", "-f", "{{.Image}}", name]) or "").strip()
+    if image and image == _cli_cache["image"] and _cli_cache["installed"]:
+        return _cli_cache["installed"]
+
+    # NAMED BY A TAG, NOT BY THE `local` POINTER. xl1:local can be moved
+    # without recreating anything, so it is not evidence of what is running --
+    # but the tag that shares the RUNNING image's ID is, and finding it costs
+    # 197ms against the exec's 3.5s.
+    tagged = _semver_tag_for(image) if image else None
+    if tagged:
+        _cli_cache.update({"installed": tagged, "installed_at": now,
+                           "image": image})
+        return tagged
+
+    # Nothing names it -- a hand-built image, or the tag pruned out from under
+    # it. Ask the container itself, and keep the hour, because now it really
+    # does cost three and a half seconds.
     if _cli_cache["installed"] and now - _cli_cache["installed_at"] < 3600:
         return _cli_cache["installed"]
     raw = run(["docker", "exec", name, "cat", CLI_PACKAGE_PATH])
@@ -1314,7 +1344,47 @@ def read_cli_version(name):
     if version:
         _cli_cache["installed"] = version
         _cli_cache["installed_at"] = now
+        _cli_cache["image"] = image
     return version
+
+
+def _semver_tag_for(image):
+    """The xl1:<semver> tag naming this image id, or None.
+
+    `docker images` prints a SHORT id and inspect returns the full one, so the
+    comparison is a prefix -- written out rather than assumed, because
+    comparing the two directly never matches and the failure is silent: it
+    simply falls through to the expensive path for ever.
+
+    The highest version wins where an image carries several, so the answer
+    does not depend on the order docker happens to list them in.
+    """
+    hex_id = image.split(":")[-1]
+    if not hex_id:
+        return None
+    rows = run(["docker", "images", "xl1", "--format", "{{.Tag}} {{.ID}}"]) or ""
+    best = None
+    for row in rows.splitlines():
+        parts = row.split()
+        if len(parts) != 2:
+            continue
+        tag, short = parts[0], parts[1].split(":")[-1]
+        # `local` is the pointer, not a version, and _valid_version rejects it.
+        if not short or not _valid_version(tag):
+            continue
+        if not hex_id.startswith(short):
+            continue
+        if best is None or _version_key(tag) > _version_key(best):
+            best = tag
+    return best
+
+
+def _version_key(v):
+    """A semver as a comparable tuple; anything unparsable sorts lowest."""
+    out = []
+    for part in str(v).split("."):
+        out.append(int(part) if part.isdigit() else -1)
+    return tuple(out)
 
 
 _sdk_cache = {"installed_at": 0.0, "installed": None,

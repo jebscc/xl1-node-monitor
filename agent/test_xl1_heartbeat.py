@@ -4290,3 +4290,121 @@ def test_recipe_drift_cache_is_void_once_the_checkout_moves(monkeypatch):
         "a moved checkout must be re-compared rather than answered from a "
         "cache filled for the previous commit"
     )
+
+
+# THE CLI VERSION, WITHOUT PAYING 3.5 SECONDS FOR IT.
+#
+# `docker exec <container> cat package.json` measured 3.5 SECONDS on the Pi,
+# on a machine whose actual job is producing blocks -- which is why it was
+# cached for an hour, and why the panel showed the pre-update version for an
+# hour after a successful update.
+#
+# The image ID the container is RUNNING costs 42ms and cannot change under it:
+# while it is the same, the running code is byte for byte what it was. The tag
+# sharing that ID names the version, for 197ms more. Same answer, fifteen
+# times cheaper, and exact rather than a guess about elapsed time.
+
+def _docker_stub(calls, image, images_out, pkg='{"version": "9.9.9"}'):
+    def fake(args, timeout=10, merge_stderr=False):
+        calls.append(args)
+        if args[:3] == ["docker", "inspect", "-f"]:
+            return image
+        if args[:2] == ["docker", "images"]:
+            return images_out
+        if args[:2] == ["docker", "exec"]:
+            return pkg
+        return None
+    return fake
+
+
+def test_the_cli_version_comes_from_the_tag_naming_the_running_image(monkeypatch):
+    agent._cli_cache.update({"installed": None, "installed_at": 0.0, "image": None})
+    calls = []
+    monkeypatch.setattr(agent, "run", _docker_stub(
+        calls,
+        "sha256:1d83ba92a9fa36cabc350086bcfe6f731bbbac62003521eacc26f58b5ab3d783",
+        "5.5.0 1d83ba92a9fa\nlocal 1d83ba92a9fa\n5.4.1 b5a2ea28a944\n"))
+    assert agent.read_cli_version("xl1-producer") == "5.5.0"
+    # AND IT NEVER PAID FOR THE EXEC.
+    assert not [c for c in calls if c[:2] == ["docker", "exec"]], calls
+
+
+# `local` is a pointer that can be moved without recreating anything, so it is
+# not evidence of what is running -- and it shares the ID, so it is the
+# obvious wrong answer here.
+def test_the_pointer_tag_is_not_a_version(monkeypatch):
+    agent._cli_cache.update({"installed": None, "installed_at": 0.0, "image": None})
+    monkeypatch.setattr(agent, "run", _docker_stub(
+        [], "sha256:aaaaaaaaaaaa0000", "local aaaaaaaaaaaa\n"))
+    # Nothing names it, so it falls through to asking the container.
+    assert agent.read_cli_version("xl1-producer") == "9.9.9"
+
+
+# THE PREFIX. `docker images` prints a SHORT id and inspect returns the full
+# one; comparing them directly never matches, and the failure is silent --
+# every read falls through to the 3.5-second path for ever.
+def test_a_short_id_still_matches_the_full_one(monkeypatch):
+    agent._cli_cache.update({"installed": None, "installed_at": 0.0, "image": None})
+    calls = []
+    monkeypatch.setattr(agent, "run", _docker_stub(
+        calls, "sha256:abcdef0123456789aaaaaaaaaaaaaaaaaaaaaaaa",
+        "5.6.1 abcdef012345\n"))
+    assert agent.read_cli_version("xl1-producer") == "5.6.1"
+    assert not [c for c in calls if c[:2] == ["docker", "exec"]]
+
+
+def test_the_highest_version_wins_when_several_name_one_image(monkeypatch):
+    agent._cli_cache.update({"installed": None, "installed_at": 0.0, "image": None})
+    monkeypatch.setattr(agent, "run", _docker_stub(
+        [], "sha256:cccccccccccc1111",
+        "5.9.0 cccccccccccc\n5.10.0 cccccccccccc\n"))
+    # 5.10.0, not 5.9.0: compared as numbers, not as text.
+    assert agent.read_cli_version("xl1-producer") == "5.10.0"
+
+
+# AN UNCHANGED IMAGE IS NOT STALENESS, IT IS THE ANSWER. No tag listing, no
+# exec -- one 42ms inspect and done.
+def test_an_unchanged_image_costs_one_inspect(monkeypatch):
+    agent._cli_cache.update({"installed": None, "installed_at": 0.0, "image": None})
+    calls = []
+    monkeypatch.setattr(agent, "run", _docker_stub(
+        calls, "sha256:dddddddddddd2222", "5.7.1 dddddddddddd\n"))
+    assert agent.read_cli_version("xl1-producer") == "5.7.1"
+    calls.clear()
+    assert agent.read_cli_version("xl1-producer") == "5.7.1"
+    assert [c[:3] for c in calls] == [["docker", "inspect", "-f"]], calls
+
+
+# AND A CHANGED ONE IS NOTICED AT ONCE, which is the whole point: a promote
+# recreates the container, and the tile must not sit on the old number.
+def test_a_recreated_container_is_noticed_without_waiting(monkeypatch):
+    agent._cli_cache.update({"installed": None, "installed_at": 0.0, "image": None})
+    state = {"image": "sha256:eeeeeeeeeeee3333"}
+
+    def fake(args, timeout=10, merge_stderr=False):
+        if args[:3] == ["docker", "inspect", "-f"]:
+            return state["image"]
+        if args[:2] == ["docker", "images"]:
+            return "5.4.1 eeeeeeeeeeee\n5.5.0 ffffffffffff\n"
+        return None
+
+    monkeypatch.setattr(agent, "run", fake)
+    assert agent.read_cli_version("xl1-producer") == "5.4.1"
+    state["image"] = "sha256:ffffffffffff4444"          # promoted and restarted
+    assert agent.read_cli_version("xl1-producer") == "5.5.0"
+
+
+def test_it_still_asks_the_container_when_nothing_names_the_image(monkeypatch):
+    """A hand-built image, or a tag pruned out from under it."""
+    agent._cli_cache.update({"installed": None, "installed_at": 0.0, "image": None})
+    calls = []
+    monkeypatch.setattr(agent, "run", _docker_stub(
+        calls, "sha256:999999999999", "5.4.1 b5a2ea28a944\n"))
+    assert agent.read_cli_version("xl1-producer") == "9.9.9"
+    assert [c for c in calls if c[:2] == ["docker", "exec"]], calls
+
+
+def test_no_container_is_not_a_version(monkeypatch):
+    agent._cli_cache.update({"installed": None, "installed_at": 0.0, "image": None})
+    monkeypatch.setattr(agent, "run", lambda *a, **k: None)
+    assert agent.read_cli_version("xl1-producer") is None

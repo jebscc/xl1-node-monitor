@@ -1352,13 +1352,26 @@ scan_updates() { # -> key|text lines, one per choice that has something waiting
     printf '8|agent %s installed, %s in the checkout\n' "$_a_have" "$_a_want"
   fi
 
-  # u -- THE MENU AND ITS SCRIPTS. DIFFERS, not "is older": a file comparison
-  # says the two are not the same and cannot say which way round, and this
-  # script has no business guessing that about itself.
+  # u -- THE MENU AND ITS SCRIPTS.
+  #
+  # ONLY ON A CLONE, and this was wrong when it shipped. On a tarball node --
+  # the CM4, /opt/xl1-node-monitor -- NOTHING EVER WRITES the checkout's copy
+  # of this file: menu_helpers does not list it, and a_selfupdate fetches the
+  # published one to /tmp and installs that to /usr/local/bin. So the two can
+  # differ for ever, `u` cannot make them agree, and the note became a nag
+  # with no action behind it. A signal that never clears is one people learn
+  # to read past, which costs more than the note was worth.
+  #
+  # On a clone the comparison means something: `git pull` moves the checkout,
+  # and the gap between it and the installed copy is exactly what `u` closes.
+  #
+  # DIFFERS, not "is older": a file comparison says the two are not the same
+  # and cannot say which way round, and this script has no business guessing
+  # that about itself.
   _self="$(command -v xl1-menu 2>/dev/null)"
-  if [ -n "$_self" ] && [ -n "${REPO_AGENT:-}" ] && [ -f "$REPO_AGENT/xl1-menu.sh" ] \
-     && ! cmp -s "$_self" "$REPO_AGENT/xl1-menu.sh"; then
-    printf 'u|this menu differs from the one in the checkout\n'
+  if [ "${REPO_IS_CLONE:-0}" = 1 ] && [ -n "$_self" ] && [ -n "${REPO_AGENT:-}" ] \
+     && [ -f "$REPO_AGENT/xl1-menu.sh" ] && ! cmp -s "$_self" "$REPO_AGENT/xl1-menu.sh"; then
+    printf 'u|the checkout has a different menu; u installs it\n'
   fi
 
   # NOT REACHING NPM IS NOT AN ALL-CLEAR. Nothing above prints a line when it

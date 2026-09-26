@@ -1480,6 +1480,40 @@ else
   bad "no answer from npm reads the same as nothing to update" "$V"
 fi
 
+# THE NOTE THAT COULD NEVER BE CLEARED. On a tarball node nothing writes the
+# checkout's copy of xl1-menu.sh -- menu_helpers does not list it, and
+# a_selfupdate fetches the published one to /tmp and installs that to
+# /usr/local/bin. So "this menu differs from the checkout" was true for ever
+# on the CM4 and `u` could not make it false. Seen on Jim's screen the day it
+# shipped.
+u_note() { # u_note <REPO_IS_CLONE>
+  ( _CLONE="$1"
+    _t="$(mktemp -d)"; printf 'a\n' > "$_t/installed"; printf 'b\n' > "$_t/xl1-menu.sh"
+    UPDATES=""
+    eval "$UPD_CODE"
+    REPO_IS_CLONE="$_CLONE"; REPO_AGENT="$_t"
+    PRODUCER_CONTAINER=""; AGENT_DIR=/a
+    running_cli_tag() { :; }; newest_built_tag() { :; }
+    xyo_latest() { printf '1.0.0\n'; }; xyo_stack() { :; }
+    agent_version_of() { :; }
+    command() { if [ "$1" = -v ]; then printf '%s\n' "$_t/installed"; else return 0; fi; }
+    scan_updates
+    rm -rf "$_t" ) 2>/dev/null
+}
+
+if printf '%s' "$(u_note 1)" | grep -q '^u|'; then
+  ok "a clone is told its installed menu is not the checkout's"
+else
+  bad "a pulled checkout does not offer to install itself" "$(u_note 1)"
+fi
+
+if printf '%s' "$(u_note 0)" | grep -q '^u|'; then
+  bad "a tarball node is nagged about a file nothing can update" \
+      "u cannot make them agree, so the note never clears"
+else
+  ok "and a tarball node, where nothing writes that copy, is not"
+fi
+
 # ON ITS OWN LINE, UNDER THE CHOICE, IN COLOUR.
 printf '\nand puts it where the choice is\n'
 MENU_FN="$(printf '%s' "$SRC" | sed -n '/^menu() {/,/^}/p')"

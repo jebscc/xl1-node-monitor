@@ -1300,5 +1300,61 @@ else
   bad "there are two ways to install the agent" "one of them will go stale"
 fi
 
+# --- the outcome is read, not asserted ---------------------------------------
+#
+# `docker restart` does NOT follow a moved tag. Measured on the Pi with a
+# throwaway container: created from a tag, tag moved to another image,
+# restarted, and it came back on the image it was CREATED from. So a promote
+# followed by a restart leaves a wizard-built producer exactly where it was.
+#
+# The menu reported success anyway, because the line printed the version that
+# had been PROMOTED rather than reading the producer. The panel said 5.4.1,
+# the menu said 5.5.0, and the panel was right.
+printf '\nthe CLI update checks whether the producer actually moved\n'
+BI="$(printf '%s' "$SRC" | sed -n '/^a_build_image() {/,/^}/p')"
+
+if printf '%s' "$BI" | grep -q '_now="$(running_cli)"'; then
+  ok "it reads the producer after the restart"
+else
+  bad "success is claimed from the version that was promoted" \
+      "which is an intention, not a check"
+fi
+
+# The success line must come from what was READ, not from what was wanted.
+if printf '%s' "$BI" | grep -q 'ok "the producer is running CLI \$_now"'; then
+  ok "and says what it read"
+else
+  bad "the success line still reports the promoted version"
+fi
+
+# A MISMATCH IS A FAILURE, and it has to name the thing that fixes it -- the
+# menu cannot recreate this container itself: the run line needs the env file,
+# the preset mount and the heap cap, and on a node whose env file is not
+# discoverable those cannot be reconstructed. Guessing them is how a producer
+# comes back as a different address.
+if printf '%s' "$BI" | grep -q 'STILL running' \
+   && printf '%s' "$BI" | grep -q 'wizard (choice 4)'; then
+  ok "a producer that did not move is reported, with what to do about it"
+else
+  bad "a producer that stayed on the old image is not reported"
+fi
+
+# AND NOTHING IS ROLLED BACK THERE. The tag is where it should be; the
+# producer is on the image it has been on all along. Retagging back would
+# undo the one part that worked.
+if printf '%s' "$BI" | grep -A 6 'STILL running' | grep -q 'rollback_cli'; then
+  bad "it rolls the tag back when the producer did not move" \
+      "the tag was right; it is the container that has not caught up"
+else
+  ok "and the tag is left where it belongs"
+fi
+
+# An unreadable version is not a failure and not a success.
+if printf '%s' "$BI" | grep -q 'not confirmed'; then
+  ok "an unreadable version says so rather than picking a side"
+else
+  bad "an unreadable version is treated as one outcome or the other"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

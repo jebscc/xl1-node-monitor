@@ -473,10 +473,46 @@ a_build_image() {
     rollback_cli "$_prev"
     return 1
   }
-  ok "the producer is running CLI $_new"
-  refresh_panel
-  note "roll back with: sudo docker tag xl1:${_prev:-<version>} xl1:local"
-  note "then option 3 to restart onto it."
+  # DID IT ACTUALLY MOVE? ASKED, NOT ASSERTED.
+  #
+  # This line printed "$_new" -- the version that had been PROMOTED -- without
+  # looking at the producer at all. So a container that never left 5.4.1 was
+  # reported as running 5.5.0, the panel disagreed, and the panel was right.
+  # A success message written from an intention is not a check.
+  #
+  # AND THE REASON IT CAN FAIL: `docker restart` does not follow a moved tag.
+  # Measured on the Pi 2026-09-25 with a throwaway container -- created from a
+  # tag, tag moved to another image, restarted, and it came back on the image
+  # it was CREATED from. A container has to be recreated to change image, and
+  # only the wizard knows the flags to recreate this one with: the run line
+  # needs the env file, the preset mount and the heap cap, and on a node whose
+  # env file is not discoverable this menu cannot reconstruct them. Naming the
+  # wizard is the honest answer; guessing at the flags is how a producer comes
+  # back as a different address.
+  _now="$(running_cli)"
+  case "${_now:-}" in
+    "$_new"*)
+      ok "the producer is running CLI $_now"
+      refresh_panel
+      note "roll back with: sudo docker tag xl1:${_prev:-<version>} xl1:local"
+      note "then option 3 to restart onto it."
+      ;;
+    "")
+      warn "could not read the producer's CLI version, so it is not confirmed"
+      warn "that it moved. Option 1 shows what is running."
+      ;;
+    *)
+      err "the producer is STILL running $_now, not $_new."
+      err "A restart does not move a container onto a retagged image -- it"
+      err "comes back on the image it was created from. It has to be"
+      err "RECREATED, and on this node the wizard (choice 4) is what knows"
+      err "the flags for that."
+      note "xl1:local already points at $_new, so the wizard will use it."
+      note "Nothing is rolled back: the tag is where it should be, and the"
+      note "producer is on the image it has been on all along."
+      return 1
+      ;;
+  esac
 }
 
 # PUT THE POINTER BACK. Only ever called with a version this run recorded

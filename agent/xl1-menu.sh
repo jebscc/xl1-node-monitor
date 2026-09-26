@@ -974,9 +974,15 @@ a_redeploy() {
   do_cmd "sudo bash $_rd" || return 1
 }
 
-a_agent() {
-  say "${B}Update the heartbeat agent${X}"
-  confirm_action "Installs the agent from this checkout and restarts the heartbeat service." || return 1
+# THE VERSION A FILE DECLARES, or nothing. Two arguments so the same reader
+# serves the copy in the checkout and the copy that is actually running --
+# which is the comparison that matters and the one nobody makes.
+agent_version_of() { # agent_version_of <path>
+  [ -f "$1" ] || return 0
+  sed -n 's/^AGENT_VERSION = "\([^"]*\)".*/\1/p' "$1" | head -1
+}
+
+install_agent() {
   note "Copies the checkout's agent over the installed one and restarts it."
   if [ -z "$REPO_AGENT" ] || [ ! -f "$REPO_AGENT/xl1_heartbeat.py" ]; then
     err "this machine has no checkout of the agent to copy from."
@@ -990,6 +996,12 @@ a_agent() {
     note "not a clone, so the agent is fetched the way the wizard fetches it"
     do_cmd "curl -fsSL $PUBLIC_REPO/xl1_heartbeat.py -o /tmp/xl1_heartbeat.py && sudo install -m 644 /tmp/xl1_heartbeat.py $AGENT_DIR/xl1_heartbeat.py && rm -f /tmp/xl1_heartbeat.py && sudo systemctl restart xl1-heartbeat"
   fi
+}
+
+a_agent() {
+  say "${B}Update the heartbeat agent${X}"
+  confirm_action "Installs the agent from this checkout and restarts the heartbeat service." || return 1
+  install_agent || return 1
   do_cmd "journalctl -u xl1-heartbeat -n 20 --no-pager"
 }
 
@@ -1087,6 +1099,26 @@ a_selfupdate() {
     note "not a clone, so these are fetched from the published repository"
     note "-- the menu, the help, and the scripts the menu runs."
     update_helpers
+  fi
+
+  # AND THE AGENT THAT IS ACTUALLY RUNNING, not just its source.
+  #
+  # `u` refreshed the copy of xl1_heartbeat.py in the checkout and stopped,
+  # so the file on disk said 1.44.2 while the process answering the panel was
+  # still 1.44.1 -- the same "running is not installed" trap this menu has
+  # walked into three times in one evening, and the reason a fix for the CLI
+  # tile read as no fix at all.
+  #
+  # Compared, not assumed: installing unconditionally would restart the
+  # heartbeat on every `u`, including the many that change nothing about it.
+  _have="$(agent_version_of "$AGENT_DIR/xl1_heartbeat.py")"
+  _want="$(agent_version_of "${REPO_AGENT:-/nonexistent}/xl1_heartbeat.py")"
+  if [ -n "$_want" ] && [ -n "$_have" ] && [ "$_have" != "$_want" ]; then
+    say ""
+    note "the running agent is $_have and this checkout has $_want"
+    install_agent && ok "the agent is $_want now"
+  elif [ -n "$_have" ]; then
+    note "the heartbeat agent is $_have, which is what this checkout has"
   fi
 
   for _c in xl1-menu xl1-help; do

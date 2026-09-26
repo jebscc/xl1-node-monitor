@@ -1244,5 +1244,61 @@ else
   bad "the panel is nudged even when the deploy failed its own check"
 fi
 
+# --- u finishes the job, including the agent that is RUNNING -----------------
+#
+# `u` refreshed the copy of xl1_heartbeat.py in the checkout and stopped, so
+# the file said 1.44.2 while the process answering the panel was still
+# 1.44.1 -- and a fix for the CLI tile read as no fix at all. Third time in
+# one evening that "running is not installed" cost a round trip.
+printf '\nthe self-update leaves the running agent current too\n'
+SU2="$(printf '%s' "$SRC" | sed -n '/^a_selfupdate() {/,/^}/p')"
+
+if printf '%s' "$SU2" | grep -q 'install_agent'; then
+  ok "it installs the agent when the running one is behind"
+else
+  bad "the agent source is refreshed and the running agent is not" \
+      "the panel keeps answering from the old code"
+fi
+
+# COMPARED, NOT ASSUMED. Installing unconditionally restarts the heartbeat on
+# every `u`, including the many that change nothing about it.
+if printf '%s' "$SU2" | grep -q '"\$_have" != "\$_want"'; then
+  ok "and only when the two actually differ"
+else
+  bad "every u restarts the heartbeat" "including those that change nothing"
+fi
+
+# THE SAME READER FOR BOTH SIDES. Two ways of reading a version is how the
+# comparison ends up between a number and a nearly-identical number.
+AV="$(printf '%s' "$SRC" | sed -n '/^agent_version_of() {/,/^}/p')"
+if [ -n "$AV" ] \
+   && printf '%s' "$SU2" | grep -q 'agent_version_of "\$AGENT_DIR' \
+   && printf '%s' "$SU2" | grep -q 'agent_version_of "\${REPO_AGENT'; then
+  ok "the installed copy and the source are read the same way"
+else
+  bad "the two versions are read differently" "which is how they stop comparing"
+fi
+
+# A NODE WITH NO AGENT MUST NOT BE GIVEN ONE. Same rule the helper refresh
+# follows: refreshed, not introduced.
+# THE `if`, NOT ANY LINE THAT LOOKS LIKE IT. A bare grep found the `elif`
+# below and passed while the guard was deleted from the condition that
+# actually decides -- the second time tonight a second occurrence stood in
+# for the one being checked.
+IF_LINE="$(printf '%s' "$SU2" | grep -m1 '^  if \[ -n "\$_want" \]')"
+if printf '%s' "$IF_LINE" | grep -q '\-n "\$_have"'; then
+  ok "and a node with no agent installed is left without one"
+else
+  bad "it would install an agent onto a node that has none"       "condition: ${IF_LINE:-<not found>}"
+fi
+
+# The install is shared with choice 8 rather than written twice: two copies of
+# a command that restarts a service drift, and only one of them gets fixed.
+if printf '%s' "$SRC" | sed -n '/^a_agent() {/,/^}/p' | grep -q 'install_agent'; then
+  ok "choice 8 and the self-update install it the same way"
+else
+  bad "there are two ways to install the agent" "one of them will go stale"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

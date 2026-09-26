@@ -219,7 +219,13 @@ if docker image inspect "xl1:$LATEST" >/dev/null 2>&1; then
     # passed when it was built: the rule everywhere else here is that nothing
     # is promoted which has not just been shown to start, and an image that
     # has sat through a disk fault or a docker upgrade has not.
-    if [ "$PROMOTE" = 1 ] && [ "$RUNNING" != "$LATEST" ]; then
+    # ${PROMOTE:-0}, because this block is EXTRACTED AND DRIVEN on its
+    # own by test-stale-gate.sh -- it awks out the whole `if docker
+    # image inspect` region and evals it with only the few variables it
+    # cares about set. A block that reaches for something declared a
+    # hundred and fifty lines above is harder to test than one that
+    # does not, and the default here is the safe direction anyway.
+    if [ "${PROMOTE:-0}" = 1 ] && [ "$RUNNING" != "$LATEST" ]; then
       smoke_test || { log "WARNING: xl1:$LATEST no longer starts; not promoting"; exit 1; }
       promote
       exit 0

@@ -444,6 +444,12 @@ restart_verdict() { # restart_verdict <MENU_LOOP> <DRY_RUN> <new file parses?>
     say() { :; }; note() { printf 'NOTE %s\n' "$1"; }; warn() { :; }
     ok()  { printf 'OK %s\n' "$1"; }; err() { printf 'ERR %s\n' "$1"; }
     do_cmd() { return 0; }
+    # The one question the action now asks up front. Stubbed because
+    # this block is about what happens AFTER the answer -- that it is
+    # asked at all is checked on its own further down, where a stub
+    # cannot stand in for it.
+    confirm_action() { return 0; }
+    update_helpers() { return 0; }
     command() { if [ "$1" = -v ]; then printf '%s\n' "$_fake"; else return 0; fi; }
     exec() { printf 'EXEC %s\n' "$1"; }
     eval "$SELF_CODE"
@@ -1076,6 +1082,114 @@ if [ -n "$SU_ELSE" ] && [ -n "$SU_CALL" ] && [ -n "$SU_PULL" ] \
 else
   bad "it fetches over a git checkout" \
       "that discards whatever is local (pull=$SU_PULL else=$SU_ELSE call=$SU_CALL)"
+fi
+
+# --- the loop must not eat the operator's answers ----------------------------
+#
+# `menu_helpers | while read ...` puts the loop body in a subshell whose STDIN
+# IS THE PIPE, so ask_yn's read took the NEXT HELPER LINE as the answer. Every
+# prompt printed and answered itself instantly -- "run it? [y/N]:    skipped"
+# -- and the loop ate its own list on the way past: five entries, three
+# prompts, two that never appeared at all.
+printf '\nthe helper loop leaves stdin to the operator\n'
+UH2="$(printf '%s' "$SRC" | sed -n '/^update_helpers() {/,/^}/p')"
+
+# CODE, NOT THE COMMENT ABOUT IT. The note above update_helpers quotes the
+# broken form to explain why it is broken, and an unfiltered grep read that
+# as the bug being present -- the third time this evening a guard was
+# satisfied by prose describing the thing it checks.
+if printf '%s' "$UH2" | grep -vE '^[[:space:]]*#'    | grep -q 'menu_helpers | while'; then
+  bad "the loop reads from a pipe" \
+      "ask_yn's read takes the next list entry instead of the keypress"
+else
+  ok "the list does not arrive on the loop's stdin"
+fi
+
+if printf '%s' "$UH2" | grep -q 'read -r _rel _dst <&3' \
+   && printf '%s' "$UH2" | grep -q 'done 3<<'; then
+  ok "it comes in on its own descriptor, leaving stdin the terminal"
+else
+  bad "the list is not on a separate descriptor" \
+      "whatever reads next will consume it"
+fi
+
+# Driven, not read. The shapes are a one-character difference and the symptom
+# -- a prompt that answers itself -- looks like a terminal problem.
+_probe() {
+  ASSUME_YES=0; TTY_OK=1; DRY_RUN=0
+  ask_yn() { IFS= read -r _r || _r=""; case "$_r" in y|Y) return 0 ;; *) return 1 ;; esac; }
+  _rows() { printf 'a\nb\n'; }
+  _got=""
+  while IFS= read -r _row <&3; do
+    if ask_yn "run it?"; then _got="$_got$_row:yes "; else _got="$_got$_row:no "; fi
+  done 3<<ROWS
+$(_rows)
+ROWS
+  printf '%s' "$_got"
+}
+GOT="$(printf 'y\ny\n' | _probe)"
+if [ "$GOT" = "a:yes b:yes " ]; then
+  ok "and an answer typed for each entry reaches the question, not the list"
+else
+  bad "the answers and the list are still crossed" "got: $GOT"
+fi
+
+# --- one question for an update, not one per command -------------------------
+#
+# `u` asked about twelve commands. Twelve identical prompts is not twelve
+# decisions -- it is one decision and eleven keystrokes, which is how a person
+# learns to hold down y without reading.
+printf '\none question per update\n'
+CA="$(printf '%s' "$SRC" | sed -n '/^confirm_action() {/,/^}/p')"
+
+for _a in a_selfupdate a_agent a_build_image a_service; do
+  if printf '%s' "$SRC" | sed -n "/^$_a() {/,/^}/p" | grep -q 'confirm_action'; then
+    ok "  $_a asks once, up front"
+  else
+    bad "  $_a still asks per command" "or does not ask at all"
+  fi
+done
+
+# IT IS STILL A QUESTION. Auto-yes that nobody agreed to is not consent.
+if printf '%s' "$CA" | grep -q 'ask_yn'; then
+  ok "the one question is actually asked"
+else
+  bad "ASSUME_YES is set without asking anything" "that is not consent"
+fi
+
+if printf '%s' "$CA" | grep -qE 'ASSUME_YES=1' \
+   && [ "$(printf '%s' "$CA" | grep -c 'ASSUME_YES=0')" -ge 1 ]; then
+  ok "and it starts from no every time it is called"
+else
+  bad "a previous yes could still be in force when it is called"
+fi
+
+# CLEARED EITHER SIDE OF EVERY CHOICE, or a yes given for one action answers
+# for the next keypress too.
+DISP="$(printf '%s' "$SRC" | sed -n '/^dispatch() {/,/^}/p')"
+if [ "$(printf '%s' "$DISP" | grep -c 'ASSUME_YES=0')" -ge 2 ]; then
+  ok "and the dispatcher clears it either side of the action"
+else
+  bad "a yes can outlive the action it was given for" \
+      "the next choice would run unasked"
+fi
+
+# A DRY RUN MUST STILL WALK AN UPDATE. Making this the one thing that stops it
+# dead would remove most of what DRY_RUN is for.
+if printf '%s' "$CA" | grep -q 'DRY_RUN" = 1'; then
+  ok "a dry run is shown, not blocked on a question nobody is there to answer"
+else
+  bad "DRY_RUN cannot walk an update any more"
+fi
+
+# And the assumed answer is still PRINTED: a transcript that shows only the
+# commands, with no record of the agreement, is a worse record than one that
+# shows twelve prompts.
+AY="$(printf '%s' "$SRC" | sed -n '/^ask_yn() {/,/^}/p')"
+if printf '%s' "$AY" | grep -q 'agreed above'; then
+  ok "and each assumed answer is still shown in the transcript"
+else
+  bad "the assumed answers leave no record" "the log stops showing consent"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

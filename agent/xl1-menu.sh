@@ -173,11 +173,46 @@ warn() { printf '   %s%s%s\n' "$Y" "$1" "$X"; }
 ok()   { printf '   %s%s%s\n' "$G" "$1" "$X"; }
 err()  { printf '   %s%s%s\n' "$R" "$1" "$X"; }
 
+# ONE QUESTION FOR A WHOLE UPDATE, not one per command.
+#
+# `u` asks about twelve commands, and twelve identical prompts is not twelve
+# decisions -- it is one decision and eleven keystrokes, which is how a person
+# learns to hold down `y` without reading. Consent that is tiring to give is
+# consent that stops being read.
+#
+# So an UPDATE asks once, in full, and then runs. It is set only by
+# confirm_action, only after an explicit yes, and the menu loop clears it
+# after every choice so it can never survive into the next one.
+ASSUME_YES=0
+
 ask_yn() { # ask_yn <prompt> -> 0 yes
+  if [ "$ASSUME_YES" = 1 ]; then
+    # Still printed. The transcript has to show what ran, and "y (agreed
+    # above)" is the difference between a record and a blank.
+    printf '   %s [y/N]: %sy (agreed above)%s\n' "$1" "$D" "$X"
+    return 0
+  fi
   [ "$TTY_OK" = 1 ] || return 1
   printf '   %s [y/N]: ' "$1"
   IFS= read -r reply || reply=""
   case "$reply" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+# Ask once for everything an action is about to do. Returns non-zero when the
+# answer is no, so the action stops rather than proceeding un-agreed.
+confirm_action() { # confirm_action <what it will do>
+  ASSUME_YES=0
+  warn "$1"
+  # THE SAME CONTRACT do_cmd HAS. A dry run shows what would happen and asks
+  # nothing; making this the one thing that stops a dry run dead would mean
+  # DRY_RUN could no longer walk an update at all -- which is most of what it
+  # is for. ASSUME_YES stays 0, so every step below still prints its own line.
+  if [ "$DRY_RUN" = 1 ]; then note "dry run, nothing done"; return 0; fi
+  ask_yn "go ahead, without asking again for each step?" || {
+    note "stopped"
+    return 1
+  }
+  ASSUME_YES=1
 }
 
 # Show the command, ask, then run it. ONE PLACE, so no action can grow a path
@@ -388,7 +423,7 @@ a_build_image() {
 
   _was="$(running_cli)"
   note "the producer is running CLI ${_was:-<unreadable>}"
-  warn "This RESTARTS the producer if a newer release builds cleanly."
+  confirm_action "Builds the newest CLI, promotes it, and RESTARTS the producer onto it -- rolling back if the new image refuses this node's config or the restart does not come up clean." || return 1
 
   # --promote moves the tag inside the script, which is where the version
   # just built is known without parsing a log line for it. The last two lines
@@ -670,6 +705,7 @@ a_service() {
     err "no checkout of the anchor service here, so nothing to update."
     return 1
   fi
+  confirm_action "Moves the SDK pins to the newest published versions, runs every gate, and REBUILDS the anchor service onto them." || return 1
   _before="$(xyo_stack)"
   note "pinned in this checkout now:"
   printf '%s%s%s\n' "$D" "$_before" "$X"
@@ -910,6 +946,7 @@ a_redeploy() {
 
 a_agent() {
   say "${B}Update the heartbeat agent${X}"
+  confirm_action "Installs the agent from this checkout and restarts the heartbeat service." || return 1
   note "Copies the checkout's agent over the installed one and restarts it."
   if [ -z "$REPO_AGENT" ] || [ ! -f "$REPO_AGENT/xl1_heartbeat.py" ]; then
     err "this machine has no checkout of the agent to copy from."
@@ -976,7 +1013,17 @@ _looks_like_source() { # _looks_like_source <path>
 
 update_helpers() {
   [ -n "$REPO_AGENT" ] || { note "no agent directory here to refresh"; return 0; }
-  menu_helpers | while IFS='|' read -r _rel _dst; do
+  # ON FD 3, NOT A PIPE INTO THE LOOP.
+  #
+  # `menu_helpers | while read ...` puts the loop body in a subshell whose
+  # STDIN IS THE PIPE, so ask_yn's `read` took the NEXT HELPER LINE as the
+  # operator's answer. Every prompt printed and answered itself instantly --
+  # "run it? [y/N]:    skipped" -- and the loop ate its own list on the way
+  # through: five entries, three prompts, two silently gone.
+  #
+  # A here-document on a separate descriptor leaves stdin where it belongs,
+  # which is the terminal.
+  while IFS='|' read -r _rel _dst <&3; do
     [ -n "$_rel" ] && [ -n "$_dst" ] || continue
     _name="${_rel##*/}"
     # Refreshed, not introduced: a file the wizard never put here belongs to a
@@ -992,11 +1039,14 @@ update_helpers() {
     _dir="$(dirname "$_dst")"
     do_cmd "sudo install -m 755 '$_t' '$_dir/.$_name.new' && sudo mv -f '$_dir/.$_name.new' '$_dst'" \
       && ok "$_name refreshed"
-  done
+  done 3<<HELPERS
+$(menu_helpers)
+HELPERS
 }
 
 a_selfupdate() {
-  say "${B}Update these commands${X}"
+  say "${B}Update the menu and the scripts it runs${X}"
+  confirm_action "Fetches the menu, the help and the scripts the choices run, and installs each over the copy on this node." || return 1
   # NO CLONE IS NOT NO SOURCE. The published repo is where the wizard got
   # these in the first place, and fetching them again is the same act. This
   # used to refuse outright, on the one machine that most needed it.
@@ -1112,7 +1162,14 @@ $ITEMS
 EOF
   if [ -z "$fn" ]; then err "no such choice: $1"; return 2; fi
   printf '\n'
+  # CLEARED EITHER SIDE OF EVERY CHOICE. An action that agreed to run without
+  # further questions agreed for ITSELF; the next keypress is a new decision
+  # and must not inherit a yes given for something else.
+  ASSUME_YES=0
   "$fn"
+  _rc=$?
+  ASSUME_YES=0
+  return $_rc
 }
 
 main() {

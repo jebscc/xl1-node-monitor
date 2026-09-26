@@ -944,7 +944,26 @@ a_logs() {
 #
 # The wizard would also refresh them, but it recreates the producer and the
 # anchor to do it. Fetching four files should not cost a redeploy.
-MENU_HELPERS="rebuild-xl1-image.sh redeploy-anchor.sh bootstrap-pi.sh xl1_heartbeat.py"
+# EVERY FILE A CHOICE RUNS, WHEREVER IT LIVES -- and the last version of this
+# list said "agent/" and meant it, so the one helper that sits under service/
+# stayed stale and option 7 failed with `corepack: not found` from a script
+# fixed two commits earlier. The third stale-file report in one evening, and
+# the third time a correct fix read as a broken one.
+#
+# `published path | where it goes on this node`, because the two differ for
+# the bump script and assuming they match is what produced this.
+menu_helpers() {
+  printf '%s\n' \
+    "agent/rebuild-xl1-image.sh|$REPO_AGENT/rebuild-xl1-image.sh" \
+    "agent/redeploy-anchor.sh|$REPO_AGENT/redeploy-anchor.sh" \
+    "agent/bootstrap-pi.sh|$REPO_AGENT/bootstrap-pi.sh" \
+    "agent/xl1_heartbeat.py|$REPO_AGENT/xl1_heartbeat.py" \
+    "service/scripts/bump-xyo-stack.sh|$SERVICE_DIR/scripts/bump-xyo-stack.sh"
+}
+
+# The published tree's root. PUBLIC_REPO points INTO agent/, which was fine
+# while everything fetched lived there.
+PUBLIC_ROOT="${PUBLIC_REPO%/agent}"
 
 # A FETCHED FILE IS NOT A SCRIPT UNTIL IT LOOKS LIKE ONE. A captive portal, a
 # 404 page or a rate-limit notice all arrive as a 200 with a body, and
@@ -957,19 +976,22 @@ _looks_like_source() { # _looks_like_source <path>
 
 update_helpers() {
   [ -n "$REPO_AGENT" ] || { note "no agent directory here to refresh"; return 0; }
-  for _h in $MENU_HELPERS; do
+  menu_helpers | while IFS='|' read -r _rel _dst; do
+    [ -n "$_rel" ] && [ -n "$_dst" ] || continue
+    _name="${_rel##*/}"
     # Refreshed, not introduced: a file the wizard never put here belongs to a
     # node shape this is not, and quietly adding it changes what the menu
     # will do next time without anyone asking for that.
-    [ -f "$REPO_AGENT/$_h" ] || { note "$_h is not on this node; left alone"; continue; }
-    _t="/tmp/$_h.fetched"
-    do_cmd "curl -fsSL $PUBLIC_REPO/$_h -o $_t" || { note "could not fetch $_h"; continue; }
+    [ -f "$_dst" ] || { note "$_name is not on this node; left alone"; continue; }
+    _t="/tmp/$_name.fetched"
+    do_cmd "curl -fsSL $PUBLIC_ROOT/$_rel -o $_t" || { note "could not fetch $_name"; continue; }
     if [ "$DRY_RUN" != 1 ] && ! _looks_like_source "$_t"; then
-      err "what came back for $_h is not a script; leaving the one you have"
+      err "what came back for $_name is not a script; leaving the one you have"
       continue
     fi
-    do_cmd "sudo install -m 755 '$_t' '$REPO_AGENT/.$_h.new' && sudo mv -f '$REPO_AGENT/.$_h.new' '$REPO_AGENT/$_h'" \
-      && ok "$_h refreshed"
+    _dir="$(dirname "$_dst")"
+    do_cmd "sudo install -m 755 '$_t' '$_dir/.$_name.new' && sudo mv -f '$_dir/.$_name.new' '$_dst'" \
+      && ok "$_name refreshed"
   done
 }
 

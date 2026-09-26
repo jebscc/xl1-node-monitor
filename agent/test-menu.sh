@@ -1001,14 +1001,48 @@ else
       "option 5 would keep running whatever the wizard last unpacked"
 fi
 
-# EVERY SCRIPT A CHOICE INVOKES. One left out is one that silently stays old.
-for _s in rebuild-xl1-image.sh redeploy-anchor.sh bootstrap-pi.sh xl1_heartbeat.py; do
-  if printf '%s' "$SRC" | grep -q "MENU_HELPERS=.*$_s"; then
+# EVERY SCRIPT A CHOICE INVOKES, WHEREVER IT LIVES. One left out is one that
+# silently stays old -- and the version of this list that said "agent/" and
+# meant it left bump-xyo-stack.sh stale under service/, so option 7 failed
+# with `corepack: not found` from a script fixed two commits earlier.
+MH="$(printf '%s' "$SRC" | sed -n '/^menu_helpers() {/,/^}/p')"
+for _s in rebuild-xl1-image.sh redeploy-anchor.sh bootstrap-pi.sh \
+          xl1_heartbeat.py bump-xyo-stack.sh; do
+  if printf '%s' "$MH" | grep -q "$_s"; then
     ok "  $_s is refreshed"
   else
     bad "  $_s is never refreshed" "a choice runs it and nothing updates it"
   fi
 done
+
+# THE PUBLISHED PATH AND THE LOCAL PATH ARE NOT THE SAME, and assuming they
+# were is what left one helper behind: PUBLIC_REPO points INTO agent/, while
+# the bump script is published under service/scripts/.
+if printf '%s' "$MH" | grep -q 'service/scripts/bump-xyo-stack.sh|'; then
+  ok "and the one that is published elsewhere says where it comes from"
+else
+  bad "the fetch path is assumed to match the install path" \
+      "the bump script would be fetched from agent/ and 404"
+fi
+
+# EVERY LINE IN THE LIST MUST NAME BOTH. A half-written entry would fetch to
+# nowhere or install from nothing, and the loop skips it silently.
+BAD_ROWS="$(printf '%s' "$MH" | grep -oE '"[a-z0-9/._-]+\|[^"]*"' | grep -v '|\$' || true)"
+if [ -z "$BAD_ROWS" ]; then
+  ok "every entry says where it comes from and where it goes"
+else
+  bad "an entry is missing one side of the pair" "$BAD_ROWS"
+fi
+
+# PUBLIC_ROOT, not PUBLIC_REPO, for anything outside agent/.
+if printf '%s' "$SRC" | grep -q 'PUBLIC_ROOT="\${PUBLIC_REPO%/agent}"' \
+   && printf '%s' "$SRC" | sed -n '/^update_helpers() {/,/^}/p' \
+      | grep -q 'PUBLIC_ROOT/\$_rel'; then
+  ok "and fetches are rooted above agent/, where all of them actually are"
+else
+  bad "the fetch is still rooted inside agent/" \
+      "which is only right for four of the five"
+fi
 
 # A 200 IS NOT A SCRIPT. A captive portal, a 404 page and a rate-limit notice
 # all arrive with a body; installing one over a working tool replaces it with

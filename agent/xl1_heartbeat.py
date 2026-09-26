@@ -44,7 +44,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.44.2"
+AGENT_VERSION = "1.45.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -639,10 +639,45 @@ def read_statz(name):
         ("candidate_recoveries", ("counts", "candidateRecoveries")),
         ("production_attempts", ("counts", "blockProductionAttempts")),
         ("idle_attempts", ("counts", "idleAttempts")),
+        # WHETHER THE CHECKS ARE WORKING AT ALL, which nothing downstream
+        # could see until now. `failedChecks` counts a production check that
+        # THREW -- the producer wraps the whole cycle and increments it in the
+        # catch -- so it is errors, not slow rounds; the time budget only
+        # logs.
+        #
+        # On 2026-09-25 the Pi 4 recorded 4,017 of them between 14:00 and
+        # 20:00, every one a `TypeError: fetch failed` in
+        # BlockProductionTimer, and its share of the day's blocks fell from
+        # ~12% to 7.2% -- 5th of 8 to 7th. The panel showed a clean node
+        # throughout, because the only production figures it had were "built"
+        # and "published", which agree with each other whatever the network
+        # is doing.
+        #
+        # Checks travels with failures for the same reason the window travels
+        # with the counts: 4,017 is a catastrophe against 19,000 checks and a
+        # rounding error against four million.
+        ("production_checks", ("counts", "blockProductionChecks")),
+        ("failed_checks", ("counts", "failedChecks")),
     ):
         value = _statz_number(doc, *path)
         if value is not None:
             out[key] = value
+
+    # AND HOW MUCH OF IT IS HAPPENING NOW. See _checks_seen: the totals
+    # above cannot tell a live outage from one that ended yesterday, and the
+    # difference is the whole reason an operator looks.
+    _checks = out.get("production_checks")
+    _failed = out.get("failed_checks")
+    if _checks is not None and _failed is not None:
+        _started = doc.get("actorStartedAt")
+        _prev = _checks_seen
+        if (_prev["started"] == _started and _prev["checks"] is not None
+                and _checks >= _prev["checks"] and _failed >= _prev["failed"]):
+            out["checks_since_last"] = _checks - _prev["checks"]
+            out["failed_since_last"] = _failed - _prev["failed"]
+            out["since_last_ms"] = int(max(0, time.time() - _prev["at"]) * 1000)
+        _checks_seen.update(started=_started, checks=_checks,
+                            failed=_failed, at=time.time())
 
     # HOW LONG THE COUNTS COVER. Without it every counter above is a bare
     # number: three blocks produced is excellent in a minute and alarming in a
@@ -1748,6 +1783,21 @@ _peers_cache = {"at": 0.0, "value": None}
 # runner that had been alive for twenty seconds. None says "never run" without
 # depending on how long the host has been awake.
 _attest_cache = {"at": None, "signer": None}
+
+# WHAT HAS HAPPENED SINCE THE LAST LOOK, because a total cannot say "now".
+#
+# The producer's counters run from when the ACTOR started, and on 2026-09-25
+# that made a seven-hour outage and a healthy afternoon read identically: 4,017
+# failed checks against 19,421 was "21% of this node's checks fail", when in
+# fact it was 800 an hour from 14:00 to 20:00 and then nothing at all. A panel
+# built on the total alone would have gone amber during the incident and STAYED
+# amber for the rest of the run -- trading one lie for another.
+#
+# Keyed on actorStartedAt: the producer zeroes these when it restarts, so a
+# delta across a restart would be nonsense. A drop in the raw counter means the
+# same thing and is treated the same way -- the sample is remembered, no delta
+# is claimed, and the next pass has a pair it can subtract.
+_checks_seen = {"started": None, "checks": None, "failed": None, "at": None}
 
 
 _earnings_cache = {"at": 0.0, "value": None}

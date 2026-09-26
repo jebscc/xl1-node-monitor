@@ -3992,6 +3992,11 @@ def test_it_reads_what_a_5_4_1_producer_counts(monkeypatch):
     # that answers it.
     assert got["production_attempts"] == 13
     assert got["idle_attempts"] == 10
+    # AND WHETHER THE CHECKS ARE WORKING. Without these two a node whose
+    # every check is throwing reports the same production figures as a
+    # healthy one; see the incident test below.
+    assert got["production_checks"] == 17
+    assert got["failed_checks"] == 0
     # The largest single cost on the path to a published block.
     assert got["time_payload_ms"] == 287
     # AND THE WINDOW THE COUNTS COVER. Three blocks produced is excellent in a
@@ -4001,6 +4006,123 @@ def test_it_reads_what_a_5_4_1_producer_counts(monkeypatch):
     # And the older readings still come through unchanged.
     assert got["head_p50_ms"] == 13
     assert got["cycle_p50_ms"] == 396
+
+
+# A node in the state the Pi 4 was actually in on 2026-09-25 14:00-20:00:
+# building and publishing in perfect agreement, and a fifth of its production
+# checks dying on a network error. Captured shape, not invented -- the counts
+# are the real ones, scaled down to the fixture's window.
+STATZ_FAILING = json.dumps({
+    "actor": "producer",
+    "actorStartedAt": "2026-09-25T10:00:00.000Z",
+    "actorUptimeMs": 102695896,
+    "counts": {"actorStarts": 1, "blockProductionAttempts": 13692,
+               "blockProductionChecks": 19421, "blocksProduced": 2346,
+               "blocksPublished": 2346, "candidateRecoveries": 112,
+               "concurrentChecksSkipped": 2, "failedChecks": 4017,
+               "idleAttempts": 11346, "rejectedPublishes": 0},
+    "generatedAt": "2026-09-26T14:35:00.000Z",
+    "timings": {
+        "headFetch": {"count": 19421, "minMs": 8, "p50Ms": 13, "p95Ms": 347},
+        "productionCycle": {"count": 13692, "p50Ms": 396, "p95Ms": 12919},
+    },
+})
+
+
+def test_a_node_losing_a_fifth_of_its_checks_says_so(monkeypatch):
+    """The failure that was invisible, and what it cost.
+
+    THE PANEL SHOWED "2342 of 2342" THROUGHOUT. built and published agree
+    with each other whether the network is reachable or not -- published can
+    only differ by rejectedPublishes, which was 0 -- so the one figure the
+    card led with was the one figure that could not move.
+
+    Meanwhile every sixth minute of that afternoon the producer threw
+    `TypeError: fetch failed` out of BlockProductionTimer, and the node's
+    share of the day's blocks went 11.9% -> 7.2%, 5th of 8 to 7th. The day
+    after, clean, it took 15.1% and 2nd.
+
+    So these two numbers are the point of the card, and nothing was
+    collecting them.
+    """
+    _stub_run(monkeypatch, [("statz", STATZ_FAILING)])
+    got = agent.read_statz("xl1-producer")
+    assert got is not None
+    assert got["failed_checks"] == 4017
+    assert got["production_checks"] == 19421
+    # The pair, not either alone: a bare 4,017 cannot be judged.
+    assert got["failed_checks"] / got["production_checks"] > 0.2
+    # And the figures the old card led with, agreeing as they always do.
+    assert got["blocks_produced"] == got["blocks_published"] == 2346
+
+
+def _statz_with(started, checks, failed):
+    return json.dumps({
+        "actor": "producer",
+        "actorStartedAt": started,
+        "actorUptimeMs": 60000,
+        "counts": {"actorStarts": 1, "blockProductionAttempts": checks,
+                   "blockProductionChecks": checks, "blocksProduced": 1,
+                   "blocksPublished": 1, "candidateRecoveries": 0,
+                   "concurrentChecksSkipped": 0, "failedChecks": failed,
+                   "idleAttempts": 0, "rejectedPublishes": 0},
+        "timings": {"headFetch": {"count": 1, "minMs": 8, "p50Ms": 13}},
+    })
+
+
+def test_an_outage_that_ended_stops_reading_as_one(monkeypatch):
+    """A total cannot say "now", and that is the whole question.
+
+    On 2026-09-25 the Pi 4 failed 4,017 checks between 14:00 and 20:00 and
+    then none. Reported as a total against the run, that node reads as "21% of
+    my checks fail" for as long as the producer stays up -- so a panel driven
+    by the total alone goes amber during the incident and STAYS amber through
+    every healthy hour after it. That is not a better card than the one that
+    never went amber at all; it is the same uselessness pointing the other
+    way.
+    """
+    agent._checks_seen.update(started=None, checks=None, failed=None, at=None)
+
+    # First look: nothing to subtract from, so nothing is claimed.
+    _stub_run(monkeypatch, [("statz", _statz_with("A", 19421, 4017))])
+    first = agent.read_statz("xl1-producer")
+    assert "failed_since_last" not in first,         "a first sample has no predecessor and must not invent a rate"
+
+    # Second look, same run, the failures over: the totals still carry the
+    # incident, and the delta says it is behind us.
+    _stub_run(monkeypatch, [("statz", _statz_with("A", 19821, 4017))])
+    second = agent.read_statz("xl1-producer")
+    assert second["failed_checks"] == 4017
+    assert second["failed_since_last"] == 0
+    assert second["checks_since_last"] == 400
+    assert second["since_last_ms"] >= 0
+
+    # And a live outage is a live outage.
+    _stub_run(monkeypatch, [("statz", _statz_with("A", 20221, 4417))])
+    third = agent.read_statz("xl1-producer")
+    assert third["failed_since_last"] == 400
+
+
+def test_a_restarted_producer_is_not_subtracted_from(monkeypatch):
+    """The counters zero on restart, so the delta would go negative.
+
+    actorStartedAt is what tells them apart. Without that check a producer
+    that restarted after a bad run reports a huge negative -- or, worse, a
+    huge positive if the sign is lost somewhere downstream.
+    """
+    agent._checks_seen.update(started=None, checks=None, failed=None, at=None)
+    _stub_run(monkeypatch, [("statz", _statz_with("A", 19421, 4017))])
+    agent.read_statz("xl1-producer")
+
+    _stub_run(monkeypatch, [("statz", _statz_with("B", 12, 0))])
+    after = agent.read_statz("xl1-producer")
+    assert "failed_since_last" not in after,         "a restarted producer was subtracted from the previous run"
+
+    # And the run after the restart still gets its own deltas.
+    _stub_run(monkeypatch, [("statz", _statz_with("B", 112, 3))])
+    later = agent.read_statz("xl1-producer")
+    assert later["checks_since_last"] == 100
+    assert later["failed_since_last"] == 3
 
 
 def test_the_older_document_still_reads_without_the_new_counters(monkeypatch):

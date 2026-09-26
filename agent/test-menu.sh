@@ -1192,5 +1192,57 @@ else
   bad "the assumed answers leave no record" "the log stops showing consent"
 fi
 
+# --- the panel is told, not left to notice -----------------------------------
+#
+# The agent caches both version readings for an hour, correctly: the CLI one
+# is `docker exec xl1 --version`, 3.5 SECONDS on this hardware, on a machine
+# whose job is producing blocks. The cost lands in the one minute an operator
+# is looking -- the SDK tile sat on the pre-deploy version with its own
+# "newer available" note beside it.
+printf '\nan update tells the panel what it just did\n'
+RP="$(printf '%s' "$SRC" | sed -n '/^refresh_panel() {/,/^}/p')"
+
+for _a in a_build_image deploy_now; do
+  if printf '%s' "$SRC" | sed -n "/^$_a() {/,/^}/p" | grep -q 'refresh_panel'; then
+    ok "  $_a nudges the panel when it has changed something"
+  else
+    bad "  $_a leaves the tile stale for up to an hour" \
+        "which is exactly the hour somebody is looking at it"
+  fi
+done
+
+# A RESTART, NOT A SIGNAL. SIGHUP's default action is to TERMINATE, so
+# signalling an agent older than any handler for it would kill the heartbeat
+# on precisely the nodes furthest behind -- and stale files on nodes is the
+# theme of the day.
+if printf '%s' "$RP" | grep -q 'systemctl restart xl1-heartbeat'; then
+  ok "it restarts the agent, which means the same thing to every version"
+else
+  bad "the nudge is not a restart" \
+      "a signal an older agent does not handle kills the heartbeat"
+fi
+if printf '%s' "$RP" | grep -qE '\-HUP|SIGHUP'; then
+  bad "it signals the agent" "SIGHUP terminates an agent with no handler for it"
+else
+  ok "and nothing is signalled"
+fi
+
+# ONLY WHERE THERE IS ONE. Most of what this menu runs on has the unit; a node
+# that does not must not see a systemd error for an optional nicety.
+if printf '%s' "$RP" | grep -q 'systemctl cat xl1-heartbeat.service'; then
+  ok "and a node without the unit is left alone"
+else
+  bad "it would report Unit not found on a node that has no agent"
+fi
+
+# NOT AFTER A DEPLOY THAT FAILED ITS CHECK. Re-reading versions is harmless,
+# but the sequence says "this worked" and it must only say that when it did.
+if printf '%s' "$SRC" | sed -n '/^deploy_now() {/,/^}/p' \
+   | grep -q 'verify_anchor "$_ports_before" || return 1'; then
+  ok "and a deploy that lost a binding stops before claiming success"
+else
+  bad "the panel is nudged even when the deploy failed its own check"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -474,6 +474,7 @@ a_build_image() {
     return 1
   }
   ok "the producer is running CLI $_new"
+  refresh_panel
   note "roll back with: sudo docker tag xl1:${_prev:-<version>} xl1:local"
   note "then option 3 to restart onto it."
 }
@@ -492,6 +493,34 @@ rollback_cli() {
   do_cmd "sudo docker tag xl1:$1 xl1:local" \
     && ok "xl1:local points at $1 again. The producer never left it." \
     || err "could not retag xl1:local -- do it by hand before any restart."
+}
+
+# TELL THE PANEL WHAT JUST HAPPENED, instead of letting it find out.
+#
+# The agent caches the two version readings, and for good reason: the CLI one
+# is `docker exec xl1 --version`, measured at 3.5 SECONDS on this hardware,
+# on a machine whose actual job is producing blocks. An hour is the right
+# interval for a number that only changes when somebody deploys.
+#
+# The cost of that is the one minute an operator is actually looking: the
+# update succeeds, and the tile goes on showing the version it replaced -- the
+# SERVICE SDK tile sat on 5.6.1 for an hour after a successful move to 5.7.1,
+# with its own "5.7.1 available" note beside it.
+#
+# A restart, not a signal. SIGHUP's default action is to TERMINATE, so
+# signalling an agent that predates a handler for it would kill the heartbeat
+# on exactly the nodes furthest behind -- and this menu has spent the evening
+# discovering that nodes run older files than anyone expects. A restart means
+# the same thing to every version there has ever been.
+#
+# Cheap, too: the agent re-reads everything on start, the backend's staleness
+# threshold is ninety seconds, and option 8 already restarts it routinely.
+refresh_panel() {
+  systemctl cat xl1-heartbeat.service >/dev/null 2>&1 || return 0
+  note "asking the agent to re-read its versions, so the panel does not wait"
+  do_cmd "sudo systemctl restart xl1-heartbeat" \
+    && ok "the panel will show this on its next beat" \
+    || warn "could not restart the heartbeat; the panel will catch up on its own"
 }
 
 # WHAT THE PRODUCER IS ACTUALLY RUNNING, asked of the container rather than of
@@ -763,7 +792,8 @@ deploy_now() {
     a_redeploy || return 1
   fi
 
-  verify_anchor "$_ports_before"
+  verify_anchor "$_ports_before" || return 1
+  refresh_panel
 }
 
 # Whether compose made this container, asked of the label compose sets rather

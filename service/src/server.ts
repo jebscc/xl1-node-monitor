@@ -12,7 +12,9 @@ import {
   GatewayBuilder,
   HashSchema,
   type HashPayload,
+  getRestGateway,
   NetworkDataLakeUrls,
+  restGatewayConfigFromEndpoint,
   SimpleBlockRewardViewer,
   SimpleXyoGateway,
   SimpleXyoGatewayRunner,
@@ -76,16 +78,25 @@ const explorerOrigin = (network: string): string =>
 // so the two networks resolve to Sepolia and Ethereum mainnet respectively.
 // Optional: without it /standing reports a balance and no stake, exactly as
 // before, rather than failing.
-interface NetCfg { rpcUrl?: string; label: string; evmRpcUrl?: string }
+interface NetCfg {
+  rpcUrl?: string
+  label: string
+  evmRpcUrl?: string
+  /** Root the standard bucket subdomains hang off: blocks./state./indexes.<root>.
+   *  Reads come from here; only writes still need rpcUrl. */
+  restEndpoint?: string
+}
 const NETWORKS: Record<string, NetCfg> = {
   sequence: {
     rpcUrl: process.env.XL1_SEQUENCE_RPC_URL,
     evmRpcUrl: process.env.XL1_SEQUENCE_EVM_RPC_URL,
+    restEndpoint: process.env.XL1_SEQUENCE_REST_ENDPOINT ?? 'https://sequence.xyo.space',
     label: 'Sequence Testnet',
   },
   mainnet: {
     rpcUrl: process.env.XL1_MAINNET_RPC_URL,
     evmRpcUrl: process.env.XL1_MAINNET_EVM_RPC_URL,
+    restEndpoint: process.env.XL1_MAINNET_REST_ENDPOINT ?? 'https://mainnet.xyo.space',
     label: 'XL1 Mainnet',
   },
 }
@@ -151,9 +162,59 @@ const buildGateway = (network: string) => {
   return dataLake ? builder.dataLakeEndpoint(dataLake) : builder
 }
 
+/* READS GO OVER REST; ONLY WRITES NEED RPC.
+ *
+ * Every chain read here used to go through GatewayBuilder().rpcUrl(), which
+ * is the RPC-only convenience entry point -- its own doc says it exists to
+ * avoid "touching ProviderFactoryLocator, connection config, or any" of the
+ * real provider wiring. That was never a decision about transports, and the
+ * node beside this service has been reading the same chain over REST all
+ * along: XL1_ROLE=producer-rest, with the sequence preset naming
+ * blocks./state./indexes.sequence.xyo.space.
+ *
+ * MEASURED ON THE PI, 2026-09-26, walking 10,000 blocks back from the head
+ * in batches of 2000 -- the field-days scan's own access pattern:
+ *
+ *   rpc                 8735ms   1145 blocks/s
+ *   rest readStep 3     4529ms   2208 blocks/s
+ *   rest readStep 0     3752ms   2665 blocks/s
+ *
+ * The rpc rate corroborates the real thing: 57,465 blocks / 1145 = 50s,
+ * against 56s measured end to end. At 2665 the same scan is about 22s.
+ *
+ * readStep 0, NOT 3, and the docs' advice is not wrong -- it is about a
+ * different access pattern. readStep exists so a `blockByNumber` MISS pulls
+ * the whole containing published step; this scan asks for ranges with
+ * `blocksByNumber`, so the step preloading is work already being done by the
+ * range read. Hence 3 being slower than 0 here, at both 2,000 and 10,000.
+ *
+ * The fallback is not decoration: a network with no restEndpoint, or a REST
+ * layout that will not build, still gets a working gateway rather than an
+ * outage. XL1_READ_TRANSPORT=rpc forces the old path without a redeploy.
+ */
+const readTransport = (process.env.XL1_READ_TRANSPORT ?? 'rest').toLowerCase()
+
+const buildReadGateway = async (network: string): Promise<SimpleXyoGateway> => {
+  const endpoint = NETWORKS[network]?.restEndpoint
+  if (readTransport === 'rest' && endpoint) {
+    try {
+      return await getRestGateway({
+        ...restGatewayConfigFromEndpoint(endpoint),
+        blockViewerOptions: { readStep: 0 },
+        name: network,
+      }) as SimpleXyoGateway
+    } catch (e) {
+      // Said, not swallowed: falling back silently would hide a REST layout
+      // that has moved, and the only symptom would be the old speed.
+      console.warn(`[gateway] REST reads unavailable for ${network}, using rpc: ${e}`)
+    }
+  }
+  return await buildGateway(network).build() as SimpleXyoGateway
+}
+
 const getReadGateway = async (network: string): Promise<SimpleXyoGateway> => {
   if (readGateways[network]) return readGateways[network]
-  const gw = await buildGateway(network).build() as SimpleXyoGateway
+  const gw = await buildReadGateway(network)
   readGateways[network] = gw
   return gw
 }

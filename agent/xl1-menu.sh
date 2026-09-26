@@ -260,6 +260,20 @@ dump_config_cmd() {   # the command, or nothing when this node cannot be asked
   fi
 }
 
+# DOES THE CONFIG CHECK ACTUALLY ASK THE NEW IMAGE?
+#
+# Only when the env file was found. Then it is `docker run ... xl1:local
+# --dump-config`, and after a promotion xl1:local IS the new image.
+#
+# Without it the fallback is `docker exec` into the RUNNING container -- which
+# is still on the OLD image, because tagging restarts nothing. That check
+# answers about the wrong subject and answers "fine", which after a promote is
+# the worst shape a check can have: it clears the new image on the old one's
+# behalf. The CM4 has no discoverable env file, so this is not hypothetical.
+config_gate_asks_new_image() {
+  [ -n "$PRODUCER_ENV" ]
+}
+
 a_dump() {
   say "${B}Check the producer's configuration${X}"
   note "Resolves presets, env file and flags and exits WITHOUT starting an actor."
@@ -401,11 +415,22 @@ a_build_image() {
   ok "xl1:local now points at $_new (was ${_prev:-unknown})"
 
   # THE NEW IMAGE, ASKED ABOUT THIS NODE'S ENV, BEFORE ANYTHING RESTARTS.
-  if config_refused; then
-    err "the NEW CLI refuses this node's configuration (exit 78)."
-    err "Restarting would crash-loop it, so it has not been restarted."
-    rollback_cli "$_prev"
-    return 1
+  if config_gate_asks_new_image; then
+    if config_refused; then
+      err "the NEW CLI refuses this node's configuration (exit 78)."
+      err "Restarting would crash-loop it, so it has not been restarted."
+      rollback_cli "$_prev"
+      return 1
+    fi
+    ok "the new image accepts this node's configuration"
+  else
+    # SAID, NOT SKIPPED QUIETLY. The only check available here runs inside the
+    # container that is still on the OLD image, so it would clear the new one
+    # on the old one's behalf.
+    warn "this node's env file was not discoverable, so the NEW image could"
+    warn "not be asked about it. The only check available runs inside the"
+    warn "container still on the OLD image and would answer for the wrong"
+    warn "one, so it was not made. The smoke test stands; this does not."
   fi
 
   a_restart_producer || {

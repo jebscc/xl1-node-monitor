@@ -949,5 +949,38 @@ else
   ok "it does not go silent for the length of a build"
 fi
 
+# --- the config gate must be about the NEW image -----------------------------
+#
+# With an env file the check is `docker run ... xl1:local --dump-config`, and
+# after a promotion xl1:local IS the new image. Without one it falls back to
+# `docker exec` into the RUNNING container -- still on the OLD image, because
+# tagging restarts nothing. That answers about the wrong subject and answers
+# "fine", clearing the new image on the old one's behalf. The CM4 has no
+# discoverable env file, so this is not hypothetical.
+printf '\nthe config gate only speaks about the image it can see\n'
+
+if printf '%s' "$SRC" | sed -n '/^a_build_image() {/,/^}/p' \
+   | grep -q 'config_gate_asks_new_image'; then
+  ok "the gate is consulted only when it is about the new image"
+else
+  bad "the gate is trusted even when it can only see the old image" \
+      "after a promote that clears the new image on the old one's behalf"
+fi
+
+CG="$(printf '%s' "$SRC" | sed -n '/^config_gate_asks_new_image() {/,/^}/p')"
+if printf '%s' "$CG" | grep -q 'PRODUCER_ENV'; then
+  ok "and it is the env file that decides, which is what picks the subject"
+else
+  bad "what the gate can see is decided by something other than the env file"
+fi
+
+# SAID, NOT SKIPPED QUIETLY. A check that could not be made is worth knowing
+# about; silence here reads as a check that passed.
+if printf '%s' "$SRC" | sed -n '/^a_build_image() {/,/^}/p' \
+   | grep -A 6 'else' | grep -q 'not be asked about it'; then
+  ok "and a check that could not be made says so"
+else
+  bad "the skipped check is silent" "silence reads as a pass"
+fi
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

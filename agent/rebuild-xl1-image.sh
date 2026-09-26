@@ -117,6 +117,69 @@ image_behind_entrypoint() {
   [ -n "$(find "$REPO/dist/node/entrypoint.mjs" -newermt "@$1" -print -quit 2>/dev/null || true)" ]
 }
 
+# --- the two things a promotion needs, defined before anything can exit ----
+#
+# Both of these used to live below the build, which meant the "already built,
+# nothing to do" path -- the ordinary case on a node that rebuilt yesterday --
+# reached `exit 0` without either being in scope. Asking that node to promote
+# did nothing and said so in a NOTE that already contained the words "built
+# but not promoted".
+
+# Does xl1:$LATEST actually start? Asks the entrypoint for a version, which
+# exercises the path a real start takes; `node -e process.exit(0)` proved only
+# that a Node binary existed and would have passed a broken CLI.
+smoke_test() {
+  SMOKE_OUT="$(docker run --rm --entrypoint xl1 "xl1:$LATEST" --version 2>/dev/null \
+    || docker run --rm -e XL1_NETWORK= -e XL1_ROLE= "xl1:$LATEST" --version 2>/dev/null \
+    || true)"
+  [ -n "$SMOKE_OUT" ] || return 1
+  log "smoke test passed: $(printf '%s' "$SMOKE_OUT" | head -1)"
+}
+
+# --- promote ---------------------------------------------------------------
+# Only ever after the smoke test, and only on --promote.
+#
+# The version xl1:local pointed at is recorded BEFORE the tag moves, because
+# afterwards there is nothing left to read it from -- `xl1:local` is one
+# pointer and retagging overwrites it. Without that name a rollback means
+# guessing which of the kept images was the one that worked.
+promote() {
+  local was="" was_id=""
+  was_id="$(docker image inspect xl1:local --format '{{.Id}}' 2>/dev/null || true)"
+  if [ -n "$was_id" ]; then
+    # Each tag is inspected rather than matched on the short ID that
+    # `docker images` prints: that is a prefix of the full one inspect
+    # returns, and a prefix comparison is a coin toss dressed as a check.
+    local t full
+    for t in $(docker images xl1 --format '{{.Tag}}' 2>/dev/null \
+               | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true); do
+      full="$(docker image inspect "xl1:$t" --format '{{.Id}}' 2>/dev/null || true)"
+      if [ "$full" = "$was_id" ]; then was="$t"; break; fi
+    done
+  fi
+
+  if [ "$was" = "$LATEST" ]; then
+    log "xl1:local already points at $LATEST; nothing to promote"
+    printf 'PROMOTED=%s\nPREVIOUS=%s\n' "$LATEST" "$LATEST"
+    return 0
+  fi
+
+  docker tag "xl1:$LATEST" xl1:local || fail "could not retag xl1:local"
+  log "promoted: xl1:local now points at $LATEST (was ${was:-unknown})"
+  log "NOT restarted. The producer runs its old image until something restarts it."
+  if [ -n "$was" ]; then
+    log "roll back with: docker tag xl1:$was xl1:local"
+  else
+    log "WARNING: could not name the version xl1:local pointed at, so there is"
+    log "no one-line rollback. docker images xl1 lists what is still here."
+  fi
+  # LAST TWO LINES, PARSED BY THE CALLER. Printed on stdout without the log
+  # timestamp so xl1-menu can read them without matching prose that is free to
+  # change. PREVIOUS is empty when it could not be named, which the caller
+  # must treat as "no automatic rollback", not as "nothing to roll back to".
+  printf 'PROMOTED=%s\nPREVIOUS=%s\n' "$LATEST" "$was"
+}
+
 if docker image inspect "xl1:$LATEST" >/dev/null 2>&1; then
   BUILT_AT="$(docker image inspect "xl1:$LATEST" --format '{{.Created}}' 2>/dev/null || true)"
   AGE_DAYS=9999
@@ -144,7 +207,23 @@ if docker image inspect "xl1:$LATEST" >/dev/null 2>&1; then
   elif image_behind_entrypoint "${BUILT_EPOCH:-0}"; then
     log "xl1:$LATEST predates the compiled entrypoint; rebuilding"
   elif [ "$AGE_DAYS" -lt "$MAX_IMAGE_AGE_DAYS" ]; then
-    log "xl1:$LATEST built ${AGE_DAYS}d ago; nothing to do"
+    log "xl1:$LATEST built ${AGE_DAYS}d ago; nothing to build"
+    # NOTHING TO BUILD IS NOT NOTHING TO DO.
+    #
+    # This exited here, and the NOTE it printed on the way out said "built but
+    # not promoted" -- which is the exact condition --promote was asked to
+    # resolve. On a node that rebuilt yesterday, asking for the update did
+    # nothing at all and reported success.
+    #
+    # Smoke-tested again before promoting rather than trusted because it
+    # passed when it was built: the rule everywhere else here is that nothing
+    # is promoted which has not just been shown to start, and an image that
+    # has sat through a disk fault or a docker upgrade has not.
+    if [ "$PROMOTE" = 1 ] && [ "$RUNNING" != "$LATEST" ]; then
+      smoke_test || { log "WARNING: xl1:$LATEST no longer starts; not promoting"; exit 1; }
+      promote
+      exit 0
+    fi
     [ "$RUNNING" = "$LATEST" ] || log "NOTE: built but not promoted -- running $RUNNING, available $LATEST"
     exit 0
   else
@@ -280,9 +359,8 @@ log "built xl1:$LATEST"
 # version instead, which exercises the path a real start takes.
 #
 # --rm and no env-file: it exits immediately and does not join a network.
-SMOKE_OUT="$(docker run --rm --entrypoint xl1 "xl1:$LATEST" --version 2>/dev/null || docker run --rm -e XL1_NETWORK= -e XL1_ROLE= "xl1:$LATEST" --version 2>/dev/null || true)"
-if [ -n "$SMOKE_OUT" ]; then
-  log "smoke test passed: $(printf '%s' "$SMOKE_OUT" | head -1)"
+if smoke_test; then
+  :
 else
   log "WARNING: smoke test failed; do not promote xl1:$LATEST"
   exit 1
@@ -349,49 +427,6 @@ EOF
 
 prune_old_images
 
-# --- promote ---------------------------------------------------------------
-# Only ever after the smoke test, and only on --promote.
-#
-# The version xl1:local pointed at is recorded BEFORE the tag moves, because
-# afterwards there is nothing left to read it from -- `xl1:local` is one
-# pointer and retagging overwrites it. Without that name a rollback means
-# guessing which of the kept images was the one that worked.
-promote() {
-  local was="" was_id=""
-  was_id="$(docker image inspect xl1:local --format '{{.Id}}' 2>/dev/null || true)"
-  if [ -n "$was_id" ]; then
-    # Each tag is inspected rather than matched on the short ID that
-    # `docker images` prints: that is a prefix of the full one inspect
-    # returns, and a prefix comparison is a coin toss dressed as a check.
-    local t full
-    for t in $(docker images xl1 --format '{{.Tag}}' 2>/dev/null \
-               | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true); do
-      full="$(docker image inspect "xl1:$t" --format '{{.Id}}' 2>/dev/null || true)"
-      if [ "$full" = "$was_id" ]; then was="$t"; break; fi
-    done
-  fi
-
-  if [ "$was" = "$LATEST" ]; then
-    log "xl1:local already points at $LATEST; nothing to promote"
-    printf 'PROMOTED=%s\nPREVIOUS=%s\n' "$LATEST" "$LATEST"
-    return 0
-  fi
-
-  docker tag "xl1:$LATEST" xl1:local || fail "could not retag xl1:local"
-  log "promoted: xl1:local now points at $LATEST (was ${was:-unknown})"
-  log "NOT restarted. The producer runs its old image until something restarts it."
-  if [ -n "$was" ]; then
-    log "roll back with: docker tag xl1:$was xl1:local"
-  else
-    log "WARNING: could not name the version xl1:local pointed at, so there is"
-    log "no one-line rollback. docker images xl1 lists what is still here."
-  fi
-  # LAST TWO LINES, PARSED BY THE CALLER. Printed on stdout without the log
-  # timestamp so xl1-menu can read them without matching prose that is free to
-  # change. PREVIOUS is empty when it could not be named, which the caller
-  # must treat as "no automatic rollback", not as "nothing to roll back to".
-  printf 'PROMOTED=%s\nPREVIOUS=%s\n' "$LATEST" "$was"
-}
 
 if [ "$PROMOTE" = 1 ]; then
   promote

@@ -982,5 +982,67 @@ if printf '%s' "$SRC" | sed -n '/^a_build_image() {/,/^}/p' \
 else
   bad "the skipped check is silent" "silence reads as a pass"
 fi
+
+# --- the menu updates what it RUNS, not only itself --------------------------
+#
+# On a tarball node the menu updated, its labels changed, and option 5 went on
+# running the rebuild script the wizard unpacked weeks earlier -- which read,
+# twice on the CM4, as a fix that had not worked. A clone gets them from
+# `git pull`; a tarball node got nothing.
+printf '\nthe self-update refreshes the scripts the menu runs\n'
+
+SU="$(printf '%s' "$SRC" | sed -n '/^a_selfupdate() {/,/^}/p')"
+UH="$(printf '%s' "$SRC" | sed -n '/^update_helpers() {/,/^}/p')"
+
+if printf '%s' "$SU" | grep -q 'update_helpers'; then
+  ok "it refreshes them as well as the two commands"
+else
+  bad "only the menu and the help are updated" \
+      "option 5 would keep running whatever the wizard last unpacked"
+fi
+
+# EVERY SCRIPT A CHOICE INVOKES. One left out is one that silently stays old.
+for _s in rebuild-xl1-image.sh redeploy-anchor.sh bootstrap-pi.sh xl1_heartbeat.py; do
+  if printf '%s' "$SRC" | grep -q "MENU_HELPERS=.*$_s"; then
+    ok "  $_s is refreshed"
+  else
+    bad "  $_s is never refreshed" "a choice runs it and nothing updates it"
+  fi
+done
+
+# A 200 IS NOT A SCRIPT. A captive portal, a 404 page and a rate-limit notice
+# all arrive with a body; installing one over a working tool replaces it with
+# an apology.
+if printf '%s' "$UH" | grep -q '_looks_like_source'; then
+  ok "what came back is checked for a shebang before it is installed"
+else
+  bad "anything that downloads is installed over a working script"
+fi
+
+# REFRESHED, NOT INTRODUCED. A file the wizard never placed belongs to a node
+# shape this is not, and adding it changes what the menu does next time.
+if printf '%s' "$UH" | grep -q 'is not on this node; left alone'; then
+  ok "and a script this node never had is not invented for it"
+else
+  bad "it would add scripts the wizard never put here"
+fi
+
+# A CLONE ALREADY HAS THEM. Fetching over a pull would overwrite local work
+# with published main, which is the opposite of what a checkout is for.
+# Positional, not a fixed window of context: the first version looked two
+# lines back for the `else` and it sits three above, so a correct
+# arrangement failed. Where the call is relative to the branch is the
+# actual question.
+SU_ELSE="$(printf '%s' "$SU" | grep -n '^  else$' | head -1 | cut -d: -f1)"
+SU_CALL="$(printf '%s' "$SU" | grep -n 'update_helpers$' | head -1 | cut -d: -f1)"
+SU_PULL="$(printf '%s' "$SU" | grep -n 'git pull' | head -1 | cut -d: -f1)"
+if [ -n "$SU_ELSE" ] && [ -n "$SU_CALL" ] && [ -n "$SU_PULL" ] \
+   && [ "$SU_PULL" -lt "$SU_ELSE" ] && [ "$SU_ELSE" -lt "$SU_CALL" ]; then
+  ok "and a clone is left to its pull"
+else
+  bad "it fetches over a git checkout" \
+      "that discards whatever is local (pull=$SU_PULL else=$SU_ELSE call=$SU_CALL)"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

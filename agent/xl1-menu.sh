@@ -933,15 +933,58 @@ a_logs() {
   do_cmd "journalctl -u xl1-heartbeat -n 40 --no-pager"
 }
 
+# THE SCRIPTS THE MENU RUNS, not only the menu.
+#
+# Every one of these is invoked BY a choice above and lives beside the menu in
+# the published agent/ directory. On a clone `git pull` brings them and this
+# does nothing. On a tarball node nothing brought them at all: the menu
+# updated, its labels changed, and option 5 went on running the rebuild script
+# the wizard unpacked weeks ago -- which is exactly what happened on the CM4
+# on 2026-09-25, twice, and read as a fix that had not worked.
+#
+# The wizard would also refresh them, but it recreates the producer and the
+# anchor to do it. Fetching four files should not cost a redeploy.
+MENU_HELPERS="rebuild-xl1-image.sh redeploy-anchor.sh bootstrap-pi.sh xl1_heartbeat.py"
+
+# A FETCHED FILE IS NOT A SCRIPT UNTIL IT LOOKS LIKE ONE. A captive portal, a
+# 404 page or a rate-limit notice all arrive as a 200 with a body, and
+# installing one over a working script replaces a tool with an apology.
+_looks_like_source() { # _looks_like_source <path>
+  [ -s "$1" ] || return 1
+  case "$(head -c 2 "$1" 2>/dev/null)" in "#!") return 0 ;; esac
+  return 1
+}
+
+update_helpers() {
+  [ -n "$REPO_AGENT" ] || { note "no agent directory here to refresh"; return 0; }
+  for _h in $MENU_HELPERS; do
+    # Refreshed, not introduced: a file the wizard never put here belongs to a
+    # node shape this is not, and quietly adding it changes what the menu
+    # will do next time without anyone asking for that.
+    [ -f "$REPO_AGENT/$_h" ] || { note "$_h is not on this node; left alone"; continue; }
+    _t="/tmp/$_h.fetched"
+    do_cmd "curl -fsSL $PUBLIC_REPO/$_h -o $_t" || { note "could not fetch $_h"; continue; }
+    if [ "$DRY_RUN" != 1 ] && ! _looks_like_source "$_t"; then
+      err "what came back for $_h is not a script; leaving the one you have"
+      continue
+    fi
+    do_cmd "sudo install -m 755 '$_t' '$REPO_AGENT/.$_h.new' && sudo mv -f '$REPO_AGENT/.$_h.new' '$REPO_AGENT/$_h'" \
+      && ok "$_h refreshed"
+  done
+}
+
 a_selfupdate() {
   say "${B}Update these commands${X}"
   # NO CLONE IS NOT NO SOURCE. The published repo is where the wizard got
   # these in the first place, and fetching them again is the same act. This
   # used to refuse outright, on the one machine that most needed it.
   if [ "$REPO_IS_CLONE" = 1 ]; then
+    # A pull brings the helpers too, so there is nothing else to do for them.
     do_cmd "cd $REPO && git pull --ff-only"
   else
     note "not a clone, so these are fetched from the published repository"
+    note "-- the menu, the help, and the scripts the menu runs."
+    update_helpers
   fi
 
   for _c in xl1-menu xl1-help; do
@@ -1019,7 +1062,7 @@ ITEMS="
 9|Logs|a_logs
 i|Update the node image recipe (xl1-docker-images)|a_recipe
 r|Redeploy the anchor service (rebuild + restart)|a_redeploy
-u|Update xl1-menu and xl1-help|a_selfupdate
+u|Update the menu and the scripts it runs|a_selfupdate
 h|The help reference (xl1-help)|a_help
 "
 

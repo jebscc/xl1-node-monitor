@@ -3193,6 +3193,73 @@ def test_a_missing_sdk_entry_is_not_a_version(monkeypatch):
     assert agent.read_sdk_version() is None
 
 
+# THE TILE HAS TO NOTICE A REDEPLOY, and for an hour it did not.
+#
+# This was cached for 3600s on the reasoning that "a heartbeat must never wait
+# on it" -- true, and already handled: the read runs on the slow worker
+# thread, off the beat. So the hour was guarding a risk that no longer
+# existed, and what it cost was the panel reporting the OLD SDK for an hour
+# after a successful deploy, with its own "newer available" note beside it,
+# at precisely the moment an operator was looking to see whether the thing
+# they just did had worked. Measured on the Pi 2026-09-25: the call it guards
+# takes 2.9 milliseconds on loopback.
+
+def test_the_sdk_figure_is_reread_soon_after_a_redeploy(monkeypatch):
+    """A window long enough to hide a deploy makes the tile worse than absent:
+    it is confidently wrong exactly when it is being read."""
+    assert agent.SDK_VERSION_CACHE_SECONDS <= 300, (
+        "the SERVICE SDK tile would keep reporting a pre-deploy version for "
+        f"{agent.SDK_VERSION_CACHE_SECONDS}s after the service moved")
+
+
+def test_the_sdk_figure_is_cached_within_that_window(monkeypatch):
+    """Still cached, though -- `_slow_get` falls back to calling collectors
+    inline when no worker is running, and there a hung service blocks the
+    beat."""
+    agent._sdk_cache.update({"installed": None, "installed_at": 0.0})
+    calls = []
+
+    class _R:
+        status = 200
+        def read(self):
+            calls.append(1)
+            return json.dumps(
+                {"packages": {"@xyo-network/xl1-sdk": "5.6.1"}}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", lambda *_a, **_k: _R())
+    assert agent.read_sdk_version() == "5.6.1"
+    assert agent.read_sdk_version() == "5.6.1"
+    assert len(calls) == 1, "the second read went back to the service"
+
+
+def test_the_cache_lets_go_once_the_window_passes(monkeypatch):
+    """And it must actually expire -- a cache that never releases is the hour
+    again with a smaller number written next to it."""
+    agent._sdk_cache.update({"installed": None, "installed_at": 0.0})
+    seen = []
+    versions = ["5.6.1", "5.7.1"]
+
+    class _R:
+        status = 200
+        def read(self):
+            v = versions[min(len(seen), len(versions) - 1)]
+            seen.append(v)
+            return json.dumps({"packages": {"@xyo-network/xl1-sdk": v}}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", lambda *_a, **_k: _R())
+    clock = [1000.0]
+    monkeypatch.setattr(agent.time, "monotonic", lambda: clock[0])
+
+    assert agent.read_sdk_version() == "5.6.1"
+    clock[0] += agent.SDK_VERSION_CACHE_SECONDS + 1        # the service is redeployed
+    assert agent.read_sdk_version() == "5.7.1"
+    assert len(seen) == 2
+
+
 def test_sdk_latest_comes_from_the_registry(monkeypatch):
     agent._sdk_cache.update({"latest": None, "latest_at": 0.0})
     _stub_urlopen(monkeypatch, {agent.SDK_REGISTRY: {"version": "5.4.1"}})

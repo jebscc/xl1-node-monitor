@@ -44,7 +44,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.44.0"
+AGENT_VERSION = "1.44.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1321,19 +1321,42 @@ _sdk_cache = {"installed_at": 0.0, "installed": None,
               "latest_at": 0.0, "latest": None}
 
 
+# A MINUTE, NOT AN HOUR, AND THE REASON THE HOUR WAS WRONG.
+#
+# The old comment said "a heartbeat must never wait on it" -- which is true,
+# and is already handled: this runs on the slow worker thread, off the beat's
+# critical path, once per SLOW_CYCLE. The hour was guarding something that was
+# no longer a risk, and the call it guards is 2.9 MILLISECONDS on loopback,
+# measured on the Pi 2026-09-25.
+#
+# What it cost instead: the panel read 5.6.1 for an hour after the service was
+# redeployed onto 5.7.1, with the tile's own "5.7.1 available" sitting beside
+# it -- at exactly the moment an operator is looking to see whether the thing
+# they just did worked.
+#
+# A minute still covers the case this is genuinely for: `_slow_get` falls back
+# to calling collectors inline when no worker is running, and there a hung
+# service would block the beat.
+SDK_VERSION_CACHE_SECONDS = int(os.environ.get("XL1_SDK_VERSION_CACHE", "60"))
+
+
 def read_sdk_version():
     """Version of the XL1 SDK the companion service actually loaded, or None.
 
-    Cached for an hour: it can only change when that service is redeployed,
-    and a heartbeat must never wait on it.
+    Cached briefly. It can only change when that service is redeployed -- and
+    the moment it does is the moment someone is watching for it.
     """
     if not VERSIONS_URL:
         return None
     now = time.monotonic()
-    if _sdk_cache["installed"] and now - _sdk_cache["installed_at"] < 3600:
+    if (_sdk_cache["installed"]
+            and now - _sdk_cache["installed_at"] < SDK_VERSION_CACHE_SECONDS):
         return _sdk_cache["installed"]
     try:
-        with urllib.request.urlopen(VERSIONS_URL, timeout=10) as resp:
+        # 5s, not 10: this is a loopback call to a container on the same
+        # box that answers in about three milliseconds. Ten seconds was
+        # sized for the hour-long cache, when one stall an hour was cheap.
+        with urllib.request.urlopen(VERSIONS_URL, timeout=5) as resp:
             if not (200 <= resp.status < 300):
                 return None
             packages = json.loads(resp.read().decode("utf-8")).get("packages") or {}

@@ -1356,5 +1356,44 @@ else
   bad "an unreadable version is treated as one outcome or the other"
 fi
 
+# --- the redeploy uses the node's own shape ----------------------------------
+#
+# Choice r ran the wizard-shaped script unconditionally. On the Pi 4 that
+# script REFUSES -- correctly: the container publishes two bindings and
+# start_anchor_service creates one, so going through it would drop the tailnet
+# publish and take /chain down, which it did for eight hours on 2026-09-23.
+#
+# But a correct refusal and a missing path are the same dead end from the
+# chair: there was then no choice in the menu that could deploy that node at
+# all, while option 7's deploy had known how the whole time.
+printf '\nthe redeploy takes the shape this node actually uses\n'
+AR="$(printf '%s' "$SRC" | sed -n '/^a_redeploy() {/,/^}/p')"
+DN2="$(printf '%s' "$SRC" | sed -n '/^deploy_now() {/,/^}/p')"
+
+if printf '%s' "$AR" | grep -q 'deploy_now'; then
+  ok "choice r goes through the shape-aware deploy"
+else
+  bad "choice r runs the wizard-shaped script whatever the node is" \
+      "on a compose node that is a refusal and no way forward"
+fi
+
+# NOT BACK THROUGH THE ACTION. deploy_now calling a_redeploy, now that
+# a_redeploy calls deploy_now, is an infinite loop -- and it would ask for
+# confirmation a second time on the way in.
+if printf '%s' "$DN2" | grep -q 'redeploy_via_script' \
+   && ! printf '%s' "$DN2" | grep -q 'a_redeploy'; then
+  ok "and the deploy calls the script directly, not back through the choice"
+else
+  bad "deploy_now calls a_redeploy, which now calls deploy_now" \
+      "that recurses, and re-asks the question on the way round"
+fi
+
+# The wizard-shaped path still exists for the nodes it is right for.
+if printf '%s' "$SRC" | grep -q '^redeploy_via_script() {'; then
+  ok "the wizard-shaped redeploy is still there for wizard-built nodes"
+else
+  bad "the script path was removed along with the dead end"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

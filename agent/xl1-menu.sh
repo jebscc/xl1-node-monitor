@@ -825,7 +825,7 @@ deploy_now() {
     fi
     do_cmd "$(compose_cmd) up -d --build" || return 1
   else
-    a_redeploy || return 1
+    redeploy_via_script || return 1
   fi
 
   verify_anchor "$_ports_before" || return 1
@@ -991,8 +991,19 @@ a_recipe() {
 # away. redeploy-anchor.sh builds from what is on disk and puts the container
 # on it using the wizard's OWN run flags, read out of bootstrap-pi.sh -- so
 # there is still one copy of that list, and this follows it.
-a_redeploy() {
-  say "${B}Redeploy the anchor service${X}"
+# THE WIZARD-SHAPED REDEPLOY, for a container the wizard made.
+#
+# It takes the run flags from bootstrap-pi.sh rather than copying them, keeps
+# the image it replaces as xl1-service:previous, and puts that back if the
+# build fails, the service will not answer, or the container comes back
+# publishing fewer ports.
+#
+# It REFUSES on a node whose container publishes more bindings than the
+# wizard's start_anchor_service creates -- which is right, and is what the
+# Pi 4 hits: two publishes there, one from the wizard, and going through this
+# would silently drop the tailnet one and take /chain down for as long as
+# nobody noticed. It did, for eight hours, on 2026-09-23.
+redeploy_via_script() {
   _rd=""
   for _c in "${REPO_AGENT:-/nonexistent}/redeploy-anchor.sh"; do
     [ -f "$_c" ] && _rd="$_c"
@@ -1008,6 +1019,19 @@ a_redeploy() {
   note "that fails, a service that will not answer, or a container that"
   note "comes back publishing fewer ports all put it back."
   do_cmd "sudo bash $_rd" || return 1
+}
+
+# THE NODE'S OWN SHAPE, WHICHEVER IT IS.
+#
+# This used to run the wizard-shaped script unconditionally, so on a
+# compose-managed node it printed a correct refusal and stopped -- leaving the
+# operator with no menu choice that could deploy at all, while option 7's
+# deploy had known how to do it all along. A refusal that is right and a path
+# that is missing are the same dead end from the chair.
+a_redeploy() {
+  say "${B}Redeploy the anchor service${X}"
+  confirm_action "Rebuilds the anchor service from this checkout and puts the container on it, in this node's own deployment shape." || return 1
+  deploy_now
 }
 
 # THE VERSION A FILE DECLARES, or nothing. Two arguments so the same reader

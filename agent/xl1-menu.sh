@@ -1244,6 +1244,150 @@ a_help() {
 # The number, the label, and the function. ONE TABLE, so the menu a reader sees
 # and the action that runs cannot disagree -- two lists would, and the one that
 # lost would send somebody's keypress somewhere else.
+# --- WHAT IS NEWER THAN WHAT IS RUNNING ---------------------------------------
+#
+# Beside the choice that acts on it, on its own line, in colour, BEFORE
+# anything is chosen. Every one of these readings already existed inside the
+# actions -- choice 5 said "the producer is running CLI 5.4.1" once you had
+# already picked it -- which is the wrong moment: the question an operator has
+# on arriving is "is there anything to do here", and answering it required
+# opening each door in turn to look.
+#
+# READ-ONLY, ALL OF IT. docker inspect, docker images, a GET to the npm
+# registry, and files. Nothing here changes anything, which is why it may run
+# without do_cmd -- the same rule xyo_latest and running_stack already follow.
+#
+# SAID ONLY WHEN THERE IS SOMETHING TO SAY. A line per choice reading "up to
+# date" would be nine lines of nothing on a node with nothing to do.
+UPDATES=""
+UPDATES_ASKED=0
+UPDATES_OFFLINE=0
+
+# THE VERSION THE PRODUCER IS ACTUALLY ON, without `docker exec`.
+#
+# Measured on the Pi 4: `docker exec xl1-producer xl1 --version` is 3502ms and
+# this runs on every redraw, against 367ms for matching the container's
+# resolved image id to the xl1:<version> tags. It is also the better source --
+# the tag the image was BUILT as, rather than what a binary inside it says
+# about itself.
+#
+# THE RESOLVED ID, NOT THE TAG IT NAMES. A container's image is fixed when it
+# is created, so xl1:local may have been moved past what this container
+# started from; that is exactly the trap that left the CM4 on 5.4.1 with 5.5.0
+# tagged local. xl1:local is skipped here for the same reason: it is a
+# pointer, not a version.
+running_cli_tag() {
+  [ -n "$PRODUCER_CONTAINER" ] || return 0
+  _cid="$(docker inspect -f '{{.Image}}' "$PRODUCER_CONTAINER" 2>/dev/null)" || return 0
+  [ -n "$_cid" ] || return 0
+  _cid="${_cid#sha256:}"
+  docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' 2>/dev/null \
+    | awk -v i="$_cid" '$1 ~ /^xl1:/ && $1 !~ /:local$/ && $2 != "" \
+        && substr(i, 1, length($2)) == $2 { sub(/^xl1:/, "", $1); print $1; exit }'
+}
+
+# The newest version tag built on this machine, whether or not anything runs
+# it. `sort -V` so 5.10.0 sorts above 5.9.0, which a plain sort puts the
+# wrong way round.
+newest_built_tag() {
+  docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+    | sed -n 's/^xl1:\([0-9][0-9.]*\)$/\1/p' | sort -V | tail -1
+}
+
+# Whichever of the two is higher, so "available" never points backwards at an
+# older release than the one already in use.
+newer_of() { # newer_of <a> <b> -> the higher, or nothing if they match
+  [ -n "$1" ] && [ -n "$2" ] || return 0
+  [ "$1" = "$2" ] && return 0
+  printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1
+}
+
+scan_updates() { # -> key|text lines, one per choice that has something waiting
+  _reached=0
+
+  # 5 -- THE NODE CLI. What the producer runs against what npm publishes.
+  _cli_run="$(running_cli_tag)"
+  _cli_pub="$(xyo_latest '@xyo-network/xl1-cli')"
+  [ -n "$_cli_pub" ] && _reached=1
+  if [ -n "$_cli_run" ] && [ -n "$_cli_pub" ] \
+     && [ "$(newer_of "$_cli_run" "$_cli_pub")" = "$_cli_pub" ]; then
+    printf '5|CLI %s running, %s published\n' "$_cli_run" "$_cli_pub"
+  fi
+
+  # 6 -- AN IMAGE ALREADY BUILT AND NOT BEING USED. The day after a rebuild
+  # this is the ordinary state, and it is the one the CM4 sat in for two days:
+  # 5.5.0 built, 5.4.1 running, nothing saying so.
+  _built="$(newest_built_tag)"
+  if [ -n "$_built" ] && [ -n "$_cli_run" ] \
+     && [ "$(newer_of "$_cli_run" "$_built")" = "$_built" ]; then
+    printf '6|xl1:%s is built here but the producer is on %s\n' "$_built" "$_cli_run"
+  fi
+
+  # 7 -- THE XYO STACK. The same set bump-xyo-stack.sh moves; named, not
+  # merely counted, because "3 behind" does not say whether it matters.
+  _first=""
+  _n=0
+  for _pair in $(xyo_stack | sed -n 's/^  \(.*\) \(.*\)$/\1=\2/p'); do
+    _pname="${_pair%%=*}"
+    _phave="${_pair#*=}"
+    _pnew="$(xyo_latest "$_pname")"
+    [ -n "$_pnew" ] || continue
+    _reached=1
+    [ "$_pnew" = "$_phave" ] && continue
+    _n=$((_n + 1))
+    [ -z "$_first" ] && _first="$_pname $_phave -> $_pnew"
+  done
+  if [ "$_n" = 1 ]; then
+    printf '7|%s\n' "$_first"
+  elif [ "$_n" -gt 1 ]; then
+    printf '7|%s, and %d more package(s)\n' "$_first" "$((_n - 1))"
+  fi
+
+  # 8 -- THE HEARTBEAT AGENT. Both file reads: the one that is RUNNING and the
+  # one in the checkout. Three "the fix did not work" reports came from these
+  # two disagreeing with nothing on screen to say so.
+  _a_have="$(agent_version_of "$AGENT_DIR/xl1_heartbeat.py")"
+  _a_want="$(agent_version_of "${REPO_AGENT:-/nonexistent}/xl1_heartbeat.py")"
+  if [ -n "$_a_have" ] && [ -n "$_a_want" ] && [ "$_a_have" != "$_a_want" ]; then
+    printf '8|agent %s installed, %s in the checkout\n' "$_a_have" "$_a_want"
+  fi
+
+  # u -- THE MENU AND ITS SCRIPTS. DIFFERS, not "is older": a file comparison
+  # says the two are not the same and cannot say which way round, and this
+  # script has no business guessing that about itself.
+  _self="$(command -v xl1-menu 2>/dev/null)"
+  if [ -n "$_self" ] && [ -n "${REPO_AGENT:-}" ] && [ -f "$REPO_AGENT/xl1-menu.sh" ] \
+     && ! cmp -s "$_self" "$REPO_AGENT/xl1-menu.sh"; then
+    printf 'u|this menu differs from the one in the checkout\n'
+  fi
+
+  # NOT REACHING NPM IS NOT AN ALL-CLEAR. Nothing above prints a line when it
+  # has no answer, so silence would otherwise read as "nothing to do" on a
+  # node that simply could not ask.
+  [ "$_reached" = 1 ] || printf 'OFFLINE|\n'
+}
+
+ensure_updates() {
+  [ "$UPDATES_ASKED" = 1 ] && return 0
+  UPDATES_ASKED=1
+  printf '   %schecking what is newer than what is running...%s\r' "$D" "$X"
+  UPDATES="$(scan_updates 2>/dev/null)"
+  case "$UPDATES" in *OFFLINE\|*) UPDATES_OFFLINE=1 ;; *) UPDATES_OFFLINE=0 ;; esac
+  printf '                                                    \r'
+}
+
+# AFTER EVERY CHOICE, because the choice may be what changed it. "Still
+# getting Node CLI 5.4.1 / 5.5.0 available" was a correct update reported by a
+# reading taken before it -- and a stale all-clear is worse than none.
+updates_stale() { UPDATES_ASKED=0; UPDATES=""; UPDATES_OFFLINE=0; }
+
+update_note() { # update_note <key> -> the note for that choice, if any
+  [ -n "$UPDATES" ] || return 0
+  printf '%s\n' "$UPDATES" | while IFS='|' read -r _k _text; do
+    [ "$_k" = "$1" ] && [ -n "$_text" ] && printf '%s' "$_text"
+  done
+}
+
 ITEMS="
 1|Status -- containers, unit, anchor health|a_status
 2|Check the producer's config (no restart)|a_dump
@@ -1268,9 +1412,19 @@ menu() {
   printf '   checkout   %s\n' "${REPO:-<none found>}"
   printf '   backend    %s\n' "${BACKEND:-<not set in $AGENT_ENV>}"
   [ "$DRY_RUN" = 1 ] && printf '   %sDRY RUN -- nothing will be done%s\n' "$Y" "$X"
+  # ASKED BEFORE THE LIST IS DRAWN, not after: the notes belong beside the
+  # choices, and a choice cannot be taken back once it has been typed.
+  [ "$TTY_OK" = 1 ] && ensure_updates
   printf '\n%s== What would you like to do%s\n' "$B" "$X"
+  [ "$UPDATES_OFFLINE" = 1 ] && \
+    warn "npm could not be asked, so anything newer than this node is not listed"
   printf '%s' "$ITEMS" | while IFS='|' read -r k label _fn; do
-    [ -n "$k" ] && printf '   %s) %s\n' "$k" "$label"
+    [ -n "$k" ] || continue
+    printf '   %s) %s\n' "$k" "$label"
+    # ON ITS OWN LINE, INDENTED UNDER THE CHOICE IT BELONGS TO, and in colour
+    # so it is found by looking rather than by reading every row.
+    _note="$(update_note "$k")"
+    [ -n "$_note" ] && printf '      %s%s-> %s%s\n' "$B" "$Y" "$_note" "$X"
   done
   printf '   q) quit\n\n'
 }
@@ -1308,7 +1462,7 @@ main() {
     IFS= read -r choice || break
     case "$choice" in
       q|Q|"") printf '\n'; break ;;
-      *) dispatch "$choice" || true ;;
+      *) dispatch "$choice" || true; updates_stale ;;
     esac
   done
 }

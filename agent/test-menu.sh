@@ -1395,5 +1395,126 @@ else
   bad "the script path was removed along with the dead end"
 fi
 
+# --- what is waiting, said before anything is chosen --------------------------
+#
+# Every one of these readings already existed INSIDE the actions: choice 5 told
+# you the producer was running 5.4.1 once you had already chosen 5. That is the
+# wrong moment. The question on arriving is "is there anything to do here", and
+# answering it meant opening each door in turn.
+printf '\nthe menu says what is waiting before you pick\n'
+
+UPD_CODE="$(printf '%s' "$SRC" \
+  | sed -n '/^running_cli_tag() {/,/^update_note() {/p' \
+  | grep -vE '^[[:space:]]*#')"
+UPD_CODE="$UPD_CODE
+$(printf '%s' "$SRC" | sed -n '/^update_note() {/,/^}/p')"
+
+# Driven, not read: the whole point is which line comes out for which state.
+scan_with() { # scan_with <running cli> <published cli> <newest built> <installed agent> <checkout agent>
+  # NAMED, NOT POSITIONAL. The first version of this harness passed the five
+  # states as "$1".."$5" and read them back inside the stubs, where $1 is the
+  # STUB's own first argument -- so every stub returned empty, three notes
+  # were never produced, and the one test expecting silence passed for the
+  # wrong reason.
+  ( _RUN="$1"; _PUB="$2"; _BUILT="$3"; _HAVE="$4"; _WANT="$5"
+    UPDATES=""
+    eval "$UPD_CODE"
+    PRODUCER_CONTAINER=fake; AGENT_DIR=/a; REPO_AGENT=/b
+    running_cli_tag() { printf '%s\n' "$_RUN"; }
+    newest_built_tag() { printf '%s\n' "$_BUILT"; }
+    xyo_latest() { case "$1" in *xl1-cli) printf '%s\n' "$_PUB" ;; *) printf '9.9.9\n' ;; esac; }
+    xyo_stack() { printf '  @xyo-network/xl1-sdk 9.9.9\n'; }
+    agent_version_of() { case "$1" in /a/*) printf '%s\n' "$_HAVE" ;; *) printf '%s\n' "$_WANT" ;; esac; }
+    command() { if [ "$1" = -v ]; then return 1; else return 0; fi; }
+    scan_updates ) 2>/dev/null
+}
+
+V="$(scan_with 5.4.1 5.5.0 5.4.1 1.45.0 1.45.0)"
+if printf '%s' "$V" | grep -q '^5|CLI 5.4.1 running, 5.5.0 published'; then
+  ok "choice 5 says which CLI is running and which is published"
+else
+  bad "a newer published CLI is not named beside the choice that installs it" "$V"
+fi
+
+# THE STATE THE CM4 SAT IN FOR TWO DAYS: 5.5.0 built, 5.4.1 running, and
+# nothing on the screen saying the two were different. `docker restart` does
+# not move a container onto a retagged image, so this is not self-correcting.
+V="$(scan_with 5.4.1 5.4.1 5.5.0 1.45.0 1.45.0)"
+if printf '%s' "$V" | grep -q '^6|xl1:5.5.0 is built here but the producer is on 5.4.1'; then
+  ok "choice 6 says when an image is built and not being used"
+else
+  bad "an image built but never promoted goes unmentioned" "$V"
+fi
+
+V="$(scan_with 5.5.0 5.5.0 5.5.0 1.44.2 1.45.0)"
+if printf '%s' "$V" | grep -q '^8|agent 1.44.2 installed, 1.45.0 in the checkout'; then
+  ok "choice 8 says the running agent is not the one in the checkout"
+else
+  bad "a stale installed agent is not reported" "$V"
+fi
+
+# NOTHING TO SAY IS SAID WITH SILENCE. A line per choice reading "up to date"
+# is nine rows of nothing on a node with nothing to do, and the eye stops
+# reading rows that never change.
+V="$(scan_with 5.5.0 5.5.0 5.5.0 1.45.0 1.45.0)"
+if [ -z "$(printf '%s' "$V" | grep -vE '^(7\||OFFLINE\|)')" ]; then
+  ok "and says nothing at all when nothing is waiting"
+else
+  bad "it writes a line for a choice with nothing to do" "$V"
+fi
+
+# AN UNANSWERED REGISTRY IS NOT AN ALL-CLEAR. Nothing here prints a line when
+# it has no answer, so silence would read as "nothing to do" on a node that
+# could not ask -- the same failure as a watcher reporting a node fine because
+# its own path was wrong.
+V="$( ( UPDATES=""
+        eval "$UPD_CODE"
+        PRODUCER_CONTAINER=""; AGENT_DIR=/a; REPO_AGENT=/b
+        running_cli_tag() { :; }; newest_built_tag() { :; }
+        xyo_latest() { :; }; xyo_stack() { :; }; agent_version_of() { :; }
+        command() { return 1; }
+        scan_updates ) 2>/dev/null )"
+if printf '%s' "$V" | grep -q '^OFFLINE|'; then
+  ok "a registry that could not be asked is declared, not passed off as clean"
+else
+  bad "no answer from npm reads the same as nothing to update" "$V"
+fi
+
+# ON ITS OWN LINE, UNDER THE CHOICE, IN COLOUR.
+printf '\nand puts it where the choice is\n'
+MENU_FN="$(printf '%s' "$SRC" | sed -n '/^menu() {/,/^}/p')"
+if printf '%s' "$MENU_FN" | grep -vE '^[[:space:]]*#' | grep -q 'update_note'; then
+  ok "the list asks for a note per choice"
+else
+  bad "the notes are not drawn beside the choices" \
+      "a note anywhere else is a second place to look"
+fi
+if printf '%s' "$MENU_FN" | grep -vE '^[[:space:]]*#' \
+   | grep -q "printf '      .*\$Y.*\$_note"; then
+  ok "and draws it indented on its own line, in colour"
+else
+  bad "the note is not set apart from the choice it belongs to" \
+      "$(printf '%s' "$MENU_FN" | grep -n '_note')"
+fi
+
+# BEFORE THE LIST, NOT AFTER IT. A note printed under the prompt is a note
+# printed after the choice has been typed.
+if printf '%s' "$MENU_FN" | grep -vE '^[[:space:]]*#' | grep -q 'ensure_updates'; then
+  ok "the readings are taken before the list is drawn"
+else
+  bad "the list is drawn from whatever was last known" "which may be nothing"
+fi
+
+# AND RE-READ AFTER EVERY CHOICE, because the choice is usually what changed
+# it. "Still getting Node CLI 5.4.1 / 5.5.0 available" was a correct update
+# reported by a reading taken before it ran.
+MAIN_FN="$(printf '%s' "$SRC" | sed -n '/^main() {/,/^}/p' | grep -vE '^[[:space:]]*#')"
+if printf '%s' "$MAIN_FN" | grep -q 'updates_stale'; then
+  ok "and thrown away after a choice runs, so the next list is not stale"
+else
+  bad "the notes survive the action that changes them" \
+      "an update that worked would still be advertised"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

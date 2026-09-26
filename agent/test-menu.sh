@@ -913,5 +913,41 @@ else
   bad "choice 7 is not in the table under a name this checks"
 fi
 
+# --- the build must not bury the thing it was asked about --------------------
+#
+# buildkit redraws its progress in place on a terminal and APPENDS when it
+# cannot. Through this menu it cannot, so a 96-second build wrote hundreds of
+#
+#   [+] Building 31.5s (9/16)
+#
+# and scrolled the gate results the operator had just been told to read off
+# the top of the screen.
+printf '
+the deploy reports steps, not refreshes
+'
+CC="$(printf '%s' "$SRC" | sed -n '/^compose_cmd() {/,/^}/p')"
+
+if [ "$(printf '%s' "$CC" | grep -c -- '--progress plain')" = 2 ]; then
+  ok "both shapes of the compose command ask for plain progress"
+else
+  bad "a compose form still uses the redrawing progress display"       "through this menu that appends a line per refresh"
+fi
+
+# A GLOBAL FLAG, so it belongs before -f. After it, compose reads it as an
+# argument to the subcommand and refuses.
+if [ "$(printf '%s' "$CC" | grep -c 'docker compose --progress plain -f')" = 2 ]; then
+  ok "and it is placed where compose takes it"
+else
+  bad "--progress is after the file arguments" "compose rejects it there"
+fi
+
+# NOT quiet. A build takes a minute and a half on this hardware, and that long
+# with nothing on screen is indistinguishable from a hang.
+if printf '%s' "$CC" | grep -q -- '--progress quiet'; then
+  bad "the build says nothing at all while it runs"       "ninety seconds of silence reads as a hung menu"
+else
+  ok "it does not go silent for the length of a build"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

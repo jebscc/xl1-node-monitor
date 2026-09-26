@@ -491,16 +491,36 @@ compose_bin() {
 }
 COMPOSE_BIN="$(compose_bin)"
 
+# --progress plain, BECAUSE THE DEFAULT WRITES A LINE PER REFRESH.
+#
+# buildkit's progress display redraws in place on a terminal and falls back to
+# APPENDING when it cannot. Through this menu it cannot, so a 96-second build
+# printed something like five hundred lines of
+#
+#   [+] Building 31.5s (9/16)
+#   [+] Building 31.7s (9/16)
+#
+# scrolling everything else off the screen -- including the gate results the
+# operator had just been asked to read. `plain` prints one line per build
+# step with its actual output, which is both shorter and worth reading.
+#
+# NOT `quiet`: a build takes a minute and a half on this hardware, and a
+# minute and a half of nothing on screen is indistinguishable from a hang.
+#
+# It is a GLOBAL compose flag, so it goes before -f. Checked on the node
+# rather than assumed: Docker Compose v5.5.0, `--progress string  Set type of
+# progress output (auto, tty, plain, quiet)`.
 compose_cmd() { # the compose command for THIS node, spelt once
   # THE OVERRIDE IS AN EXTRA, NOT A REQUIREMENT. A wizard-built node publishes
   # one port and has no second compose file; the base file is the whole of its
   # configuration. Naming a file that is not there makes compose fail on every
   # such node, which is most of them.
   if [ -n "$TAILNET_OVERRIDE" ]; then
-    printf 'cd %s && sudo docker compose -f docker-compose.pi.yml -f %s' \
+    printf 'cd %s && sudo docker compose --progress plain -f docker-compose.pi.yml -f %s' \
       "$SERVICE_DIR" "$TAILNET_OVERRIDE"
   else
-    printf 'cd %s && sudo docker compose -f docker-compose.pi.yml' "$SERVICE_DIR"
+    printf 'cd %s && sudo docker compose --progress plain -f docker-compose.pi.yml' \
+      "$SERVICE_DIR"
   fi
 }
 

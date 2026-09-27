@@ -25,6 +25,9 @@ import { anchorRecord } from './anchorRecord.ts'
 import { confirmAnchored } from './confirmAnchored.ts'
 import { getSignerAccount } from './getSignerAccount.ts'
 import { singleFlight } from './singleFlight.ts'
+// What a DAY is, in whichever zone the caller counts days in. Its own
+// module because this file listens on import; see dayKey.ts.
+import { dayKeyFor, startOfDayIn } from './dayKey.ts'
 
 const PORT = Number(process.env.XL1_SERVICE_PORT ?? 8090)
 
@@ -1268,7 +1271,10 @@ const fieldDaysInFlight: Record<string, Promise<FieldDays>> = {}
 app.get('/field-days', async (req, res) => {
   const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
   const days = Math.min(30, Math.max(2, Number(req.query.days) || 7))
-  const key = `${network}:${days}`
+  // UTC BY DEFAULT, so every caller that has ever asked for this gets the
+  // answer it has always got. Only a caller that names a zone moves.
+  const tz = typeof req.query.tz === 'string' && req.query.tz ? req.query.tz : 'UTC'
+  const key = `${network}:${days}:${tz}`
 
   const cached = fieldDaysCache[key]
   if (cached && Date.now() - cached.at < FIELD_DAYS_CACHE_MS) return res.json(cached.value)
@@ -1278,12 +1284,17 @@ app.get('/field-days', async (req, res) => {
   const { run } = singleFlight(fieldDaysInFlight, key, async () => {
     const { connection: { viewer } } = await getReadGateway(network)
     const head = Number(await viewer.block.currentBlockNumber())
-    // Midnight UTC, `days` ago. The oldest bucket is therefore a WHOLE day
-    // rather than a partial one -- a half-day bucket looks like a producer
-    // halving its output, which is the one reading this chart must not invite.
-    const cutoff = Date.UTC(
-      new Date().getUTCFullYear(), new Date().getUTCMonth(),
-      new Date().getUTCDate() - days)
+    /* Midnight `days` ago IN THE ZONE BEING COUNTED, so the oldest bucket is
+     * a WHOLE day rather than a partial one -- a half-day bucket looks like a
+     * producer halving its output, which is the one reading this chart must
+     * not invite.
+     *
+     * Derived by walking back from now and asking the formatter which day
+     * each instant falls in, rather than by arithmetic on a UTC date: an
+     * offset would be wrong across a summer-time change, and this scan
+     * regularly spans one. */
+    const fmt = dayKeyFor(tz)
+    const cutoff = startOfDayIn(fmt, Date.now() - (days - 1) * 86_400_000)
 
     // date -> address -> blocks, and date -> blocks counted, because a share
     // without its denominator cannot be checked.
@@ -1325,7 +1336,7 @@ app.get('/field-days', async (req, res) => {
         const epoch = Number(time?.epoch)
         if (!Number.isFinite(epoch)) { undated += 1; continue }
         if (epoch < cutoff) { reachedCutoff = true; break }
-        const date = new Date(epoch).toISOString().slice(0, 10)
+        const date = fmt.format(new Date(epoch))
         const row = byDay.get(date) ?? new Map<string, number>()
         // One credit per block per signer: a block with several signers is
         // still one block, and crediting each of them twice would inflate a

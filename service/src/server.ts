@@ -27,7 +27,7 @@ import { getSignerAccount } from './getSignerAccount.ts'
 import { singleFlight } from './singleFlight.ts'
 // What a DAY is, in whichever zone the caller counts days in. Its own
 // module because this file listens on import; see dayKey.ts.
-import { dayKeyFor, startOfDayIn } from './dayKey.ts'
+import { dayKeyFor, rollingHours, startOfDayIn } from './dayKey.ts'
 
 const PORT = Number(process.env.XL1_SERVICE_PORT ?? 8090)
 
@@ -1304,7 +1304,16 @@ app.get('/field-days', async (req, res) => {
    * not enter into it. `hours` wins when both are given, because a caller
    * asking for a rolling window has said what it wants.
    */
-  const hours = Math.min(168, Math.max(1, Number(req.query.hours) || 0))
+  /* ZERO MEANS NO ROLLING WINDOW, and this clamped it to one.
+   *
+   * `Math.max(1, ...)` turns the absent case into 1, so EVERY caller became
+   * a one-hour rolling window -- the standings day, and the thirty-day
+   * climb chart with it. The bucket came back labelled "last 1h" and the
+   * whole portal was drawing an hour of chain.
+   *
+   * A clamp belongs inside the branch that has already decided a value was
+   * asked for; applied to the default it invents one. */
+  const hours = rollingHours(req.query.hours)
   const rolling = hours > 0
   const key = `${network}:${days}:${tz}:${rolling ? `h${hours}` : ''}`
 

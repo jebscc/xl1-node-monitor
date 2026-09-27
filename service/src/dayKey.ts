@@ -81,3 +81,28 @@ export function startOfDayIn(fmt: Intl.DateTimeFormat, at: number): number {
   }
   return t
 }
+
+/**
+ * How many hours of rolling window a request asked for, or zero for none.
+ *
+ * IT WAS WRITTEN AS A CLAMP AND BEHAVED AS A DEFAULT:
+ *
+ *     Math.min(168, Math.max(1, Number(q) || 0))
+ *
+ * Absent comes out as ONE, so every caller of /field-days became a one-hour
+ * rolling window -- the standings day and the thirty-day climb chart
+ * together, the whole portal drawing an hour of chain. It reached the Pi
+ * before anybody noticed.
+ *
+ * The clamp belongs INSIDE the branch that has already decided a value was
+ * asked for. Applied to the default it invents one.
+ *
+ * Here rather than inline in the route so the test drives the function the
+ * server actually calls, instead of a second copy of it that can agree with
+ * the comment while the route disagrees with both.
+ */
+export function rollingHours(raw: unknown): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.min(168, Math.floor(n))
+}

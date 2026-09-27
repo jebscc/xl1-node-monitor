@@ -1220,7 +1220,25 @@ const PEER_WINDOW_MAX = 10000
  * changes.
  */
 const FIELD_DAYS_MAX_BLOCKS = 90000
+
+/* HOW LONG AN ANSWER KEEPS, BY WHAT IT COST TO GET.
+ *
+ * One hour for everything was right when this only served the thirty-day
+ * chart: that walk is ~90,000 blocks and nobody needs it fresher. It is
+ * wrong for the two-day scan the standings table now opens on -- measured
+ * at 2.5s cold -- because a reader comparing their node against somebody
+ * else's was being handed a figure counted forty-six minutes ago, with a
+ * countdown beside it implying otherwise. Two people watching the same
+ * chain cannot compare numbers when one of them is three quarters of an
+ * hour old.
+ *
+ * So the cheap scans refresh often and the expensive one does not.
+ */
 const FIELD_DAYS_CACHE_MS = 60 * 60 * 1000
+const FIELD_SHORT_CACHE_MS = 2 * 60 * 1000
+const FIELD_SHORT_DAYS = 3
+const fieldDaysTtl = (days: number) =>
+  (days <= FIELD_SHORT_DAYS ? FIELD_SHORT_CACHE_MS : FIELD_DAYS_CACHE_MS)
 const fieldDaysCache: Record<string, { at: number, value: unknown }> = {}
 
 /** What a field-days scan answers with. Named so the in-flight table can be
@@ -1274,10 +1292,24 @@ app.get('/field-days', async (req, res) => {
   // UTC BY DEFAULT, so every caller that has ever asked for this gets the
   // answer it has always got. Only a caller that names a zone moves.
   const tz = typeof req.query.tz === 'string' && req.query.tz ? req.query.tz : 'UTC'
-  const key = `${network}:${days}:${tz}`
+  /* A ROLLING WINDOW, WHICH IS A DIFFERENT QUESTION FROM A DAY.
+   *
+   * "The last 24 hours" and "today" are not the same number and neither is
+   * wrong: at eight in the evening one of them has four hours in it that
+   * the other has not. Two operators comparing nodes were reading 231
+   * against 291 and each assuming the other's panel was broken.
+   *
+   * It reuses this walk exactly -- same blocks, same timestamps -- and
+   * tallies them into ONE bucket instead of one per date, so the zone does
+   * not enter into it. `hours` wins when both are given, because a caller
+   * asking for a rolling window has said what it wants.
+   */
+  const hours = Math.min(168, Math.max(1, Number(req.query.hours) || 0))
+  const rolling = hours > 0
+  const key = `${network}:${days}:${tz}:${rolling ? `h${hours}` : ''}`
 
   const cached = fieldDaysCache[key]
-  if (cached && Date.now() - cached.at < FIELD_DAYS_CACHE_MS) return res.json(cached.value)
+  if (cached && Date.now() - cached.at < fieldDaysTtl(days)) return res.json(cached.value)
 
   // Someone else may already be walking these blocks; if so, wait on their
   // answer rather than starting a second walk of the same ninety thousand.
@@ -1294,7 +1326,16 @@ app.get('/field-days', async (req, res) => {
      * offset would be wrong across a summer-time change, and this scan
      * regularly spans one. */
     const fmt = dayKeyFor(tz)
-    const cutoff = startOfDayIn(fmt, Date.now() - (days - 1) * 86_400_000)
+    // A rolling window counts back from NOW; a day counts from a midnight.
+    const cutoff = rolling
+      ? Date.now() - hours * 3_600_000
+      : startOfDayIn(fmt, Date.now() - (days - 1) * 86_400_000)
+    /* ONE BUCKET FOR A ROLLING WINDOW. Keying it by the hours asked for
+     * rather than by a date, because it is not a date -- labelling it
+     * "2026-09-26" would invite exactly the confusion this exists to end. */
+    const bucketOf = rolling
+      ? () => `last ${hours}h`
+      : (epoch: number) => fmt.format(new Date(epoch))
 
     // date -> address -> blocks, and date -> blocks counted, because a share
     // without its denominator cannot be checked.
@@ -1336,7 +1377,7 @@ app.get('/field-days', async (req, res) => {
         const epoch = Number(time?.epoch)
         if (!Number.isFinite(epoch)) { undated += 1; continue }
         if (epoch < cutoff) { reachedCutoff = true; break }
-        const date = fmt.format(new Date(epoch))
+        const date = bucketOf(epoch)
         const row = byDay.get(date) ?? new Map<string, number>()
         // One credit per block per signer: a block with several signers is
         // still one block, and crediting each of them twice would inflate a
@@ -1363,7 +1404,13 @@ app.get('/field-days', async (req, res) => {
     // returned six -- a week's card quietly missing its far end, with the
     // dates on screen making it look deliberate.
     const dates = [...byDay.keys()].sort()
-    if (truncated && dates.length) dates.shift()
+    /* NEVER FOR A ROLLING WINDOW, which has exactly one bucket: dropping
+     * it because the walk hit the block ceiling would answer an honest
+     * question with nothing at all. A day is dropped in that case because
+     * it sits beside whole ones and a fraction of a day looks like a
+     * producer having a bad one; a rolling window has nothing to be
+     * compared against inside its own answer. */
+    if (!rolling && truncated && dates.length) dates.shift()
 
     // The NEAR day is partial by definition -- today is still being built --
     // and that is left in on purpose. Share is a ratio against that day's own

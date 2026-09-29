@@ -44,7 +44,7 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.45.0"
+AGENT_VERSION = "1.46.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -694,6 +694,101 @@ def read_statz(name):
     if "head_p50_ms" not in out:
         return None
     return out
+
+
+#: Where the race observer leaves its report. It is a separate process on its
+#: own clock -- the mempool has to be read several times a second and this
+#: agent runs once a minute -- so the two meet at a file rather than in one
+#: loop. See xl1_race.py.
+RACE_FILE = os.environ.get("XL1_RACE_FILE", "/var/lib/xl1-race/race.json")
+
+#: A report older than this is not reported at all. The observer writes every
+#: five seconds, so anything approaching this means the process is gone. A
+#: STALE RACE REPORT IS WORSE THAN NONE: every figure in it is a rate over a
+#: window, so it goes on looking like a live reading of the present for as
+#: long as the file sits there, and the panel would show yesterday's contest
+#: as today's. The same trap as the production counters in 1.45.0.
+RACE_STALE_S = 600
+
+#: Bound on what a device may post. The field is eight producers today; the
+#: cap is there so a compromised agent cannot push an arbitrary list into the
+#: panel, not because anybody expects to reach it.
+RACE_MAX_PRODUCERS = 24
+
+
+def read_race(path=None):
+    """What the race observer has seen lately, or None.
+
+    NOT MEASURED HERE, ONLY CARRIED. The observer holds the mempool open at
+    several polls a second; doing that from this agent would mean either
+    running this agent that often or missing the entire contest, which lasts
+    a few hundred milliseconds. So it runs on its own and this reads what it
+    wrote.
+
+    WHY IT RIDES THE HEARTBEAT rather than posting for itself: the path from
+    this machine to the backend already exists, is authenticated, and is the
+    one an operator has already agreed to. A second uploader would be a
+    second token, a second route and a second thing to revoke.
+    """
+    p = path or RACE_FILE
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            doc = json.load(f)
+    # No observer running is the ordinary case, not an error worth a line in
+    # the log every minute.
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+
+    made = doc.get("generated_at")
+    if not isinstance(made, (int, float)) or made <= 0:
+        return None
+    age = time.time() - made / 1000.0
+    if age > RACE_STALE_S or age < -60:
+        return None
+
+    obs = doc.get("observer") or {}
+    rows = doc.get("producers")
+    if not isinstance(rows, list):
+        return None
+
+    out = []
+    for r in rows[:RACE_MAX_PRODUCERS]:
+        if not isinstance(r, dict) or not r.get("address"):
+            continue
+        out.append({
+            "address": str(r.get("address"))[:64],
+            "entered": int(r.get("entered") or 0),
+            "wins": int(r.get("wins") or 0),
+            "missing": int(r.get("missing") or 0),
+            "win_pct": float(r.get("win_pct") or 0),
+            "miss_pct": float(r.get("miss_pct") or 0),
+            "pool_p50": r.get("pool_p50"),
+            "slot": {str(k): int(v) for k, v in
+                     (r.get("slot") or {}).items() if str(k) in "1234"},
+            "win_at": {str(k): int(v) for k, v in
+                       (r.get("win_at") or {}).items() if str(k) in "1234"},
+        })
+    if not out:
+        return None
+
+    return {
+        "generated_at": int(made),
+        "age_s": int(age),
+        "heights": int(doc.get("heights_decided") or 0),
+        "pending_ms": int(obs.get("pending_ms") or 0),
+        # THE RESOLUTION, carried with the numbers it qualifies. Arrivals the
+        # observer could not separate were ranked level; a reader who cannot
+        # see how many of those there were has no way to tell a measured
+        # order from a coin toss.
+        "unseparated": int(obs.get("arrivals_unseparated") or 0),
+        "arrivals": int(obs.get("arrivals_total") or 0),
+        "rank_wins": {str(k): int(v) for k, v in
+                      (doc.get("rank_wins") or {}).items()
+                      if str(k) in "1234"},
+        "producers": out,
+    }
 
 
 def _http_text(url):
@@ -3657,6 +3752,13 @@ def collect():
     statz = _slow_get("statz", lambda: read_statz(name))
     if statz:
         payload["latency"] = statz
+
+    # WHO IS WINNING THE RACE, not who won the day. Read from a file another
+    # process keeps, and omitted entirely when that process is not running --
+    # which is the normal state on a node that has not been asked to watch.
+    race = _slow_get("race", lambda: read_race())
+    if race:
+        payload["race"] = race
 
     scan_age, scan_every = producer_scan_clock()
     payload["produced_scan_age"] = scan_age

@@ -472,6 +472,9 @@ REPORTED_FIELDS = {
     "blocks_attempted", "blocks_attempted_span", "blocks_rebuilt",
     "produced_scan_age", "produced_scan_every",
     "latency",
+    # Carried, not measured here: the race observer's own report, read from
+    # the file it writes. Absent on any node not running one, which is most.
+    "race",
     "lost_tx_already_finalized", "lost_behind_finalized_head",
     "lost_block_number_mismatch",
     # The address this node signs blocks with. Public by nature -- it is in
@@ -1017,6 +1020,75 @@ def test_a_string_where_a_number_belongs_is_ignored(monkeypatch):
     _stub_run(monkeypatch, [("statz", odd)])
     got = agent.read_statz("xl1-producer")
     assert got == {"head_p50_ms": 200}
+
+
+# --- the race observer's report, carried not measured ------------------------
+
+def _race_file(tmp_path, **over):
+    doc = {
+        "generated_at": int(time.time() * 1000),
+        "heights_decided": 12,
+        "rank_wins": {"1": 3, "2": 7, "3": 2, "4": 0},
+        "observer": {"pending_ms": 300, "arrivals_unseparated": 9,
+                     "arrivals_total": 64},
+        "producers": [{
+            "address": "a6567633ac83a7017f3a2ef20fbbed890a2adae9",
+            "entered": 11, "wins": 4, "missing": 1, "win_pct": 36.4,
+            "miss_pct": 8.3, "pool_p50": 713,
+            "slot": {"1": 2, "2": 6, "3": 2, "4": 1},
+            "win_at": {"1": 0, "2": 3, "3": 1, "4": 0},
+        }],
+    }
+    doc.update(over)
+    p = tmp_path / "race.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    return str(p)
+
+
+def test_a_fresh_race_report_is_carried(tmp_path):
+    got = agent.read_race(_race_file(tmp_path))
+    assert got["heights"] == 12
+    assert got["producers"][0]["pool_p50"] == 713
+    assert got["rank_wins"]["2"] == 7
+    # THE RESOLUTION TRAVELS WITH THE NUMBERS IT QUALIFIES. Slot counts
+    # computed from arrivals the observer could not separate are a guess, and
+    # a reader given the counts without the count of ties cannot tell.
+    assert got["unseparated"] == 9
+    assert got["arrivals"] == 64
+    assert got["pending_ms"] == 300
+
+
+def test_a_stale_race_report_is_not_carried(tmp_path):
+    """THE GUARD, and the reason it exists rather than trusting the file.
+
+    Every figure in the report is a rate over a rolling window, so a file left
+    behind by a dead observer goes on reading as a live measurement of right
+    now -- for as long as the file sits on the disk. That is exactly the trap
+    the production counters sprang in 1.45.0, where a total from a finished
+    outage was indistinguishable from one in progress.
+    """
+    old = int((time.time() - agent.RACE_STALE_S - 60) * 1000)
+    assert agent.read_race(_race_file(tmp_path, generated_at=old)) is None
+
+
+def test_a_race_report_from_the_future_is_not_carried(tmp_path):
+    """A clock that has jumped forward would otherwise never look stale."""
+    ahead = int((time.time() + 3600) * 1000)
+    assert agent.read_race(_race_file(tmp_path, generated_at=ahead)) is None
+
+
+def test_no_observer_is_not_an_error(tmp_path):
+    """Most nodes will never run one, so its absence is the ordinary case."""
+    assert agent.read_race(str(tmp_path / "nope.json")) is None
+    (tmp_path / "junk.json").write_text("not json", encoding="utf-8")
+    assert agent.read_race(str(tmp_path / "junk.json")) is None
+
+
+def test_a_device_cannot_post_an_unbounded_field(tmp_path):
+    many = [{"address": f"{i:040x}", "entered": 1, "wins": 0, "missing": 0}
+            for i in range(200)]
+    got = agent.read_race(_race_file(tmp_path, producers=many))
+    assert len(got["producers"]) == agent.RACE_MAX_PRODUCERS
 
 
 # --- why the candidates were thrown away -------------------------------------

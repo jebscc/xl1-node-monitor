@@ -760,6 +760,11 @@ def read_race(path=None):
         out.append({
             "address": str(r.get("address"))[:64],
             "entered": int(r.get("entered") or 0),
+            # HEIGHTS AND SUBMISSIONS ARE DIFFERENT NUMBERS and the panel
+            # needs both: the slot counts are per candidate, so a table
+            # showing them beside heights alone does not add up, and a row
+            # that does not add up is one a reader stops believing.
+            "candidates": int(r.get("candidates") or 0),
             "wins": int(r.get("wins") or 0),
             "missing": int(r.get("missing") or 0),
             "win_pct": float(r.get("win_pct") or 0),

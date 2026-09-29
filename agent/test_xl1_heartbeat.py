@@ -4602,3 +4602,29 @@ def test_no_container_is_not_a_version(monkeypatch):
     agent._cli_cache.update({"installed": None, "installed_at": 0.0, "image": None})
     monkeypatch.setattr(agent, "run", lambda *a, **k: None)
     assert agent.read_cli_version("xl1-producer") is None
+
+
+def test_every_slow_key_read_is_also_collected():
+    """A key read from the slow worker but never written to it is dead.
+
+    THIS IS NOT THEORETICAL. `race` shipped that way: `_slow_get("race", ...)`
+    in the beat, no `_slow_put("race", ...)` in the worker loop. `_slow_get`
+    returns the worker's cached value whenever the worker is running and does
+    NOT fall back to the collector, so the field was None on every real node
+    for ever -- while calling `read_race()` by hand on that same node returned
+    exactly the right answer, because a direct call is the one path production
+    never takes. Green lights all the way down.
+
+    The behavioural tests cannot catch it: with no worker thread `_slow_get`
+    falls through to the collector, which is precisely the case that works.
+    So this reads the source instead.
+    """
+    src = (Path(__file__).parent / "xl1_heartbeat.py").read_text(encoding="utf-8")
+    read = set(re.findall(r'_slow_get\(\s*"([a-z0-9_]+)"', src))
+    written = set(re.findall(r'_slow_put\(\s*"([a-z0-9_]+)"', src))
+    orphans = read - written
+    assert not orphans, (
+        f"read from the slow worker but never collected into it: "
+        f"{sorted(orphans)} — add _step(\"<key>\", lambda: _slow_put(...)) "
+        "to the worker loop, or the field is permanently absent in production"
+    )

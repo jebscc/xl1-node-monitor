@@ -3551,6 +3551,13 @@ def _slow_worker():
             _step("candidate_losses",
                   lambda: _slow_put("candidate_losses", read_candidate_losses(name)))
             _step("statz", lambda: _slow_put("statz", read_statz(name)))
+            # READ HERE TOO, not only in the beat. `_slow_get` returns the
+            # WORKER'S value once the worker is running and never calls the
+            # collector itself, so a key read there and not written here is
+            # permanently None on every real node -- while testing the
+            # collector by hand looks perfect, because calling it directly
+            # is the one path production does not take.
+            _step("race", lambda: _slow_put("race", read_race()))
             _step("producer_unit", lambda: _slow_put("producer_unit", read_producer_unit()))
             _step("rebuild_timer", lambda: _slow_put("rebuild_timer", read_rebuild_timer()))
             _step("repo_head", lambda: _slow_put("repo_head", read_repo_head()))

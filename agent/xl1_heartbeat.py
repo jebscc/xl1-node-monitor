@@ -716,6 +716,19 @@ RACE_STALE_S = 600
 RACE_MAX_PRODUCERS = 24
 
 
+def _race_spread(d):
+    """A p10/p50/p90 triple, or None. Carried verbatim, bounded in shape."""
+    if not isinstance(d, dict):
+        return None
+    out = {k: d.get(k) for k in ("p10", "p50", "p90")
+           if isinstance(d.get(k), (int, float))}
+    return out or None
+
+
+#: Heights carried one-by-one for the waterfall.
+RACE_MAX_HEIGHTS = 20
+
+
 def read_race(path=None):
     """What the race observer has seen lately, or None.
 
@@ -774,13 +787,47 @@ def read_race(path=None):
                      (r.get("slot") or {}).items() if str(k) in "1234"},
             "win_at": {str(k): int(v) for k, v in
                        (r.get("win_at") or {}).items() if str(k) in "1234"},
+            # The spread, not just the middle. A median alone cannot tell a
+            # node that is steadily a little slow from one that is usually
+            # quick and occasionally terrible, and those want opposite fixes.
+            "submit": _race_spread(r.get("submit")),
+            "behind": _race_spread(r.get("behind")),
         })
     if not out:
         return None
 
+    # Bounded the same way the producer rows are: this is the only part that
+    # grows with the field, and it travels on a heartbeat.
+    recent = []
+    for h in (doc.get("recent") or [])[-RACE_MAX_HEIGHTS:]:
+        if not isinstance(h, dict):
+            continue
+        recent.append({
+            "n": int(h.get("n") or 0),
+            "winner": str(h.get("winner") or "")[:64],
+            "rows": [{
+                "producer": str(x.get("producer") or "")[:64],
+                "built_ms": x.get("built_ms"),
+                "seen_ms": int(x.get("seen_ms") or 0),
+                "won": bool(x.get("won")),
+            } for x in (h.get("rows") or [])[:RACE_MAX_PRODUCERS]
+                if isinstance(x, dict)],
+        })
+
+    hourly = []
+    for b in (doc.get("hourly") or [])[-25:]:
+        if isinstance(b, dict) and isinstance(b.get("wins"), dict):
+            hourly.append({
+                "hour": int(b.get("hour") or 0),
+                "wins": {str(k)[:64]: int(v) for k, v in
+                         list(b["wins"].items())[:RACE_MAX_PRODUCERS]},
+            })
+
     return {
         "generated_at": int(made),
         "age_s": int(age),
+        "recent": recent,
+        "hourly": hourly,
         "heights": int(doc.get("heights_decided") or 0),
         "pending_ms": int(obs.get("pending_ms") or 0),
         # THE RESOLUTION, carried with the numbers it qualifies. Arrivals the

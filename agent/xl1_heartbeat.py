@@ -728,6 +728,10 @@ def _race_spread(d):
 #: Heights carried one-by-one for the waterfall.
 RACE_MAX_HEIGHTS = 20
 
+#: How many winners the race timeline may carry. One small integer each, so
+#: the whole window fits in about a kilobyte.
+RACE_MAX_TIMELINE = 400
+
 
 def read_race(path=None):
     """What the race observer has seen lately, or None.
@@ -814,6 +818,19 @@ def read_race(path=None):
                 if isinstance(x, dict)],
         })
 
+    # Carried whole: it is already the compact form (indices, not
+    # addresses), and truncating it would silently start the race partway
+    # through with a producer's total already on the board.
+    tl = doc.get("timeline")
+    timeline = None
+    if isinstance(tl, dict) and isinstance(tl.get("seq"), list):
+        timeline = {
+            "who": [str(a)[:64] for a in (tl.get("who") or [])][:RACE_MAX_PRODUCERS],
+            "seq": [int(i) for i in tl["seq"][-RACE_MAX_TIMELINE:]
+                    if isinstance(i, int)],
+            "from": tl.get("from"),
+        }
+
     hourly = []
     for b in (doc.get("hourly") or [])[-25:]:
         if isinstance(b, dict) and isinstance(b.get("wins"), dict):
@@ -827,6 +844,7 @@ def read_race(path=None):
         "generated_at": int(made),
         "age_s": int(age),
         "recent": recent,
+        "timeline": timeline,
         "hourly": hourly,
         "heights": int(doc.get("heights_decided") or 0),
         "pending_ms": int(obs.get("pending_ms") or 0),

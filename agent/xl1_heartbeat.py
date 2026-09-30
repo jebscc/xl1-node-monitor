@@ -809,6 +809,7 @@ def read_race(path=None):
         recent.append({
             "n": int(h.get("n") or 0),
             "winner": str(h.get("winner") or "")[:64],
+            "at": h.get("at"),
             "rows": [{
                 "producer": str(x.get("producer") or "")[:64],
                 "built_ms": x.get("built_ms"),
@@ -828,6 +829,12 @@ def read_race(path=None):
             "who": [str(a)[:64] for a in (tl.get("who") or [])][:RACE_MAX_PRODUCERS],
             "seq": [int(i) for i in tl["seq"][-RACE_MAX_TIMELINE:]
                     if isinstance(i, int)],
+            # TRIMMED THE SAME WAY AS `seq` AND FROM THE SAME END, or a
+            # scrubbed height would show somebody else's clock. Two lists
+            # that mean "the same heights" and are cut differently is the
+            # kind of bug that reads as a timezone problem for a week.
+            "at": [i for i in (tl.get("at") or [])[-RACE_MAX_TIMELINE:]
+                   if isinstance(i, (int, float))],
             "from": tl.get("from"),
         }
 
@@ -844,6 +851,9 @@ def read_race(path=None):
         "generated_at": int(made),
         "age_s": int(age),
         "recent": recent,
+        "span": {k: (doc.get("span") or {}).get(k)
+                 for k in ("from_ms", "to_ms", "block_s")}
+        if doc.get("span") else None,
         "timeline": timeline,
         "hourly": hourly,
         "heights": int(doc.get("heights_decided") or 0),

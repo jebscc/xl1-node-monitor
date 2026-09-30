@@ -1240,6 +1240,9 @@ const FIELD_SHORT_DAYS = 3
 const fieldDaysTtl = (days: number) =>
   (days <= FIELD_SHORT_DAYS ? FIELD_SHORT_CACHE_MS : FIELD_DAYS_CACHE_MS)
 const fieldDaysCache: Record<string, { at: number, value: unknown }> = {}
+/** A finished day never changes, so its scan is kept for the life of the
+ *  process; today's is kept for a minute. See /race-day. */
+const raceDayCache: Record<string, { at: number, value: unknown }> = {}
 
 /** What a field-days scan answers with. Named so the in-flight table can be
  * typed as tightly as the cache it shadows. */
@@ -1286,6 +1289,108 @@ const fieldDaysInFlight: Record<string, Promise<FieldDays>> = {}
  * witnessed against. It costs no extra call, and it is a payload the block
  * committed to rather than metadata outside the hash.
  */
+/** One named day's blocks, in the order they were produced.
+ *
+ * WHY THIS AND NOT THE OBSERVER. The race page has a replay built from what a
+ * watching process saw, and that process holds a rolling window of a few
+ * hours which starts again every time it restarts. The chain does not
+ * restart. Who produced each height, and when, has been on it since the day
+ * it happened, so a replay of last Tuesday is a scan rather than a recording
+ * somebody had to be running at the time.
+ *
+ * WHAT IT CANNOT GIVE, and the distinction is the whole reason the observer
+ * still exists: the chain keeps the block that WON and discards every
+ * candidate that lost. Arrival order, the position each producer reached, the
+ * heights it never entered -- none of that is here and none of it can be.
+ * This answers "who won, in what order, at what time" and nothing else.
+ *
+ * NOT STORED, for the same reason `/field-days` is not: every figure is on a
+ * public chain, so a table of it would be this host's claim about last
+ * Tuesday. A scan is re-runnable by anyone with the same chain.
+ */
+app.get('/race-day', async (req, res) => {
+  const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
+  const tz = typeof req.query.tz === 'string' && req.query.tz ? req.query.tz : 'UTC'
+  const date = typeof req.query.date === 'string' ? req.query.date : ''
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ error: 'date must be YYYY-MM-DD' })
+    return
+  }
+
+  const key = `${network}|${date}|${tz}`
+  const hit = raceDayCache[key]
+  // A FINISHED DAY NEVER CHANGES, so it is cached for as long as the process
+  // lives; today's is still moving and is cached briefly. Re-scanning a
+  // settled Tuesday on every page load is a Raspberry Pi's afternoon.
+  const fmt = dayKeyFor(tz)
+  const isToday = fmt.format(new Date()) === date
+  const ttl = isToday ? 60_000 : 6 * 3_600_000
+  if (hit && Date.now() - hit.at < ttl) { res.json(hit.value); return }
+
+  try {
+    const gateway = await getReadGateway(network)
+    const viewer = gateway.connection.viewer
+    if (!viewer) { res.status(503).json({ error: 'no viewer' }); return }
+    const head = Number(await viewer.block.currentBlockNumber())
+
+    // Midnight to midnight IN THE NAMED ZONE, taken from the formatter rather
+    // than by arithmetic on a UTC date: an offset is wrong across a
+    // summer-time change, and a day is exactly what this endpoint is about.
+    const dayStart = startOfDayIn(fmt, Date.parse(`${date}T12:00:00Z`))
+    const dayEnd = dayStart + 86_400_000
+
+    const blocks: { n: number, by: string, at: number }[] = []
+    let scanned = 0
+    let truncated = false
+    let past = false
+
+    for (let from = head; from >= 0 && scanned < FIELD_DAYS_MAX_BLOCKS;) {
+      const size = Math.min(PEER_BATCH, from + 1, FIELD_DAYS_MAX_BLOCKS - scanned)
+      const got = await viewer.block.blocksByNumber(
+        toXL1BlockNumber(from, { name: 'race-day start block' }), size)
+      const batch = Array.isArray(got) ? got : [got]
+      if (!batch.length) break
+
+      for (const blk of batch) {
+        const parts = (Array.isArray(blk) ? blk : [blk]) as unknown[]
+        const flat = parts.flatMap((x) => (Array.isArray(x) ? x : [x])) as
+          { schema?: string, addresses?: string[], epoch?: number, block?: number }[]
+        const bw = flat.find((x) => x?.schema === 'network.xyo.boundwitness')
+        scanned += 1
+        if (!bw) continue
+        const time = flat.find((x) => x?.schema === 'network.xyo.time')
+        const epoch = Number(time?.epoch)
+        if (!Number.isFinite(epoch)) continue
+        // Walking BACKWARDS from the head, so anything before the day's first
+        // midnight means the day is behind us and the scan is finished.
+        if (epoch < dayStart) { past = true; break }
+        if (epoch >= dayEnd) continue
+        const who = (bw.addresses ?? []).map(normalizeAddress)[0]
+        if (!who) continue
+        blocks.push({ n: Number(bw.block), by: who, at: epoch })
+      }
+      if (past) break
+      from -= size
+      if (scanned >= FIELD_DAYS_MAX_BLOCKS) truncated = true
+    }
+
+    // Oldest first, because a replay runs forwards and the scan ran back.
+    blocks.sort((a, b) => a.n - b.n)
+
+    const value = {
+      network, date, tz, blocks, scanned, truncated,
+      // A day that was never reached is not a day nobody produced on. Said
+      // plainly so the page can refuse to draw rather than draw a zero.
+      complete: past || blocks.length === 0 ? past : !truncated,
+      at: new Date().toISOString(),
+    }
+    raceDayCache[key] = { at: Date.now(), value }
+    res.json(value)
+  } catch (e) {
+    res.status(502).json({ error: String(e).slice(0, 200) })
+  }
+})
+
 app.get('/field-days', async (req, res) => {
   const network = typeof req.query.network === 'string' ? req.query.network : DEFAULT_NETWORK
   const days = Math.min(30, Math.max(2, Number(req.query.days) || 7))

@@ -94,6 +94,32 @@ case "$XL1_NET" in
   *)       _net_rpc="$XL1_SEQUENCE_RPC_URL" ;;
 esac
 XL1_RPC_URL="${XL1_RPC_URL:-$_net_rpc}"
+# THE CHAIN ID, WHICH THE MAINNET PRESET DOES NOT CARRY.
+#
+# networks/sequence.json ships a chain.id and networks/mainnet.json ships an
+# empty one -- upstream's own example says "Mainnet preset leaves chain.id empty
+# until published in-repo -- set it here". Without it the entrypoint does not
+# fail: it IGNORES EVERY PRESET and falls back to the image defaults, which
+# means accountPath 0, no chain connections, and a stray api and finalizer
+# actor. A node that was account 1 comes back as account 0 -- a different
+# address, on whatever phrase it shares with another machine.
+#
+# And `xl1 --dump-config` returns 0 for that, so the rehearsal below passes it.
+# Measured on 2026-10-06 while moving a producer to mainnet.
+#
+# IT IS A CONTRACT ADDRESS AND IT CAN CHANGE. This is the ETH staking contract
+# for the network -- verified by eth_getCode: 319e... has code on Ethereum
+# mainnet and none on Sepolia, and sequence's 4b43... is the mirror image. The
+# image's own wrapper says it "changes when the chain forks" and can be read
+# live with gateway.connection.viewer.block.chainId(). So this default is a
+# convenience, not a truth: override it if upstream moves.
+XL1_SEQUENCE_CHAIN_ID="${XL1_SEQUENCE_CHAIN_ID:-}"
+XL1_MAINNET_CHAIN_ID="${XL1_MAINNET_CHAIN_ID:-319e667ced10452a117472811130444ded357f26}"
+case "$XL1_NET" in
+  mainnet) _net_chain_id="$XL1_MAINNET_CHAIN_ID" ;;
+  *)       _net_chain_id="$XL1_SEQUENCE_CHAIN_ID" ;;
+esac
+XL1_CHAIN_ID="${XL1_CHAIN_ID:-$_net_chain_id}"
 # The anchor service. Published in the same repo as this script, under service/,
 # so a stranger needs nothing that is not already public.
 MONITOR_REPO="${MONITOR_REPO:-/opt/xl1-node-monitor}"
@@ -291,6 +317,47 @@ producer_config_refused() { # <env-file> [extra docker args...]
   printf '%s\n' "$_dump_out" | grep -iE 'unrecognized|invalid|error' | head -4 \
     | sed 's/^/      /'
   return 0
+}
+
+producer_config_resolved_wrong() { # <env-file> <expected account> [docker args...]
+  # Does the node ACCEPT a configuration that nobody asked for?
+  #
+  # producer_config_refused asks one question: was the exit code 78. That is not
+  # enough, and 2026-10-06 proved it. With no chain id the entrypoint refuses
+  # nothing -- it silently drops EVERY preset and dumps the image defaults:
+  # accountPath 0, one in-memory connection, and an api and finalizer actor
+  # nobody configured. Then it exits 0. The gate passed it, and a node that had
+  # been account 1 for weeks would have come back as a different address, on a
+  # phrase it shares with another machine.
+  #
+  # So the dump is read rather than counted. Two questions, because either on its
+  # own misses it: is there a real chain connection at all, and does it produce
+  # as the account this machine actually is.
+  #
+  # Same convention as producer_config_refused: 0 means a problem was found.
+  _dd_env="$1"; _dd_want="$2"; shift 2
+  if ! _dd_out="$($SUDO docker run --rm --env-file "$_dd_env" "$@" xl1:local --dump-config 2>&1)"; then
+    # Refused, or the check itself broke. producer_config_refused owns that
+    # distinction; this one says nothing rather than guessing at it.
+    return 1
+  fi
+  # A real producer reads and writes the chain over the network: `producer`
+  # connects by rpc, `producer-rest` by rest and rpc both. The image's
+  # preset-less default has exactly one connection and it is `memory` -- an
+  # in-memory local-store, a node talking to itself. So the question is not
+  # "is rpc there" (that breaks the day a role drops it) but "is there any
+  # connection to the chain at all".
+  if ! printf '%s' "$_dd_out" \
+     | grep -qE '"type"[[:space:]]*:[[:space:]]*"(rpc|rest)"'; then
+    printf '      the resolved config has no rpc or rest connection at all -- the presets were ignored\n'
+    return 0
+  fi
+  _dd_acct="$(printf '%s' "$_dd_out" | sed -n 's/.*"accountPath"[[:space:]]*:[[:space:]]*"\([0-9][0-9]*\)".*/\1/p' | head -1)"
+  if [ -n "$_dd_acct" ] && [ "$_dd_acct" != "$_dd_want" ]; then
+    printf '      the resolved config produces as account %s, but this machine is account %s\n' "$_dd_acct" "$_dd_want"
+    return 0
+  fi
+  return 1
 }
 
 producer_unit_presets() { # <unit>: the host path the unit mounts at /presets
@@ -2437,6 +2504,15 @@ fi
 # preset did not get.
 CHECK_INTERVAL_MS="$(producer_check_interval)"
 
+# Same one-read rule as the interval above. An operator who set a chain id by
+# hand keeps it when this script has no opinion -- which is every sequence run,
+# where the preset supplies one and XL1_SEQUENCE_CHAIN_ID is deliberately empty.
+# When the script DOES have one it wins, because the id is per network and a
+# carried-over value is the previous network's after a switch.
+if [ -z "${XL1_CHAIN_ID:-}" ]; then
+  XL1_CHAIN_ID="$($SUDO sed -n 's/^XL1_CHAIN__ID=//p' "$PRODUCER_ENV" 2>/dev/null | head -1 | tr -d '[:space:]')"
+fi
+
 tmp_env="$(mktemp)"
 chmod 600 "$tmp_env"
 {
@@ -2462,19 +2538,31 @@ chmod 600 "$tmp_env"
   # stands, which is different from recording a number this script chose.
   [ -n "${CHECK_INTERVAL_MS:-}" ] \
     && printf '# XL1_BLOCK_CHECK_INTERVAL_MS=%s\n' "$CHECK_INTERVAL_MS"
+  # LIVE, not commented out like the two above. Those are records for a restore
+  # and the entrypoint refuses them as top-level keys; this one the entrypoint
+  # NEEDS. Written only when there is a value, because an absent line lets the
+  # network preset supply it -- which is what sequence does and mainnet does not.
+  if [ -n "${XL1_CHAIN_ID:-}" ]; then
+    printf 'XL1_CHAIN__ID=%s\n' "$XL1_CHAIN_ID"
+  fi
 } > "$tmp_env"
 
 # EVERYTHING THIS WRITER DOES NOT OWN IS CARRIED OVER -- the same rule the
-# agent env needed. The unit's file holds XL1_CHAIN__ID, which nothing here
-# writes, and replacing the file wholesale would drop it: the entrypoint
-# fails without a chain id where the network preset does not supply one.
+# agent env needed, so an operator's own keys survive a re-run.
+#
+# XL1_CHAIN__ID USED TO BE CARRIED AND IS NOW OWNED. Carrying it was right while
+# nothing here wrote one; it is wrong now, because the id is per NETWORK and a
+# carried value is the previous network's the moment XL1_NET changes -- a
+# mainnet node quietly inheriting sequence's contract. The resolve above still
+# reads the old file first when this script has no opinion, so a hand-set id on
+# a sequence node is kept.
 #
 # Assignments only. Comments and blanks are not carried, so a re-run cannot
 # accumulate a copy of its own header each time -- the cost is that
 # commented-out documentation in an operator's file is not preserved.
 if $SUDO test -f "$PRODUCER_ENV"; then
   $SUDO grep -E "^[A-Za-z_][A-Za-z0-9_]*=" "$PRODUCER_ENV" 2>/dev/null \
-    | grep -vE '^(XL1_NETWORK|XL1_ROLE|XL1_MNEMONIC|XL1_REWARD_ADDRESS|XL1_ACCOUNT_INDEX|XL1_BLOCK_CHECK_INTERVAL_MS)=' \
+    | grep -vE '^(XL1_NETWORK|XL1_ROLE|XL1_MNEMONIC|XL1_REWARD_ADDRESS|XL1_ACCOUNT_INDEX|XL1_BLOCK_CHECK_INTERVAL_MS|XL1_CHAIN__ID)=' \
     >> "$tmp_env" || true
 fi
 $SUDO install -o root -g root -m 600 "$tmp_env" "$PRODUCER_ENV"
@@ -2624,6 +2712,16 @@ if [ -n "$PRODUCER_UNIT_NAME" ]; then
     die "the node refuses the configuration in $PRODUCER_ENV, so $PRODUCER_UNIT_NAME has NOT been restarted -- it is still running on the one it started with. The lines above are its own words. Fix that file and run this again."
   fi
 
+  # AND ASK WHAT IT RESOLVED TO, not just whether it said no. 2026-10-06: with
+  # XL1_CHAIN__ID empty the wrapper discarded every preset, dumped the image
+  # defaults -- account 0, one in-memory connection -- and exited 0. The gate
+  # above passed it. A node that had been account 1 for weeks would have come
+  # back on a different address, sharing a phrase with another machine.
+  # shellcheck disable=SC2086
+  if producer_config_resolved_wrong "$PRODUCER_ENV" "${ACCOUNT_INDEX:-0}" $_rehearse_args; then
+    die "the node ACCEPTS $PRODUCER_ENV but resolves it to a configuration nobody asked for -- see the line above. $PRODUCER_UNIT_NAME has NOT been restarted. The usual cause is a missing XL1_CHAIN__ID, which makes the wrapper silently ignore every preset. Fix that file and run this again."
+  fi
+
   # systemd owns the lifecycle. Ask it, and leave the container alone.
   say "restarting $PRODUCER_UNIT_NAME"
   $SUDO systemctl restart "$PRODUCER_UNIT_NAME" \
@@ -2638,11 +2736,30 @@ if [ -n "$PRODUCER_UNIT_NAME" ]; then
          "the unit's ExecStart must carry -e XL1_PRESETS_DIR=/presets -v $PRESETS_DIR:/presets, or the node comes back as account 0 -- a different address"
   fi
 else
-  $SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true
-  # See RECORD_ONLY_KEYS: the file on disk is not what the node may be given.
+  # REHEARSE BEFORE DESTROYING ANYTHING. `docker rm -f` was the first line here
+  # until 2026-10-06, so this path tested the configuration by replacing a
+  # working node with it and reading the wreckage afterwards. The rollback for
+  # that is a container that no longer exists.
+  #
+  # So the runtime env is prepared first -- see RECORD_ONLY_KEYS: the file on
+  # disk is not what the node may be given, and rehearsing the wrong file
+  # answers about a configuration nobody will run -- and the same two questions
+  # the systemd path asks are asked here, against $PRESET_ARGS because that is
+  # the mount this branch will actually use.
   _run_env="$PRODUCER_ENV.runtime"
   producer_runtime_env "$PRODUCER_ENV" "$_run_env" \
     || die "could not prepare the container environment from $PRODUCER_ENV"
+  # shellcheck disable=SC2086
+  if producer_config_refused "$_run_env" $PRESET_ARGS; then
+    $SUDO rm -f "$_run_env"
+    die "the node refuses the configuration in $PRODUCER_ENV. The lines above are its own words. Nothing has been changed -- whatever was running is still running. Fix that file and run this again."
+  fi
+  # shellcheck disable=SC2086
+  if producer_config_resolved_wrong "$_run_env" "${ACCOUNT_INDEX:-0}" $PRESET_ARGS; then
+    $SUDO rm -f "$_run_env"
+    die "the node ACCEPTS $PRODUCER_ENV but resolves it to a configuration nobody asked for -- see the line above. Nothing has been changed. The usual cause is a missing XL1_CHAIN__ID, which makes the wrapper silently ignore every preset and come back as account 0 on a different address."
+  fi
+  $SUDO docker rm -f xl1-producer >/dev/null 2>&1 || true
   # shellcheck disable=SC2086
   $SUDO docker run -d --name xl1-producer --restart unless-stopped \
     -e NODE_OPTIONS="--max-old-space-size=$NODE_HEAP_MB" $PRESET_ARGS \

@@ -4628,3 +4628,80 @@ def test_every_slow_key_read_is_also_collected():
         f"{sorted(orphans)} — add _step(\"<key>\", lambda: _slow_put(...)) "
         "to the worker loop, or the field is permanently absent in production"
     )
+
+
+# --- the scan counts blocks on the chain this node is actually on -------------
+
+def test_producer_request_sends_the_node_network(monkeypatch):
+    """The scan must name its network, or it counts the wrong chain.
+
+    /producer falls back to the SERVICE's own XL1_NETWORK when the query omits
+    `network`, and the anchor service on a node that has changed chains is still
+    configured for the old one. So the omission does not fail -- it answers,
+    with somebody else's blocks.
+
+    This stubs urlopen rather than _producer_request, because the fault lives
+    INSIDE _producer_request: every existing test here stubs that function out
+    and would pass with the network missing. Watched failing before it was
+    trusted -- without the fix the query is `address=...&from=1&to=9` and this
+    goes red on the `network=` assertion.
+    """
+    seen = {}
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return b'{"produced": 0, "window": 10}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    def fake_urlopen(url, timeout=None):
+        seen["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr(agent, "PRODUCER_URL", "http://127.0.0.1:8090/producer")
+    monkeypatch.setattr(agent, "NODE_NETWORK", "mainnet")
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_urlopen)
+
+    agent._producer_request("abc123", {"from": 1, "to": 9})
+
+    assert "network=mainnet" in seen["url"], seen["url"]
+    assert "address=abc123" in seen["url"], seen["url"]
+
+
+def test_producer_request_lets_a_caller_override_the_network(monkeypatch):
+    """A caller that names a network wins over the default.
+
+    The fix injects NODE_NETWORK ahead of **params, so this asserts the
+    precedence rather than assuming it -- a dict literal that merged the other
+    way round would pin every call to the node's own chain.
+    """
+    seen = {}
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return b'{"produced": 0, "window": 10}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(agent, "PRODUCER_URL", "http://127.0.0.1:8090/producer")
+    monkeypatch.setattr(agent, "NODE_NETWORK", "mainnet")
+    monkeypatch.setattr(agent.urllib.request, "urlopen",
+                        lambda url, timeout=None: (seen.update(url=url), _Resp())[1])
+
+    agent._producer_request("abc123", {"network": "sequence"})
+
+    assert "network=sequence" in seen["url"], seen["url"]
+    assert "network=mainnet" not in seen["url"], seen["url"]
+

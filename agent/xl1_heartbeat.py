@@ -1296,7 +1296,21 @@ def _producer_request(address, params, timeout=180):
     scan reads a dozen blocks and the history walks thousands, and one number
     cannot be generous to the second without hiding a hang in the first.
     """
-    query = urllib.parse.urlencode({"address": address, **params})
+    # THE NETWORK GOES IN HERE, not at the call sites.
+    #
+    # /producer takes `network` and falls back to the SERVICE's own
+    # XL1_NETWORK when it is absent. The anchor service on a producer that has
+    # moved chains is still configured for the old one -- it answers mainnet
+    # attestations only because /attest takes the network per request -- so a
+    # scan that omits it silently counts blocks on the wrong chain. Found
+    # 2026-10-06: a node producing on mainnet reported `scan=657511-657544`,
+    # which are sequence heights, while its own panel said mainnet.
+    #
+    # All three callers omitted it, which is the argument for putting it in the
+    # one place they share rather than in three. `**params` still wins, so a
+    # caller that genuinely wants another chain can say so.
+    query = urllib.parse.urlencode(
+        {"address": address, "network": NODE_NETWORK, **params})
     try:
         with urllib.request.urlopen(PRODUCER_URL + "?" + query, timeout=timeout) as resp:
             if not (200 <= resp.status < 300):

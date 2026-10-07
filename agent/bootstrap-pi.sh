@@ -79,7 +79,21 @@ XL1_SEQUENCE_RPC_URL="${XL1_SEQUENCE_RPC_URL:-https://beta.api.chain.xyo.network
 XL1_MAINNET_RPC_URL="${XL1_MAINNET_RPC_URL:-https://api.chain.xyo.network/rpc}"
 # Checked in step 1, because a node that cannot reach this cannot take part and
 # that is worth knowing before anything is built or any phrase is asked for.
-XL1_RPC_URL="${XL1_RPC_URL:-https://beta.api.chain.xyo.network/rpc}"
+#
+# IT FOLLOWS XL1_NET, and it did not used to. This was pinned to the sequence
+# gateway whatever network was asked for, so `XL1_NET=mainnet bash bootstrap-pi.sh`
+# tested sequence, reported "the XL1 network is reachable", and said nothing
+# about the chain the node was about to join. A check that cannot fail for the
+# thing it guards is the failure mode this script is most careful about
+# everywhere else, and this was an instance of it sitting in step 1.
+#
+# An explicit XL1_RPC_URL still wins, so anything pointing this at a private
+# gateway is unaffected.
+case "$XL1_NET" in
+  mainnet) _net_rpc="$XL1_MAINNET_RPC_URL" ;;
+  *)       _net_rpc="$XL1_SEQUENCE_RPC_URL" ;;
+esac
+XL1_RPC_URL="${XL1_RPC_URL:-$_net_rpc}"
 # The anchor service. Published in the same repo as this script, under service/,
 # so a stranger needs nothing that is not already public.
 MONITOR_REPO="${MONITOR_REPO:-/opt/xl1-node-monitor}"

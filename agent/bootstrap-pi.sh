@@ -70,6 +70,14 @@ NODE_VERSION="${NODE_VERSION:-24.14.1}"
 # does a git fetch and ff-only merge in there, and a wallet phrase does not
 # belong in a directory something else is pulling into.
 PRODUCER_ENV="${PRODUCER_ENV:-/etc/xl1-producer.env}"
+# WAS THIS ASKED FOR, OR IS IT JUST THE DEFAULT? Recorded before the defaults
+# are applied, because afterwards the two are indistinguishable -- and telling
+# them apart is the whole of the fix below. `${VAR+1}` is set-ness, not
+# emptiness: XL1_NET= on the command line is a deliberate (if odd) choice and
+# not the same as saying nothing.
+XL1_NET_ASKED="${XL1_NET+1}"
+XL1_RPC_URL_ASKED="${XL1_RPC_URL+1}"
+XL1_CHAIN_ID_ASKED="${XL1_CHAIN_ID+1}"
 XL1_NET="${XL1_NET:-sequence}"
 # The public gateway for each network. A federated producer serves no RPC of
 # its own, so reads go here. Same defaults as docker-compose.pi.yml, and
@@ -176,6 +184,55 @@ AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 # above it. Defining a variable earlier cannot break anything; the test that
 # every $SUDO comes after it still holds.
 SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
+
+# THE NETWORK THIS DEVICE IS ALREADY ON BEATS THIS SCRIPT'S DEFAULT.
+#
+# 2026-10-08: the mainnet producer was moved back to sequence by a re-run of
+# this wizard. Nobody asked for that. XL1_NET defaults to sequence, the menu's
+# choice 4 runs `bash bootstrap-pi.sh` with no environment, and re-running the
+# wizard is the documented way to upgrade a device -- so the documented upgrade
+# path silently moved a production node onto a different chain, under a
+# different staking contract, and said nothing about having done it.
+#
+# IT IS THE SAME MISTAKE producer_role() IS A FIX FOR, one screen down. Its
+# comment says it: "Read from the env file the container starts with rather
+# than assumed". Role was read. Network was assumed. The script already holds
+# two tests saying a re-run cannot switch off what the operator switched on and
+# that an upgrade keeps the location the device already had; network simply was
+# not one of the things that got carried.
+#
+# ORDER: installed value, unless XL1_NET was actually asked for. An explicit
+# XL1_NET is an operator changing network on purpose and still wins -- that is
+# how the move to mainnet was made in the first place -- but it is announced,
+# because a producer changing chain is not a detail to discover afterwards.
+installed_network() { # the network this device is set up for, or nothing
+  $SUDO sed -n 's/^XL1_NETWORK=//p' "$PRODUCER_ENV" 2>/dev/null \
+    | head -1 | tr -d ' \r\n'
+}
+
+resolve_network_endpoints() { # re-derive what XL1_NET implies, defaults only
+  case "$XL1_NET" in
+    mainnet) _net_rpc="$XL1_MAINNET_RPC_URL"; _net_chain_id="$XL1_MAINNET_CHAIN_ID" ;;
+    *)       _net_rpc="$XL1_SEQUENCE_RPC_URL"; _net_chain_id="$XL1_SEQUENCE_CHAIN_ID" ;;
+  esac
+  # ONLY WHAT WAS NOT ASKED FOR. A private gateway or a pinned chain id passed
+  # in by hand is not quietly replaced because the network name moved.
+  [ -n "$XL1_RPC_URL_ASKED" ] || XL1_RPC_URL="$_net_rpc"
+  [ -n "$XL1_CHAIN_ID_ASKED" ] || XL1_CHAIN_ID="$_net_chain_id"
+}
+
+ADOPTED_NETWORK=""
+CHANGING_NETWORK=""
+XL1_NET_INSTALLED="$(installed_network)"
+if [ -n "$XL1_NET_INSTALLED" ] && [ "$XL1_NET_INSTALLED" != "$XL1_NET" ]; then
+  if [ -n "$XL1_NET_ASKED" ]; then
+    CHANGING_NETWORK="$XL1_NET_INSTALLED"
+  else
+    XL1_NET="$XL1_NET_INSTALLED"
+    ADOPTED_NETWORK=1
+    resolve_network_endpoints
+  fi
+fi
 
 # Defined HERE, before the producer step, and deliberately not inside it. It
 # used to sit in the else branch of the PRODUCER_SKIP test further down,
@@ -1363,6 +1420,27 @@ printf '  %-14s %s\n' "docker"  "$( [ "$WITH_DOCKER" = 1 ] && echo yes || echo n
 printf '  %-14s %s\n' "tailscale" "$( [ "${TS_DONE:-0}" = 1 ] && echo "already joined" || echo "will join (required)" )"
 printf '  %-14s %s\n' "agent"   "${AGENT_FROM:-$PUBLIC_REPO}"
 printf '  %-14s %s\n' "installs" "/opt/xl1-heartbeat, running as user xl1agent"
+# THE NETWORK, ON ITS OWN LINE, WITH WHERE THE VALUE CAME FROM.
+#
+# It was a word inside the producer line -- "XL1 sequence producer, built here"
+# -- which is where a changed chain went unnoticed on 2026-10-08. The chain a
+# producer joins is not a detail of how the producer is built. And a value is
+# not worth much without its provenance: "sequence" reads the same whether the
+# operator asked for it or the script defaulted to it, and those were the two
+# cases that needed telling apart.
+if [ -n "$CHANGING_NETWORK" ]; then
+  printf '  %-14s %s%s -> %s%s  %s(CHANGING the chain this node produces on)%s\n' \
+         "network" "$R" "$CHANGING_NETWORK" "$XL1_NET" "$X" "$R" "$X"
+elif [ -n "$ADOPTED_NETWORK" ]; then
+  printf '  %-14s %s  (the network this device is already set up for)\n' \
+         "network" "$XL1_NET"
+elif [ -n "$XL1_NET_ASKED" ]; then
+  printf '  %-14s %s  (asked for)\n' "network" "$XL1_NET"
+else
+  printf '  %-14s %s  (this script'"'"'s default; no network installed here yet)\n' \
+         "network" "$XL1_NET"
+fi
+printf '  %-14s %s\n' "gateway" "$XL1_RPC_URL"
 printf '  %-14s %s\n' "producer" "XL1 $XL1_NET producer, built here (this takes a while)"
 
 if [ "$CHECK_ONLY" = 1 ]; then
@@ -2509,8 +2587,26 @@ CHECK_INTERVAL_MS="$(producer_check_interval)"
 # where the preset supplies one and XL1_SEQUENCE_CHAIN_ID is deliberately empty.
 # When the script DOES have one it wins, because the id is per network and a
 # carried-over value is the previous network's after a switch.
-if [ -z "${XL1_CHAIN_ID:-}" ]; then
+# AND NOT ACROSS A NETWORK CHANGE, WHICH THIS GUARDED IN ONE DIRECTION ONLY.
+#
+# "When the script DOES have one it wins" is true going TO mainnet, which has a
+# default. Going the other way the script has no opinion on purpose --
+# XL1_SEQUENCE_CHAIN_ID is deliberately empty, the preset supplies it -- so the
+# carry below ran and brought the previous network's id with it.
+#
+# Measured 2026-10-08 on the mainnet producer after a default re-run: the file
+# came out XL1_NETWORK=sequence carrying XL1_CHAIN__ID=319e..., which is the
+# ETH staking contract for MAINNET. Not sequence, and not absent: a mixture of
+# two networks that is worse than either, and nothing on screen about it.
+#
+# The id is per network, so across a change there is nothing to carry. Where
+# the new network needs one this script already has it; where it does not, an
+# absent line is the correct answer and lets the preset supply it.
+if [ -z "${XL1_CHAIN_ID:-}" ] && [ -z "$CHANGING_NETWORK" ]; then
   XL1_CHAIN_ID="$($SUDO sed -n 's/^XL1_CHAIN__ID=//p' "$PRODUCER_ENV" 2>/dev/null | head -1 | tr -d '[:space:]')"
+elif [ -n "$CHANGING_NETWORK" ] && [ -z "${XL1_CHAIN_ID:-}" ]; then
+  warn "the chain id from $CHANGING_NETWORK is being dropped, not carried" \
+       "it names that network's staking contract. $XL1_NET's preset supplies its own; set XL1_CHAIN_ID to pin one by hand"
 fi
 
 tmp_env="$(mktemp)"

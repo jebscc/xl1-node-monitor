@@ -40,6 +40,10 @@ NODE_LABEL="${NODE_LABEL:-}"
 # device with no node is not a producer, and saying so is how the grid knows
 # not to judge it by whether a node is answering.
 NODE_ROLE="${NODE_ROLE:-}"
+# ASKED FOR, OR JUST THE DEFAULT? Recorded before the default is applied,
+# because afterwards they look identical -- and the whole of the fix further
+# down is telling them apart. `${VAR+1}` is set-ness, not emptiness.
+NODE_NETWORK_ASKED="${NODE_NETWORK+1}"
 NODE_NETWORK="${NODE_NETWORK:-sequence}"
 DO_INSTALL=0
 SKIP_DOCKER=0
@@ -72,7 +76,7 @@ while [ $# -gt 0 ]; do
     --node-id)      NODE_ID="${2:-}"; shift ;;
     --label)        NODE_LABEL="${2:-}"; shift ;;
     --role)         NODE_ROLE="${2:-}"; shift ;;
-    --network)      NODE_NETWORK="${2:-}"; shift ;;
+    --network)      NODE_NETWORK="${2:-}"; NODE_NETWORK_ASKED=1; shift ;;
     --backend)      BACKEND_URL="${2:-}"; shift ;;
     --grid)         ACCOUNT_URL="${2:-}"; shift ;;  # kept: older callers pass it
     --account)      ACCOUNT_URL="${2:-}"; shift ;;
@@ -458,6 +462,32 @@ getent group docker >/dev/null 2>&1 && $SUDO usermod -aG docker xl1agent
 printf '  installing the agent into /opt/xl1-heartbeat\n'
 $SUDO mkdir -p /opt/xl1-heartbeat
 $SUDO cp "$SRC_DIR/xl1_heartbeat.py" /opt/xl1-heartbeat/
+
+# THE NETWORK THIS DEVICE ALREADY REPORTS, WHEN NOBODY ASKED FOR ONE.
+#
+# NODE_NETWORK is in the strip list below -- this writer owns it -- so every
+# run rewrote it from the variable above, which defaults to sequence. The
+# wizard calls this script with no --network, and re-running the wizard is the
+# documented way to upgrade a device. So on 2026-10-08 an upgrade of the
+# MAINNET producer left the node producing on mainnet while its agent reported
+# sequence, and the portal drew it under SEQUENCE TESTNET with "THIS NODE"
+# beside it. The node was right and the label was wrong.
+#
+# IT IS THE SECOND HALF OF A BUG THIS FILE ALREADY FIXED ONCE. The comment
+# below says it about the anchor token: this rewrote the whole file from
+# scratch and dropped what another writer owned, on every upgrade. The token
+# was given back. NODE_NETWORK is owned by this writer, so it was not a
+# carry-over problem -- it is a default problem, and defaults were never
+# revisited.
+if [ -z "$NODE_NETWORK_ASKED" ] && [ -f /etc/xl1-heartbeat.env ]; then
+  _installed_net="$($SUDO sed -n 's/^NODE_NETWORK=//p' /etc/xl1-heartbeat.env \
+    2>/dev/null | head -1 | tr -d ' "\r\n')"
+  if [ -n "$_installed_net" ] && [ "$_installed_net" != "$NODE_NETWORK" ]; then
+    printf '  keeping NODE_NETWORK=%s, which is what this device already reports\n' \
+      "$_installed_net"
+    NODE_NETWORK="$_installed_net"
+  fi
+fi
 
 printf '  writing /etc/xl1-heartbeat.env (0600, root-owned)\n'
 # Written via a umask'd temp file rather than tee, so the token is never

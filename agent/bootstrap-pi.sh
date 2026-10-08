@@ -1739,9 +1739,21 @@ elif ! docker info >/dev/null 2>&1; then
 fi
 # The token travels in the environment, never as an argument: arguments are
 # visible in ps to every user on the machine.
+#
+# AND THE NETWORK TRAVELS WITH IT, because otherwise these two programs each
+# pick their own. onboard.sh owns NODE_NETWORK in the agent env and defaults it
+# to sequence; this script was calling it without one. So on 2026-10-08 the
+# producer came back on mainnet while its agent went on reporting sequence, and
+# the portal drew the node under SEQUENCE TESTNET. Nothing was inconsistent
+# inside either program -- they were answering different questions and nobody
+# had made them agree.
+#
+# The producer's chain and the chain the grid is told about are one fact. It is
+# decided here, where the network is resolved, and handed over.
 # shellcheck disable=SC2086
 NODE_HEARTBEAT_TOKEN="$TOKEN" \
 NODE_LABEL="$NODE_LABEL" \
+NODE_NETWORK="$XL1_NET" \
 XL1_STATED_LOCATION="$STATED_LOCATION" \
 XL1_STATED_LAT="$STATED_LAT" \
 XL1_STATED_LON="$STATED_LON" \

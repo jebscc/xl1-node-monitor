@@ -30,7 +30,7 @@
 #   docker tag xl1:<version> xl1:local
 #   docker rm -f xl1-producer
 #   docker run -d --name xl1-producer --restart unless-stopped \
-#     --env-file /opt/xl1-docker-images/sequence-producer.env xl1:local
+#     --env-file <this node's producer env file> xl1:local
 #
 # Roll back by tagging the previous version and repeating.
 #
@@ -445,5 +445,28 @@ else
   log "  docker tag xl1:$LATEST xl1:local"
   log "  docker rm -f ${CONTAINER:-xl1-producer}"
   log "  docker run -d --name xl1-producer --restart unless-stopped \\"
-  log "    --env-file $REPO/sequence-producer.env xl1:local"
+  # THE ENV FILE THIS NODE ACTUALLY USES, NOT THE ONE THE AUTHOR'S NODE USED.
+  #
+  # This said "$REPO/sequence-producer.env" on every machine. The CM4 moved to
+  # mainnet on 2026-10-06, so on that node these lines told the operator to
+  # recreate a MAINNET producer with the SEQUENCE env file -- one copy-paste
+  # away from a producer coming back on the wrong network under a different
+  # address, with nothing on screen to say it had happened. A hint that gets
+  # followed is not decoration.
+  #
+  # Discovered the way xl1-menu discovers it: a unit's --env-file if a unit
+  # owns this container, else bootstrap-pi.sh's own default. Where neither can
+  # be read it leaves a placeholder the operator has to fill in, which is
+  # refusable. A plausible wrong path is not.
+  _hint_env=""
+  for _u in xl1-producer xl1-node xl1; do
+    systemctl cat "$_u.service" >/dev/null 2>&1 || continue
+    _hint_env="$(systemctl show "$_u.service" -p ExecStart --value 2>/dev/null \
+      | sed -n 's/.*--env-file[= ]\([^ ;"]*\).*/\1/p' | head -1)"
+    break
+  done
+  if [ -z "$_hint_env" ] && [ -f /etc/xl1-producer.env ]; then
+    _hint_env=/etc/xl1-producer.env
+  fi
+  log "    --env-file ${_hint_env:-<this node, its own producer env file>} xl1:local"
 fi

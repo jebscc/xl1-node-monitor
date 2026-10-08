@@ -54,6 +54,49 @@ unit_field() { # unit_field <sed-expression>
   systemctl show "$PRODUCER_UNIT" -p ExecStart --value 2>/dev/null | sed -n "$1" | head -1
 }
 PRODUCER_ENV="$(unit_field 's/.*--env-file[= ]\([^ ;"]*\).*/\1/p')"
+
+# AND WHERE THE WIZARD PUTS IT WHEN NOTHING SUPERVISES THE CONTAINER.
+#
+# The line above was the whole of discovery, and it only ever asks systemd.
+# A node whose producer is a bare `docker run --restart unless-stopped` has no
+# unit, so it answered "not discoverable" about a file sitting at the wizard's
+# own default path -- and on 2026-10-08 that turned off the config gate on both
+# bare-docker nodes, the mainnet one included. The gate is the check that turns
+# a crash loop into a message, and it was off on the two machines that have no
+# unit to roll them back either.
+#
+# THIS IS NOT A GUESS AT A PLAUSIBLE PATH. bootstrap-pi.sh defaults
+# PRODUCER_ENV to /etc/xl1-producer.env and adopts a unit's --env-file when
+# there is one -- unit first, then the default. That is the order below, so the
+# program that WROTE the file and the program looking for it agree. What is
+# still refused is inventing a path: the file has to be there to be named.
+# Overridable for the same reason AGENT_ENV and XL1_REPO are: a test has to be
+# able to point it somewhere it can write. bootstrap-pi.sh takes the identical
+# override on the identical variable, which is also what keeps the two in step.
+PRODUCER_ENV_DEFAULT="${PRODUCER_ENV_DEFAULT:-/etc/xl1-producer.env}"
+if [ -z "$PRODUCER_ENV" ] && [ -f "$PRODUCER_ENV_DEFAULT" ]; then
+  # Readable, or readable to a sudo that will not prompt -- the same test
+  # env_value makes, and for the same reason: a menu whose whole value is being
+  # safe to run without thinking must not ask for a password to draw itself.
+  # Unreadable is left unset, and env file / why says which of the two it was.
+  if [ -r "$PRODUCER_ENV_DEFAULT" ] || sudo -n test -r "$PRODUCER_ENV_DEFAULT" 2>/dev/null; then
+    PRODUCER_ENV="$PRODUCER_ENV_DEFAULT"
+  fi
+fi
+
+# "not discoverable" was one answer to three questions, the same fault env_why
+# was written for one screen higher up. There is no unit AND no file is not the
+# same as the file is root-only and sudo would prompt, and neither is the same
+# as a node this wizard never built.
+producer_env_why() {
+  if [ -n "$PRODUCER_UNIT" ]; then
+    printf 'no --env-file in %s' "$PRODUCER_UNIT"
+  elif [ ! -f "$PRODUCER_ENV_DEFAULT" ]; then
+    printf 'no %s on this machine' "$PRODUCER_ENV_DEFAULT"
+  else
+    printf '%s is root-only -- run this with sudo to use it' "$PRODUCER_ENV_DEFAULT"
+  fi
+}
 PRESETS_DIR="$(unit_field 's/.*-v[= ]\([^ ;"]*\):\/presets.*/\1/p')"
 PRESET_ARGS=""
 [ -n "$PRESETS_DIR" ] && PRESET_ARGS="-e XL1_PRESETS_DIR=/presets -v $PRESETS_DIR:/presets"
@@ -309,6 +352,28 @@ config_gate_asks_new_image() {
   [ -n "$PRODUCER_ENV" ]
 }
 
+# CAN A RESTART MOVE THIS CONTAINER ONTO A NEW IMAGE? ASKED BEFORE RESTARTING.
+#
+# Measured on the Pi 2026-09-25: a container created from a tag, with the tag
+# then moved, comes back on the image it was CREATED from. So for a bare
+# `docker run` container the answer is never -- not "sometimes", never -- and
+# it is knowable from this machine before anything is touched.
+#
+# It was not asked. On 2026-10-08 choice 5 built 5.6.1, promoted it, RESTARTED
+# the producer, and then discovered the producer was still on 5.5.0. The
+# discovery was right and well explained; the restart was the problem. A block
+# producer was interrupted to accomplish nothing, and the operator was told
+# afterwards that the thing they had just agreed to could not have worked.
+#
+# A unit is different: its ExecStart does `docker run`, so starting it CREATES
+# a container and the new one is created from the tag as it now stands. That is
+# why this works on the node with a unit and never on the two without one, and
+# why "it worked on the Pi 4" was not evidence about the others.
+restart_can_follow_tag() {
+  [ -n "$PRODUCER_UNIT" ] || return 1
+  unit_field 'p' | grep -q 'docker[[:space:]][[:space:]]*run'
+}
+
 a_dump() {
   say "${B}Check the producer's configuration${X}"
   note "Resolves presets, env file and flags and exits WITHOUT starting an actor."
@@ -423,7 +488,19 @@ a_build_image() {
 
   _was="$(running_cli)"
   note "the producer is running CLI ${_was:-<unreadable>}"
-  confirm_action "Builds the newest CLI, promotes it, and RESTARTS the producer onto it -- rolling back if the new image refuses this node's config or the restart does not come up clean." || return 1
+  # WHAT THIS CAN ACTUALLY DO HERE, in the sentence the operator says yes to.
+  # The old text promised a restart onto the new image on every node. On a node
+  # whose producer cannot follow a moved tag that promise is impossible, and
+  # keeping it in the prompt bought a producer restart that could not work.
+  if restart_can_follow_tag; then
+    confirm_action "Builds the newest CLI, promotes it, and RESTARTS the producer onto it -- rolling back if the new image refuses this node's config or the restart does not come up clean." || return 1
+  else
+    warn "this producer is a bare container, so a restart cannot move it onto a"
+    warn "new image -- it would come back on the image it was created from. So"
+    warn "this builds and promotes only, and does NOT touch the producer."
+    note "the wizard (choice 4) recreates it, and will use the promoted image."
+    confirm_action "Builds the newest CLI and promotes it. The producer is left alone -- recreating it onto the new image is the wizard's job (choice 4)." || return 1
+  fi
 
   # --promote moves the tag inside the script, which is where the version
   # just built is known without parsing a log line for it. The last two lines
@@ -466,6 +543,18 @@ a_build_image() {
     warn "not be asked about it. The only check available runs inside the"
     warn "container still on the OLD image and would answer for the wrong"
     warn "one, so it was not made. The smoke test stands; this does not."
+  fi
+
+  # NOT RESTARTED WHEN A RESTART PROVABLY CANNOT MOVE IT. The check below used
+  # to run unconditionally and then report, correctly, that nothing had moved.
+  # Reporting it is right; paying a producer restart to find it out is not.
+  if ! restart_can_follow_tag; then
+    ok "xl1:local points at $_new, and the producer is untouched on $_prev."
+    note "a bare container comes back on the image it was created from, so it"
+    note "has to be RECREATED. The wizard (choice 4) knows the flags for that"
+    note "and will use xl1:local, which is now $_new."
+    note "roll back the tag with: sudo docker tag xl1:${_prev:-<version>} xl1:local"
+    return 0
   fi
 
   a_restart_producer || {
@@ -581,6 +670,18 @@ a_promote() {
     err "no image tagged xl1:$tag on this machine"; return 1
   fi
   do_cmd "docker tag xl1:$tag xl1:local" || return 1
+  # THE SAME QUESTION CHOICE 5 NOW ASKS, and this one needed it more: it had no
+  # check at all afterwards, so on a bare container it moved the tag, restarted
+  # the producer, and said nothing about the fact that the producer had not
+  # moved. Two of the three nodes here are bare containers.
+  if ! restart_can_follow_tag; then
+    ok "xl1:local points at $tag."
+    warn "the producer is NOT restarted: a bare container comes back on the"
+    warn "image it was created from, so restarting it would change nothing."
+    note "the wizard (choice 4) recreates it, and will use xl1:local."
+    note "roll back by tagging the old version: sudo docker tag xl1:<version> xl1:local"
+    return 0
+  fi
   note "Now restart onto it. Rolling back means tagging the old version and repeating."
   a_restart_producer
 }
@@ -1420,10 +1521,19 @@ h|The help reference (xl1-help)|a_help
 menu() {
   printf '\n%s== This node%s\n' "$B" "$X"
   printf '   producer   %s\n' "${PRODUCER_CONTAINER:-<none found>}${PRODUCER_UNIT:+  (unit: $PRODUCER_UNIT)}"
-  printf '   env file   %s\n' "${PRODUCER_ENV:-<not discoverable>}"
+  printf '   env file   %s\n' "${PRODUCER_ENV:-<$(producer_env_why)>}"
   printf '   anchor     %s\n' "${ANCHOR_CONTAINER:-<none found>}"
   printf '   checkout   %s\n' "${REPO:-<none found>}"
-  printf '   backend    %s\n' "${BACKEND:-<not set in $AGENT_ENV>}"
+  # WHY, FROM env_why, WHICH WAS WRITTEN FOR THIS AND NEVER CALLED.
+  #
+  # Its own comment says a missing value has three different answers and this
+  # had one. It still had one: the line below said "not set in
+  # /etc/xl1-heartbeat.env" about a file that is there, holds the value, and is
+  # root-only. On 2026-10-08 the same command printed <not set> and then the
+  # real URL a minute later -- the difference being a sudo timestamp created in
+  # between, nothing whatever about the file. A function written to stop that
+  # has to actually be called.
+  printf '   backend    %s\n' "${BACKEND:-<$(env_why)>}"
   [ "$DRY_RUN" = 1 ] && printf '   %sDRY RUN -- nothing will be done%s\n' "$Y" "$X"
   # ASKED BEFORE THE LIST IS DRAWN, not after: the notes belong beside the
   # choices, and a choice cannot be taken back once it has been typed.

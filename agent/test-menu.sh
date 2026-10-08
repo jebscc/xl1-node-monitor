@@ -65,6 +65,173 @@ else
 fi
 
 # --- the menu and the actions cannot disagree --------------------------------
+# --- a restart that cannot move the image is not worth a producer ------------
+#
+# 2026-10-08, BP3: choice 5 built 5.6.1, promoted it, restarted the producer,
+# and then reported -- correctly -- that the producer was still on 5.5.0. The
+# report was right. The restart was not: a bare `docker run` container always
+# comes back on the image it was CREATED from, so that restart could not have
+# worked, and whether it could have worked was knowable before anything moved.
+printf '\na restart is not spent to find out it cannot work\n'
+
+RCFT="$(printf '%s' "$SRC" | sed -n '/^restart_can_follow_tag() {/,/^}/p')"
+if [ -n "$RCFT" ]; then
+  ok "the menu has a predicate for whether a restart can move the image"
+
+  # NO UNIT -- the two bare-docker nodes. Never, not sometimes.
+  _r="$(
+    PRODUCER_UNIT=""
+    unit_field() { printf 'docker run --name xl1-producer xl1:local'; }
+    eval "$RCFT"
+    restart_can_follow_tag && printf yes || printf no
+  )"
+  if [ "$_r" = no ]; then
+    ok "a bare container cannot follow a moved tag"
+  else
+    bad "a bare container was said to follow a moved tag" \
+        "this is the 2026-10-08 restart, bought and wasted"
+  fi
+
+  # A UNIT WHOSE ExecStart RUNS `docker run` -- starting it creates a
+  # container, and a new container is created from the tag as it now stands.
+  _r="$(
+    PRODUCER_UNIT="xl1-producer.service"
+    unit_field() { printf '/usr/bin/docker run --rm --name xl1-producer --env-file /etc/xl1-producer.env xl1:local'; }
+    eval "$RCFT"
+    restart_can_follow_tag && printf yes || printf no
+  )"
+  if [ "$_r" = yes ]; then
+    ok "a unit that runs docker run can follow a moved tag"
+  else
+    bad "a unit that recreates its container was said not to follow the tag" \
+        "this turns off the restart on the node where it does work"
+  fi
+
+  # A UNIT THAT ONLY STARTS AN EXISTING CONTAINER cannot: same container, same
+  # image. The predicate must read the ExecStart, not merely count the unit.
+  _r="$(
+    PRODUCER_UNIT="xl1-producer.service"
+    unit_field() { printf '/usr/bin/docker start -a xl1-producer'; }
+    eval "$RCFT"
+    restart_can_follow_tag && printf yes || printf no
+  )"
+  if [ "$_r" = no ]; then
+    ok "a unit that only starts an existing container cannot follow the tag"
+  else
+    bad "having a unit was treated as enough" \
+        "docker start reuses the container, so the image cannot change"
+  fi
+else
+  bad "no restart_can_follow_tag in the menu" \
+      "nothing stops choice 5 restarting a producer it cannot move"
+fi
+
+# AND BOTH ACTIONS THAT MOVE THE TAG HAVE TO ASK IT BEFORE RESTARTING.
+#
+# NOT "does the name appear in the body". a_build_image mentions
+# restart_can_follow_tag twice -- once to word the prompt, once to guard the
+# restart -- so a grep for the name stays green when the GUARD is deleted and
+# the prompt's mention is left behind. Watched: that mutant passed 155/155 on
+# 2026-10-08, which is this repository's third guard to assert nothing.
+#
+# What has to hold is an ORDER: a `! restart_can_follow_tag` that returns,
+# standing between the top of the action and the call to a_restart_producer.
+printf '\n'
+for _fn in a_build_image a_promote; do
+  BODY="$(printf '%s' "$SRC" | sed -n "/^$_fn() {/,/^}/p" | grep -vE '^[[:space:]]*#')"
+  _guard="$(printf '%s' "$BODY" | grep -n '! *restart_can_follow_tag' | head -1 | cut -d: -f1)"
+  _rst="$(printf '%s' "$BODY" | grep -n 'a_restart_producer' | head -1 | cut -d: -f1)"
+  if [ -z "$_rst" ]; then
+    ok "$_fn does not restart the producer at all"
+  elif [ -z "$_guard" ]; then
+    bad "$_fn restarts without first asking whether that can work" \
+        "on a bare container it costs a producer restart and changes nothing"
+  elif [ "$_guard" -lt "$_rst" ]; then
+    ok "$_fn asks whether a restart can move the image, before restarting"
+  else
+    bad "$_fn asks only AFTER it has restarted" \
+        "that is the 2026-10-08 order: restart first, explain second"
+  fi
+  # and the guard has to actually leave, not note it and carry on
+  if [ -n "$_guard" ] && [ -n "$_rst" ]; then
+    if printf '%s' "$BODY" | sed -n "${_guard},${_rst}p" | grep -qE 'return 0'; then
+      ok "$_fn leaves rather than falling through to the restart"
+    else
+      bad "$_fn tests the guard and restarts anyway" \
+          "a branch that does not return is not a guard"
+    fi
+  fi
+done
+
+# --- the producer env file is looked for where the wizard puts it ------------
+#
+# Discovery was `systemctl show ... ExecStart | sed`, and nothing else. A node
+# with no unit therefore reported "not discoverable" about a file sitting at
+# bootstrap-pi.sh's own default path -- which turned the config gate OFF on
+# both bare-docker nodes, the mainnet one included.
+printf '\nthe producer env file is found where the wizard writes it\n'
+
+TMPD="$(mktemp -d)"
+trap 'rm -rf "$TMPD"' EXIT
+printf 'XL1_ROLE=producer\n' > "$TMPD/xl1-producer.env"
+
+OUT="$(PRODUCER_ENV_DEFAULT="$TMPD/xl1-producer.env" NO_COLOR=1 DRY_RUN=1 \
+  bash "$SCRIPT" --help 2>&1)"
+if printf '%s' "$OUT" | grep -q "env file   $TMPD/xl1-producer.env"; then
+  ok "with no unit it falls back to the wizard's default path"
+else
+  bad "the wizard's own env file was not found" \
+      "$(printf '%s' "$OUT" | grep 'env file' || printf '(no env file line)')"
+fi
+
+# AND IT DOES NOT INVENT ONE. A path that is not there is not named.
+OUT="$(PRODUCER_ENV_DEFAULT="$TMPD/absent.env" NO_COLOR=1 DRY_RUN=1 \
+  bash "$SCRIPT" --help 2>&1)"
+if printf '%s' "$OUT" | grep -q "env file   <no $TMPD/absent.env on this machine>"; then
+  ok "a file that is not there is reported absent, not named as the answer"
+else
+  bad "a missing env file was not reported as missing" \
+      "$(printf '%s' "$OUT" | grep 'env file' || printf '(no env file line)')"
+fi
+
+# AND THE GATE IS ON when the file was found: dump_config_cmd must then ask
+# `docker run ... xl1:local`, the NEW image, rather than exec into the old one.
+if printf '%s' "$RCFT" >/dev/null; then :; fi
+_g="$(
+  PRODUCER_ENV="$TMPD/xl1-producer.env"; PRESET_ARGS=""; PRODUCER_CONTAINER="xl1-producer"
+  eval "$(printf '%s' "$SRC" | sed -n '/^dump_config_cmd() {/,/^}/p')"
+  dump_config_cmd
+)"
+case "$_g" in
+  *"docker run"*"--env-file $TMPD/xl1-producer.env"*) ok "a found env file makes the gate ask the new image" ;;
+  *) bad "the gate still asks the running container" "$_g" ;;
+esac
+
+# --- why a value is missing, which env_why exists to answer ------------------
+#
+# env_why was written for this, with a comment saying a missing value has three
+# different answers and this had one -- and then it was never called. The
+# header said "not set in /etc/xl1-heartbeat.env" about a root-only file that
+# holds the value. On 2026-10-08 the same command printed <not set> and then
+# the real URL, the only difference being a sudo timestamp.
+printf '\nwhy a value is missing, not just that it is\n'
+
+if printf '%s' "$SRC" | sed -n '/^menu() {/,/^}/p' | grep -q 'env_why'; then
+  ok "the header asks env_why rather than asserting a reason"
+else
+  bad "env_why is still dead code" \
+      "the header reports a configuration problem for a permission one"
+fi
+
+OUT="$(AGENT_ENV="$TMPD/absent-agent.env" NO_COLOR=1 DRY_RUN=1 \
+  bash "$SCRIPT" --help 2>&1)"
+if printf '%s' "$OUT" | grep -q "backend    <no $TMPD/absent-agent.env on this machine>"; then
+  ok "an absent agent env file says absent, not \"not set\""
+else
+  bad "a missing agent env file was reported as an unset value" \
+      "$(printf '%s' "$OUT" | grep 'backend' || printf '(no backend line)')"
+fi
+
 printf '\nthe menu\n'
 KEYS="$(printf '%s' "$SRC" | sed -n '/^ITEMS="/,/^"$/p' | grep -E '^[0-9a-z]\|' | cut -d'|' -f1)"
 MISSING=""

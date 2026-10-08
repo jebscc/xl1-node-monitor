@@ -396,6 +396,84 @@ def test_a_brand_new_node_still_seeds_with_a_window(monkeypatch):
     assert calls[0]["window"] == agent.PRODUCER_WINDOW
 
 
+# --- a cleared cursor has to actually reach the agent -----------------------
+#
+# The backend clears producer_cursor when the node changes network, because a
+# block number belongs to one chain. That clear was unreachable: the reader
+# below took a cursor only `if isinstance(value, int)`, so a null was ignored
+# and the agent kept the old chain's position -- while the comment above it
+# claimed the opposite, "even when that position is nothing counted yet".
+#
+# Measured 2026-10-08 on the Pi 4 after its move to mainnet: it went on asking
+# for blocks since 662,700, a SEQUENCE height, against a mainnet head of
+# 1,738,910.
+
+
+def _absorb(monkeypatch, body, start):
+    """Run the heartbeat's response reader over one backend body."""
+    agent._producer_cursor.update(start)
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return json.dumps(body).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen",
+                        lambda *a, **k: _Resp())
+    monkeypatch.setattr(agent, "BACKEND_URL", "http://backend.invalid")
+    monkeypatch.setattr(agent, "NODE_TOKEN", "t")
+    agent.send({})
+    return dict(agent._producer_cursor)
+
+
+def test_an_explicit_null_cursor_clears_the_agent_s_position(monkeypatch):
+    """The only way a backend can say "forget where you were"."""
+    out = _absorb(monkeypatch,
+                  {"producer_cursor": None, "backfill_cursor": None},
+                  {"block": 662700, "backfill": 662000, "known": False})
+    assert out["block"] is None             # not 662700, a sequence height
+    assert out["backfill"] is None
+    assert out["known"] is True
+
+
+def test_a_cursor_the_backend_did_not_mention_is_left_alone(monkeypatch):
+    """Absent is not null. A body that says nothing about the cursor -- an
+    older backend, a partial response -- must not wipe a good position."""
+    out = _absorb(monkeypatch, {"minted_complete": False},
+                  {"block": 565380, "backfill": 565000, "known": False})
+    assert out["block"] == 565380
+    assert out["backfill"] == 565000
+
+
+def test_a_real_cursor_is_still_adopted(monkeypatch):
+    out = _absorb(monkeypatch,
+                  {"producer_cursor": 565380, "backfill_cursor": 565000},
+                  {"block": None, "backfill": None, "known": False})
+    assert out["block"] == 565380
+    assert out["backfill"] == 565000
+
+
+def test_after_a_clear_the_next_scan_seeds_from_the_head(monkeypatch):
+    """The point of clearing it. With no cursor the agent asks for a window
+    rather than a range, which is how a brand new node starts -- so a moved
+    node reseeds at the new chain's head instead of walking a million blocks
+    up from the old chain's."""
+    calls = []
+    _producer_ready(monkeypatch, calls)
+    agent._producer_cursor["known"] = True
+    agent._producer_cursor["block"] = None      # as the clear leaves it
+    assert agent.fetch_producer_stats("node") is not None
+    assert "since" not in calls[0]
+    assert calls[0]["window"] == agent.PRODUCER_WINDOW
+
+
 # --- version strings come from outside and are size-capped downstream -------
 
 @pytest.mark.parametrize("value", ["5.2.2", "5.2.2-rc.1", "1.0", "10.20.30.40"])

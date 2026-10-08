@@ -44,7 +44,17 @@ import urllib.request
 #
 # test_reported_fields_are_pinned_to_the_version() fails when the payload gains
 # a field, so this cannot quietly freeze again.
-AGENT_VERSION = "1.46.0"
+#
+# IT CANNOT CATCH A PATCH, AND THAT COST MOST OF AN EVENING. On 2026-10-06 the
+# scan was fixed to name its chain -- a behaviour change with no new field, so
+# the test above was silent and the version stayed at 1.46.0. Two days later
+# the Pi 4 reported 1.46.0 and so did the repository, one with the fix and one
+# without, and nothing on the panel or in the menu could tell them apart. It
+# was found by grepping the deployed file for the fix's own source line.
+#
+# A version that two different behaviours share is not a version. PATCH is
+# cheap; a day spent proving which code is running is not.
+AGENT_VERSION = "1.46.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -4458,17 +4468,31 @@ def send(payload):
                 body = {}
             # Any successful response tells us the backend's position, even
             # when that position is "nothing counted yet" (null).
+            #
+            # AND THE COMMENT ABOVE WAS NOT WHAT THE CODE DID. Each of these
+            # read `if isinstance(x, int)`, so a null -- the backend saying
+            # "forget where you were" -- was silently ignored and the agent
+            # kept the position it already had. The backend clears a cursor
+            # exactly when it must not be reused: on a network change, where
+            # the number belongs to the chain this node has just left.
+            #
+            # Measured 2026-10-08: the Pi 4 moved to mainnet and went on
+            # asking for blocks since 662,700, a sequence height, because the
+            # clear could not reach it. Present-and-null is now distinguished
+            # from absent, which is the only way a backend can say "reseed".
             _producer_cursor["known"] = True
-            cursor = body.get("producer_cursor")
-            if isinstance(cursor, int):
-                _producer_cursor["block"] = cursor
-            minted_cursor = body.get("minted_cursor")
-            if isinstance(minted_cursor, int):
-                _producer_cursor["minted"] = minted_cursor
+
+            def _take(key, slot):
+                """Adopt a cursor the backend sent, including a null one."""
+                if key not in body:
+                    return                      # not mentioned: leave it alone
+                value = body.get(key)
+                _producer_cursor[slot] = value if isinstance(value, int) else None
+
+            _take("producer_cursor", "block")
+            _take("minted_cursor", "minted")
             _producer_cursor["minted_done"] = bool(body.get("minted_complete"))
-            backfill = body.get("backfill_cursor")
-            if isinstance(backfill, int):
-                _producer_cursor["backfill"] = backfill
+            _take("backfill_cursor", "backfill")
             _producer_cursor["backfill_done"] = bool(body.get("backfill_complete"))
             shown = body.get("last_produced_block")
             if isinstance(shown, int):

@@ -2137,6 +2137,50 @@ head_ "10. The XL1 block producer  (required)"
 #
 # Unreadable either number means skip, unchanged: an npm outage or a container
 # that will not answer is not a reason to tear down a working producer.
+# "RUNNING" IS NOT THE SAME AS "CONFIGURED", EITHER.
+#
+# The block above earned the skip against the CLI version, and its comment
+# says why: a node was left broken by the tool sent to fix it, quietly. Every
+# word of that is true of the ENVIRONMENT too, and on 2026-10-08 it cost a day.
+#
+# A default re-run wrote XL1_NETWORK=sequence while carrying mainnet's chain id
+# forward. The next run put XL1_NETWORK=mainnet back in the FILE -- and the
+# container kept the environment it was CREATED with, because it was running,
+# so this wizard said "the producer is already running here" and stopped. The
+# node went on resolving sequence endpoints with mainnet's chain id, and every
+# block it built was rejected: BlockValidationError: Invalid chain id.
+#
+# A container's environment is fixed at creation. `docker restart` does not
+# re-read --env-file; only a recreate does. So a file that agrees with itself
+# is no evidence at all about the process, and this script's whole job is
+# writing that file.
+#
+# KEY NAMES ONLY, NEVER VALUES: the producer phrase is in this file, and the
+# whole point of the comparison is to report a mismatch out loud.
+producer_env_drift() {  # -> keys where the container disagrees with the env file
+  [ -n "${PRODUCER_ENV:-}" ] && [ -f "$PRODUCER_ENV" ] || return 1
+  _live="$($SUDO docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
+    xl1-producer 2>/dev/null)" || return 1
+  [ -n "$_live" ] || return 1
+  _drift=""
+  # Commented lines are records, not configuration -- docker ignores them in an
+  # --env-file and so must this, or every run reports drift on keys the node
+  # was never given.
+  while IFS= read -r _l; do
+    case "$_l" in ''|'#'*) continue ;; esac
+    _k="${_l%%=*}"
+    [ "$_k" != "$_l" ] || continue
+    _v="${_l#*=}"
+    if [ "$(printf '%s\n' "$_live" | sed -n "s/^$_k=//p" | head -1)" != "$_v" ]; then
+      _drift="$_drift $_k"
+    fi
+  done <<DRIFT_EOF
+$($SUDO cat "$PRODUCER_ENV" 2>/dev/null)
+DRIFT_EOF
+  [ -n "$_drift" ] || return 1
+  printf '%s' "${_drift# }"
+}
+
 PRODUCER_SKIP=0
 if $SUDO docker ps --filter name=xl1-producer \
      --format '{{.Names}}' 2>/dev/null | grep -q xl1-producer; then
@@ -2155,6 +2199,24 @@ if $SUDO docker ps --filter name=xl1-producer \
       PRODUCER_SKIP=0
     else
       note "Left on $running_cli. Re-run this when you want the update."
+    fi
+  fi
+fi
+
+# AND THE SAME QUESTION ABOUT THE ENVIRONMENT. See producer_env_drift above.
+if [ "$PRODUCER_SKIP" = 1 ]; then
+  _envdrift="$(producer_env_drift || true)"
+  if [ -n "$_envdrift" ]; then
+    warn "the running producer's environment is not the one in $PRODUCER_ENV" \
+         "they differ on: $_envdrift"
+    note "A container keeps the environment it was CREATED with. Restarting it"
+    note "does not re-read the file; only recreating it does -- so the settings"
+    note "this wizard has just written are not the ones the node is using."
+    if ask_yn "  Recreate the producer so it uses the file?" "y"; then
+      PRODUCER_SKIP=0
+    else
+      note "Left as it is. The file and the running node disagree until it is"
+      note "recreated, and the file is the one that looks right."
     fi
   fi
 fi

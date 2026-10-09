@@ -174,6 +174,7 @@ DELEGATION_SPOOL="${DELEGATION_SPOOL:-/var/lib/xl1-attestations}"
 # address: same signer, same block credit, and only the reward address to
 # tell them apart. Found 2026-09-07, after a Pi that had produced for weeks
 # went quiet and the wizard had reported success every time.
+PRESETS_DIR_ASKED="${PRESETS_DIR+1}"
 PRESETS_DIR="${PRESETS_DIR:-/opt/xl1-presets}"
 AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 
@@ -2638,6 +2639,22 @@ producer_unit_envfile() {  # producer_unit_envfile <unit>
     | sed -n 's/.*--env-file[= ]\([^ ;"]*\).*/\1/p' | head -1
 }
 
+# THE HOST SIDE OF THE -v <host>:/presets MOUNT, same reasoning as the
+# env-file above and the same bug in a second place: PRESETS_DIR defaults to
+# /opt/xl1-presets, a unit predating that default can mount a different host
+# directory into /presets, and producer_preset() -- which only ever reads
+# PRESETS_DIR -- then writes and verifies a file the running container never
+# sees. The write succeeds, the grep that checks it succeeds, "checking for
+# work every Nms" prints, and the node goes on reading whatever was already
+# in the file it actually has mounted. Found 2026-10-09, on a producer whose
+# unit mounted /opt/xl1-docker-images/presets while this script wrote to
+# /opt/xl1-presets -- the exact shape of the producer.json/producer-rest.json
+# bug above, one directory further up.
+producer_unit_presetsdir() {  # producer_unit_presetsdir <unit>
+  systemctl show "$1" -p ExecStart --value 2>/dev/null \
+    | sed -n 's#.*-v[= ]\([^ ;"]*\):/presets\($\| \).*#\1#p' | head -1
+}
+
 PRODUCER_UNIT_NAME="$(producer_unit || true)"
 if [ -n "$PRODUCER_UNIT_NAME" ]; then
   _unit_env="$(producer_unit_envfile "$PRODUCER_UNIT_NAME")"
@@ -2648,6 +2665,18 @@ if [ -n "$PRODUCER_UNIT_NAME" ]; then
   else
     warn "$PRODUCER_UNIT_NAME manages this producer" \
          "its --env-file could not be read, so settings go to $PRODUCER_ENV and may not be what the unit loads"
+  fi
+
+  _unit_presets="$(producer_unit_presetsdir "$PRODUCER_UNIT_NAME")"
+  if [ -n "$_unit_presets" ] && [ "$_unit_presets" != "$PRESETS_DIR" ]; then
+    if [ -n "$PRESETS_DIR_ASKED" ]; then
+      warn "$PRODUCER_UNIT_NAME mounts $_unit_presets into /presets, not $PRESETS_DIR" \
+           "writing to $PRESETS_DIR anyway, because that was asked for by name -- but the node will not see it until the unit's own mount changes too"
+    else
+      warn "$PRODUCER_UNIT_NAME mounts $_unit_presets into /presets, not the $PRESETS_DIR default" \
+           "writing there instead, so a preset edit actually reaches the node"
+      PRESETS_DIR="$_unit_presets"
+    fi
   fi
 fi
 

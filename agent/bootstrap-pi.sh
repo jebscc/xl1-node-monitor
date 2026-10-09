@@ -2654,7 +2654,22 @@ fi
 # Read before the writer below needs it AND before the preset block applies
 # it: one read, one value, no chance of the file recording something the
 # preset did not get.
-CHECK_INTERVAL_MS="$(producer_check_interval)"
+#
+# THE REMEMBERED ANSWER STILL WINS IF THERE IS ONE, same rule as the reward
+# address above: an operator tuning this on purpose -- CHECK_INTERVAL_MS=4000
+# bash bootstrap-pi.sh -- had no way to do that. The unconditional read below
+# clobbered it every time, silently, because nothing here ever checked
+# whether the caller had already set an opinion.
+if [ -z "${CHECK_INTERVAL_MS:-}" ]; then
+  CHECK_INTERVAL_MS="$(producer_check_interval)"
+elif ! printf '%s' "$CHECK_INTERVAL_MS" | grep -qE '^[0-9]+$'; then
+  # Not more trustworthy than a file just because it came from a flag: the
+  # value is about to be sed'd straight into a JSON int field, and a
+  # non-numeric one would corrupt the preset rather than merely be ignored.
+  warn "CHECK_INTERVAL_MS=$CHECK_INTERVAL_MS is not a whole number" \
+       "ignoring it and keeping whatever this node already has"
+  CHECK_INTERVAL_MS="$(producer_check_interval)"
+fi
 
 # Same one-read rule as the interval above. An operator who set a chain id by
 # hand keeps it when this script has no opinion -- which is every sequence run,

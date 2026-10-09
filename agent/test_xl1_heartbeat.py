@@ -1617,13 +1617,31 @@ def test_a_restart_forgets_the_address_rather_than_reporting_the_old_one(
     assert agent.read_producer_address("xl1-producer") == new_signer
 
 
-def test_a_restart_whose_log_is_not_ready_yet_says_nothing_rather_than_the_old(
+def test_a_restart_whose_log_is_not_ready_yet_falls_back_to_the_disk_record(
         monkeypatch, tmp_path):
-    """The node prints its wallet summary at startup, so the answer is usually
-    there immediately -- but not always. Until it says who it is, the honest
-    answer is "not known": counting_address then falls back to the reward
-    address AND FLAGS IT, which is a stated guess. The old address would be an
-    unstated wrong one."""
+    """REVERSED 2026-10-08. The node prints its wallet summary at startup, so
+    the answer is usually there immediately -- but not always, and the log
+    this reads is a ROLLING WINDOW (XL1_BUILD_WINDOW, 60 minutes by default),
+    not "since the container started". A container that outlives that window
+    prints nothing this function can match again, for as long as it keeps
+    running -- there is no later moment when an empty read here means
+    anything else.
+
+    Measured on the Pi 4: forgotten at a restart, the live check never landed
+    inside the window, and every heartbeat since reported no producer address
+    at all -- while the on-disk record, written by this same machine for the
+    same account on the same mnemonic less than four hours earlier, sat
+    unread. A restart does not change which account a preset resolves to;
+    only a new phrase or a changed account index does, and those are still
+    caught the moment the live log DOES confirm something, which is what the
+    next test holds.
+
+    So the on-disk record is now consulted as the fallback FOR THIS BEAT, not
+    believed forever: it is what `counting_address` uses in place of silence,
+    and it is not a loop back to the bug this was first written against --
+    that bug was carrying a *live-confirmed* value across a restart. This
+    carries a *recorded* one across a gap in the ability to confirm anything
+    at all, and the live check is still attempted first, every time."""
     _forget_signer(monkeypatch, tmp_path)
     agent._log_cache = {"key": None, "at": 0.0, "text": None}
 
@@ -1632,7 +1650,41 @@ def test_a_restart_whose_log_is_not_ready_yet_says_nothing_rather_than_the_old(
 
     agent._log_cache = {"key": None, "at": 0.0, "text": None}
     _boot_and_log(monkeypatch, "2026-09-07T02:00:00Z", "")
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+
+def test_a_node_that_has_never_produced_still_says_nothing(monkeypatch, tmp_path):
+    """The fallback above only ever returns a PREVIOUSLY confirmed address.
+    A node with nothing on disk and nothing in the live log -- never staked,
+    never produced, never confirmed -- must still say "not known", or
+    counting_address's stated-guess fallback to the reward address would be
+    masked by a confident wrong answer with nothing behind it."""
+    _forget_signer(monkeypatch, tmp_path)
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    _boot_and_log(monkeypatch, "2026-09-07T01:00:00Z", "")
     assert agent.read_producer_address("xl1-producer") is None
+
+
+def test_the_fallback_still_yields_to_a_live_confirmation_on_the_same_beat(
+        monkeypatch, tmp_path):
+    """The disk record is a default, not a belief. The moment the SAME call
+    that re-seeds it also gets a live answer, the live one must win -- this
+    is what keeps the fallback from becoming a second copy of the bug it
+    replaces, the one where a remembered address outlived the identity it
+    named."""
+    _forget_signer(monkeypatch, tmp_path)
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    _boot_and_log(monkeypatch, "2026-09-07T01:00:00Z", STAKE_LOG)
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+    new_signer = "30251291ac55017d90a3c892ab5604bdacf9bcde"
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    _boot_and_log(monkeypatch, "2026-09-07T02:00:00Z",
+                  "[xl1-producer] Producer %s has insufficient stake." % new_signer)
+    # The disk still names SIGNER at this instant -- the restart branch would
+    # re-seed it -- but this beat's own log names new_signer, and that is the
+    # one that must come back.
+    assert agent.read_producer_address("xl1-producer") == new_signer
 
 
 def test_the_same_container_is_not_re_read_just_because_it_was_inspected(

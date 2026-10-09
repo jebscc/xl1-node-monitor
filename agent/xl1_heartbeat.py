@@ -2664,16 +2664,23 @@ def read_producer_address(name):
     node handed a new wallet phrase is a different producer, and the file
     written before that would otherwise be believed for ever.
     """
-    known = _producer_addr_cache["value"]
-    if known is None and not _producer_addr_cache["looked"]:
-        _producer_addr_cache["looked"] = True
+    def _from_disk():
+        """The on-disk record, or None. Shared by the bootstrap read below
+        and by the forgetting branch further down -- see its comment for why
+        a second caller was added."""
         try:
             with open(PRODUCER_ADDR_FILE, "r") as fh:
                 stored = fh.read().strip().lower()
-            if re.fullmatch(r"[0-9a-f]{40}", stored):
-                known = _producer_addr_cache["value"] = stored
         except OSError:
-            pass
+            return None
+        return stored if re.fullmatch(r"[0-9a-f]{40}", stored) else None
+
+    known = _producer_addr_cache["value"]
+    if known is None and not _producer_addr_cache["looked"]:
+        _producer_addr_cache["looked"] = True
+        found = _from_disk()
+        if found is not None:
+            known = _producer_addr_cache["value"] = found
 
     # Re-ask the node periodically even when we have an answer. Remembering it
     # was the point; never questioning it again was a bug -- a node given a new
@@ -2704,6 +2711,48 @@ def read_producer_address(name):
               % (_producer_addr_cache["boot"], boot, known),
               file=sys.stderr, flush=True)
         known = _producer_addr_cache["value"] = None
+        # RE-SEED FROM DISK, NOT A RE-TRUST OF THE FORGOTTEN VALUE. The live
+        # check below still runs on every call after this -- that part of the
+        # design is right, and stays. What was missing is what happens when
+        # the live check CANNOT run: `container_log` reads a rolling window
+        # (XL1_BUILD_WINDOW, 60 minutes by default) and the wallet summary
+        # prints exactly once, at container start. A container that has been
+        # up longer than that window prints nothing this function can match,
+        # for as long as it keeps running -- there is no later moment when the
+        # live check starts working again.
+        #
+        # Measured on the Pi 4, 2026-10-08: forgotten at a container restart,
+        # the live re-check never landed inside the window, and the on-disk
+        # record -- written by THIS SAME MACHINE less than four hours earlier,
+        # for the same account on the same mnemonic -- sat unread while every
+        # heartbeat since reported no producer address at all. The account a
+        # restart resolves to is a property of the preset and the mnemonic,
+        # neither of which a restart changes; the file is evidence worth
+        # using while the live answer is unreachable, not a wrong answer
+        # being smuggled back in.
+        #
+        # Still provisional: the live check two paragraphs down still runs
+        # this same call, still wins the moment it succeeds, and still prints
+        # "producer address changed" if what it finds differs from this.
+        # Re-seeding is a *default*, not a belief -- it is overwritten by the
+        # first live confirmation exactly like any other value `known` could
+        # have held here.
+        found = _from_disk()
+        if found is not None:
+            known = _producer_addr_cache["value"] = found
+        # AND THE RE-SEED MUST NOT LOOK VERIFIED. `_producer_addr_cache["at"]`
+        # still holds the timestamp of the ORIGINAL learn, not of this one --
+        # and the freshness check three lines down only looks at how long ago
+        # that was. Left alone, a re-seeded value from a container that
+        # restarted MINUTES ago reads as "checked within the hour" and the
+        # live check below is skipped for up to PRODUCER_ADDR_RECHECK seconds.
+        #
+        # Caught by its own test: re-seeding without this made a restart that
+        # genuinely changed accounts keep reporting the address from BEFORE
+        # the restart, because the live log naming the new one was never
+        # consulted. A restart is precisely the event this whole function
+        # exists to re-verify after, so it must never skip that check.
+        _producer_addr_cache["at"] = 0.0
     if boot is not None:
         _producer_addr_cache["boot"] = boot
 

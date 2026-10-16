@@ -186,6 +186,27 @@ AGENT_ENV="${AGENT_ENV:-/etc/xl1-heartbeat.env}"
 # every $SUDO comes after it still holds.
 SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
 
+# MOVED UP FROM "WHO OWNS THIS CONTAINER" FURTHER DOWN, 2026-10-11 -- same two
+# functions, same bodies, no sudo and no dependency on anything but grep and
+# systemctl, so nothing stops them running this early. They have to: see
+# installed_network()'s own comment for why reading $PRODUCER_ENV before this
+# runs is the second time this exact class of bug has shipped in this file.
+producer_unit() {
+  for _pu in $(grep -rl -- "name xl1-producer" \
+                 /etc/systemd/system /usr/lib/systemd/system 2>/dev/null); do
+    _pu="${_pu##*/}"
+    [ "$(systemctl is-active "$_pu" 2>/dev/null)" = active ] || continue
+    printf '%s' "$_pu"; return 0
+  done
+  return 1
+}
+
+producer_unit_envfile() {  # producer_unit_envfile <unit>
+  # Both --env-file forms, because a unit may use either.
+  systemctl show "$1" -p ExecStart --value 2>/dev/null \
+    | sed -n 's/.*--env-file[= ]\([^ ;"]*\).*/\1/p' | head -1
+}
+
 # THE NETWORK THIS DEVICE IS ALREADY ON BEATS THIS SCRIPT'S DEFAULT.
 #
 # 2026-10-08: the mainnet producer was moved back to sequence by a re-run of
@@ -206,8 +227,30 @@ SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
 # XL1_NET is an operator changing network on purpose and still wins -- that is
 # how the move to mainnet was made in the first place -- but it is announced,
 # because a producer changing chain is not a detail to discover afterwards.
+#
+# STILL WRONG AFTER THAT FIX SHIPPED, 2026-10-11: this read $PRODUCER_ENV,
+# which defaults to /etc/xl1-producer.env -- and "WHO OWNS THIS CONTAINER"
+# further down only corrects that default to the unit's REAL --env-file
+# *after* this function had already been called and answered. A producer
+# whose systemd unit loads a different file read nothing here, found no
+# installed network, and fell through to the sequence default exactly as
+# before -- the fix was real, it just ran too late in its own script to see
+# the file it was meant to read. Same shape as the PRESETS_DIR bug two
+# screens down: a default assumed before the real path is known. Fixed by
+# asking producer_unit()/producer_unit_envfile(), moved up above for this,
+# before falling back to $PRODUCER_ENV -- the one-time, repo-side half of
+# this fix. The other half is for whoever this already happened to: it wrote
+# XL1_NETWORK=sequence into a real file, and no script change here un-writes
+# that. Run the wizard again with XL1_NET=mainnet, the explicit-override path
+# two paragraphs up, which never depended on this bug either way.
 installed_network() { # the network this device is set up for, or nothing
-  $SUDO sed -n 's/^XL1_NETWORK=//p' "$PRODUCER_ENV" 2>/dev/null \
+  _in_env="$PRODUCER_ENV"
+  _in_unit="$(producer_unit 2>/dev/null || true)"
+  if [ -n "$_in_unit" ]; then
+    _in_unit_env="$(producer_unit_envfile "$_in_unit" 2>/dev/null || true)"
+    [ -n "$_in_unit_env" ] && _in_env="$_in_unit_env"
+  fi
+  $SUDO sed -n 's/^XL1_NETWORK=//p' "$_in_env" 2>/dev/null \
     | head -1 | tr -d ' \r\n'
 }
 
@@ -2207,6 +2250,30 @@ fi
 # AND THE SAME QUESTION ABOUT THE ENVIRONMENT. See producer_env_drift above.
 if [ "$PRODUCER_SKIP" = 1 ]; then
   _envdrift="$(producer_env_drift || true)"
+  # THE FILE PROVES NOTHING WHEN THIS RUN IS WHAT IS ABOUT TO CHANGE IT.
+  #
+  # producer_env_drift() compares the live container against $PRODUCER_ENV as
+  # it stands RIGHT NOW -- and XL1_NETWORK is not written into that file until
+  # much later in this script (see the two `printf 'XL1_NETWORK=%s\n'` lines
+  # below). An operator asking for a network change this run -- XL1_NET passed
+  # explicitly, or adopted from a file that turns out to already disagree with
+  # the running container -- produces a file that STILL agrees with the stale
+  # container at the exact moment this check runs. No drift is seen,
+  # PRODUCER_SKIP survives, and the file ends up correct while the process
+  # does not: the 2026-10-08 incident with one fewer step. That one needed a
+  # second re-run to go unnoticed; this needs none at all, on the very run
+  # meant to fix it. Checked against the resolved $XL1_NET directly, which is
+  # already known by this point in the script, not against the file.
+  _live_network="$($SUDO docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
+    xl1-producer 2>/dev/null | sed -n 's/^XL1_NETWORK=//p' | head -1)"
+  case " $_envdrift " in
+    *" XL1_NETWORK "*) : ;;  # already named by the file comparison above
+    *)
+      if [ -n "$_live_network" ] && [ "$_live_network" != "$XL1_NET" ]; then
+        _envdrift="${_envdrift:+$_envdrift }XL1_NETWORK"
+      fi
+      ;;
+  esac
   if [ -n "$_envdrift" ]; then
     warn "the running producer's environment is not the one in $PRODUCER_ENV" \
          "they differ on: $_envdrift"
@@ -2623,21 +2690,13 @@ fi
 #
 # No sudo on the reads: systemctl show and is-active answer any user, and a
 # password prompt for a lookup is a stumble on a cold cache.
-producer_unit() {
-  for _pu in $(grep -rl -- "name xl1-producer" \
-                 /etc/systemd/system /usr/lib/systemd/system 2>/dev/null); do
-    _pu="${_pu##*/}"
-    [ "$(systemctl is-active "$_pu" 2>/dev/null)" = active ] || continue
-    printf '%s' "$_pu"; return 0
-  done
-  return 1
-}
-
-producer_unit_envfile() {  # producer_unit_envfile <unit>
-  # Both --env-file forms, because a unit may use either.
-  systemctl show "$1" -p ExecStart --value 2>/dev/null \
-    | sed -n 's/.*--env-file[= ]\([^ ;"]*\).*/\1/p' | head -1
-}
+#
+# producer_unit() and producer_unit_envfile() THEMSELVES moved up to right
+# after SUDO is set, 2026-10-11 -- installed_network() needs them before this
+# point in the script ever runs; see its own comment. Nothing here changed
+# because of that move: this block still re-derives the same two answers
+# (harmless, and cheap) and is still what actually corrects $PRODUCER_ENV and
+# $PRESETS_DIR for everything after it.
 
 # THE HOST SIDE OF THE -v <host>:/presets MOUNT, same reasoning as the
 # env-file above and the same bug in a second place: PRESETS_DIR defaults to

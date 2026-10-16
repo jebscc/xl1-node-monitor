@@ -440,11 +440,15 @@ fi
 # teaches people to delete it.
 CODE="$(printf '%s' "$DEPLOY" | grep -vE '^\s*#')"
 PULL_AT="$(printf '%s' "$CODE" | grep -n 'git pull' | head -1 | cut -d: -f1)"
-BUILD_AT="$(printf '%s' "$CODE" | grep -n 'deploy_line' | head -1 | cut -d: -f1)"
+# deploy_now, NOT deploy_line -- 2026-10-12, Jim's call: the choice both
+# updates and deploys, so the first call that can actually move the service
+# is what has to come after the collect, not a line that only ever printed
+# the command.
+BUILD_AT="$(printf '%s' "$CODE" | grep -n 'deploy_now' | head -1 | cut -d: -f1)"
 if [ -n "$PULL_AT" ] && [ -n "$BUILD_AT" ] && [ "$PULL_AT" -lt "$BUILD_AT" ]; then
-  ok "the collect happens before the deploy line is offered"
+  ok "the collect happens before the deploy"
 else
-  bad "the deploy line comes before the collect" "it names the version being replaced"
+  bad "the deploy comes before the collect" "it would redeploy the version being replaced"
 fi
 if [ "$(printf '%s' "$DEPLOY" | grep -c 'xyo_stack')" -ge 2 ]; then
   ok "it reports the pinned stack before and after"
@@ -725,23 +729,39 @@ fi
 # where the running container publishes 1" -- a command that could not run,
 # quoted back as a fact about the deploy, sending somebody to look at an
 # override file for a problem that was a missing package.
-printf '\nit collects, and stops there\n'
-# OPTION 7 IS THE SDK, NOT THE DEPLOY. It used to be both, and the deploy
-# half assumed the board it was written on: compose installed, an override
-# file beside the checkout, a container compose was willing to adopt. None of
-# that holds on a wizard-built node, and the result was three wrong answers
-# in one run. Collecting a bump and running it are different acts with
-# different risks, and only the first belongs behind this choice.
 #
-# CODE ONLY: the note that prints the deploy command necessarily contains it.
-SVC="$(printf '%s' "$SRC" | sed -n '/^a_service() {/,/^}/p')
-$(printf '%s' "$SRC" | sed -n '/^deploy_line() {/,/^}/p')"
+# OPTION 7 WAS SPLIT FROM ITS OWN DEPLOY THAT DAY -- "the SDK, not the
+# deploy" -- because the deploy half assumed the board it was written on and
+# got three wrong answers in one run on a different one. deploy_now() is the
+# fix that split was standing in for: it asks COMPOSE_BIN which shape this
+# node actually is and calls the right command for it, the same two-shape
+# care the 2026-09-22 incident was missing. 2026-10-12, Jim's call: now that
+# the deploy itself knows its own shape, the split is not buying anything a
+# correct deploy does not already have, and option 7 updates and deploys
+# again -- this time without assuming the board.
+printf '\nit collects, and deploys\n'
+
+SVC="$(printf '%s' "$SRC" | sed -n '/^a_service() {/,/^}/p')"
 SVC_CODE="$(printf '%s' "$SVC" | grep -vE '^[[:space:]]*#')"
+
+# IT HAS TO REACH deploy_now, on BOTH paths through this function -- a bump
+# that moved the pins, and the "already current, container just never
+# rebuilt" path report_behind answers for. A choice that only deploys when it
+# did the bumping itself leaves the second path exactly where the 2026-10-11
+# report found it: a checkout ahead of a container nobody told.
+if [ "$(printf '%s' "$SVC_CODE" | grep -c 'deploy_now')" -ge 2 ]; then
+  ok "both the bump path and the already-current path reach the real deploy"
+else
+  bad "only one path through this choice actually deploys" \
+      "$(printf '%s' "$SVC_CODE" | grep -n 'deploy_now')"
+fi
+# AND THE DEPLOY ITSELF MUST NOT RUN BLIND. do_cmd outside deploy_now would be
+# the 2026-09-22 shape again: one command for every node.
 if printf '%s' "$SVC_CODE" | grep -qE 'do_cmd .*(up -d|docker rm|docker run)'; then
-  bad "option 7 still deploys" \
+  bad "option 7 deploys directly, bypassing deploy_now's own shape check" \
       "$(printf '%s' "$SVC_CODE" | grep -nE 'do_cmd .*(up -d|docker rm|docker run)' | head -2)"
 else
-  ok "it never starts, removes or rebuilds a container"
+  ok "it deploys through deploy_now, not with a command of its own"
 fi
 # AND IT TAKES THEM. Saying a newer version exists is not updating to it --
 # that was the whole complaint: the choice read as an update and moved
@@ -766,32 +786,11 @@ else
   bad "a bump that put everything back reads as a success"
 fi
 
-# AND SAYS WHAT WOULD. Stopping without naming the next step leaves a checkout
-# that moved and a container that did not -- the one state that looks like a
-# finished update and is not.
-# SVC_CODE, NOT SVC. The comment block at the top of the function says "IT
-# DOES NOT DEPLOY" in as many words, so reading the whole function passed
-# against a body whose message had been replaced by "Done." -- the fifth
-# guard this session satisfied by the prose describing what it checks.
-if printf '%s' "$SVC_CODE" | grep -qi 'does not deploy'; then
-  ok "it says plainly that nothing was deployed"
-else
-  bad "it stops without saying the container is still on the old code" \
-      "a moved checkout and an unchanged container look like success"
-fi
-if printf '%s' "$SVC_CODE" | grep -q 'COMPOSE_BIN' && \
-   printf '%s' "$SVC_CODE" | grep -q 'compose_cmd'; then
-  ok "the command it names is the one for this node's shape"
-else
-  bad "it names one deploy command for every node" \
-      "the wizard shape and the compose shape need different ones"
-fi
-# The label has to agree with it, or the menu promises a deploy it will not do.
-if printf '%s' "$SRC" | grep -q '7|Update the XYO SDK'; then
-  ok "the menu line says what the choice now does"
-else
-  bad "the menu still offers a redeploy" "the line is read before the screen is"
-fi
+# THE SHAPE CHECK, THE WIZARD-MADE-CONTAINER CHECK AND THE MENU LABEL ARE
+# COVERED BELOW, under "the SDK update deploys what it pinned" -- that
+# section already existed for deploy_now itself and there is nothing to gain
+# from asking the same three questions about it twice in one file.
+
 printf '\nthe stack it reports on\n'
 # THE SAME PACKAGES THE BUMP TAKES, or the report answers a different question
 # from the one the update acts on. On 2026-09-23 this read @xyo-network and
@@ -1034,7 +1033,15 @@ fi
 # report it as an update.
 B_BUMP="$(printf '%s' "$SVC" | grep -n 'bump.*--apply' | head -1 | cut -d: -f1)"
 B_MOVED="$(printf '%s' "$SVC" | grep -n 'the pins did not move' | head -1 | cut -d: -f1)"
-B_DEPLOY="$(printf '%s' "$SVC" | grep -n 'deploy_now' | head -1 | cut -d: -f1)"
+# THE deploy_now AFTER THE MOVED CHECK, not the first one in the function.
+# There are now two: report_behind's own early-return path calls it before
+# any bump is even attempted, for the "already current, container just never
+# rebuilt" case -- a real call this function is supposed to make, just not
+# the one this property is asking about. `head -1` alone would find that
+# earlier one and call it deployed-before-the-check-ran, which it was never
+# downstream of in the first place.
+B_DEPLOY="$(printf '%s' "$SVC" | grep -n 'deploy_now' \
+  | awk -F: -v after="${B_MOVED:-0}" '$1 > after { print $1; exit }')"
 if [ -n "$B_BUMP" ] && [ -n "$B_MOVED" ] && [ -n "$B_DEPLOY" ] \
    && [ "$B_BUMP" -lt "$B_MOVED" ] && [ "$B_MOVED" -lt "$B_DEPLOY" ]; then
   ok "it deploys only after the pins are confirmed to have moved"

@@ -877,9 +877,19 @@ a_service() {
   printf '%s%s%s\n' "$D" "$_before" "$X"
   [ "$REPO_IS_CLONE" = 1 ] && do_cmd "cd $REPO && git pull --ff-only"
 
+  # THIS BRANCH USED TO STOP HERE: pins already at the newest published
+  # version, nothing for bump-xyo-stack.sh to do, so it printed deploy_line's
+  # manual command and returned -- the one path through this function that
+  # did not keep the comment two screens up ("AND THEN IT DEPLOYS"). A
+  # checkout that pulled ahead of a container nobody had rebuilt yet is
+  # exactly the state that comment describes, and the operator already gave
+  # consent for it in the confirm_action at the top of this function, which
+  # covers both the pins moving and the rebuild regardless of which path gets
+  # there. deploy_now is the same call the normal path makes two lines below
+  # this one, after an actual bump -- not a second, different deploy.
   if report_behind; then
     report_running
-    deploy_line
+    deploy_now || return 1
     return 0
   fi
 
@@ -907,8 +917,11 @@ a_service() {
   deploy_now
 }
 
-# THE DEPLOY, RUN RATHER THAN NAMED. The two shapes deploy_line describes,
-# done -- and checked afterwards, which is the half that matters.
+# THE DEPLOY, FOR WHICHEVER OF THE TWO SHAPES THIS NODE ACTUALLY IS -- and
+# checked afterwards, which is the half that matters. Used to be named
+# instead of run (deploy_line, printed and left for the operator to type);
+# now that this asks COMPOSE_BIN and picks correctly, there is nothing left
+# that naming it was protecting against.
 deploy_now() {
   say ""
   note "Now putting the service on it."
@@ -978,22 +991,6 @@ verify_anchor() {
              warn "after an up; re-check with option 1 before concluding." ;;
     *)   err "the anchor answers /health with $_h" ; return 1 ;;
   esac
-}
-
-# WHAT WOULD RUN IT, spelt for THIS node and printed rather than done. The two
-# shapes need different commands and getting it wrong is expensive: the
-# one-file compose form drops the tailnet publish and the container's DNS.
-deploy_line() {
-  say ""
-  note "This does not deploy. What would run the code now on disk:"
-  if [ -z "$COMPOSE_BIN" ]; then
-    note "  choice r -- rebuilds from this checkout and puts the"
-    note "  container on it, keeping the image it replaced."
-  else
-    note "  $(compose_cmd) up -d --build"
-    note "  A wizard-made container is removed first; compose will not adopt"
-    note "  one it did not create."
-  fi
 }
 
 # WHERE THE NODE IMAGE RECIPE IS. XYO's xl1-docker-images, cloned by the

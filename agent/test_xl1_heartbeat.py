@@ -1617,6 +1617,36 @@ def test_a_restart_forgets_the_address_rather_than_reporting_the_old_one(
     assert agent.read_producer_address("xl1-producer") == new_signer
 
 
+def test_a_restart_on_a_host_that_has_only_just_booted_still_rechecks(
+        monkeypatch, tmp_path):
+    """time.monotonic() counts from boot, so a re-seeded timestamp of 0.0 reads
+    as "checked a moment ago" on any host up for under the recheck interval --
+    a Pi that just rebooted, or a CI runner. Every other test here passed on
+    machines that had been up for days and failed on the runner, which is the
+    only reason this one exists."""
+    import time as real_time
+
+    class YoungHost:
+        def __getattr__(self, name):
+            return getattr(real_time, name)
+
+        @staticmethod
+        def monotonic():
+            return 20.0
+
+    monkeypatch.setattr(agent, "time", YoungHost())
+    _forget_signer(monkeypatch, tmp_path)
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    _boot_and_log(monkeypatch, "2026-09-07T01:00:00Z", STAKE_LOG)
+    assert agent.read_producer_address("xl1-producer") == SIGNER
+
+    new_signer = "30251291ac55017d90a3c892ab5604bdacf9bcde"
+    agent._log_cache = {"key": None, "at": 0.0, "text": None}
+    _boot_and_log(monkeypatch, "2026-09-07T02:00:00Z",
+                  "[xl1-producer] Producer %s has insufficient stake." % new_signer)
+    assert agent.read_producer_address("xl1-producer") == new_signer
+
+
 def test_a_restart_whose_log_is_not_ready_yet_falls_back_to_the_disk_record(
         monkeypatch, tmp_path):
     """REVERSED 2026-10-08. The node prints its wallet summary at startup, so
@@ -4064,6 +4094,9 @@ def test_nothing_readable_at_all_is_a_failed_reader(monkeypatch):
     monkeypatch.setattr(agent, "_exposed_ports", lambda: (None, None))
     monkeypatch.setattr(agent, "_ssh_password_auth", lambda: None)
     monkeypatch.setattr(agent, "_auto_updates", lambda: None)
+    # Listeners too: this reads the machine it runs on, and a CI runner has
+    # sshd and a DHCP client listening where this desk does not.
+    monkeypatch.setattr(agent, "_host_listeners", lambda *_a, **_k: None)
     assert agent.read_security_posture() is None
 
 
@@ -4386,13 +4419,18 @@ def test_disk_total_is_reported_and_agrees_with_the_percentage():
     assert total >= free, (total, free)
     # Derived the way the panel derives it when an older agent sends no total.
     #
-    # Tolerance is relative, not absolute: disk_used_percent is rounded to one
-    # decimal, and free/(1-p) magnifies that rounding by 1/(1-p)^2 -- a quarter
-    # of a gigabyte on a 476 GB volume, and far less on a Pi's card. Half a
-    # percent covers it, and the panel rounds to whole GB above 10 anyway, so
-    # an error this size cannot change what is printed.
+    # The tolerance is the rounding itself, not a fixed fraction. Both inputs
+    # are rounded to one decimal, and the error in free/(1-p) is the sum of
+    # two relative errors: 0.05 GB on `free`, and 0.05 points on the percent
+    # divided by the share still free. A flat 0.5% held on a mostly empty
+    # volume and failed on a CI runner whose disk was 82.5% full (12.6 GB
+    # free of 71.6: derived 72.0, off by 0.56%), because the second term
+    # grows as the disk fills. The panel rounds to whole GB above 10, so an
+    # error this size cannot change what is printed.
     derived = free / (1 - pct / 100)
-    assert abs(derived - total) < total * 0.005, (free, pct, total, derived)
+    rounding = 0.05 / max(free, 0.05) + 0.0005 / max(1 - pct / 100, 0.0005)
+    assert abs(derived - total) <= total * rounding + 0.05, (
+        free, pct, total, derived, rounding)
 
 
 # ---------------------------------------------------------------------------

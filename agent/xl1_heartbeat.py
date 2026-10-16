@@ -2752,7 +2752,11 @@ def read_producer_address(name):
         # the restart, because the live log naming the new one was never
         # consulted. A restart is precisely the event this whole function
         # exists to re-verify after, so it must never skip that check.
-        _producer_addr_cache["at"] = 0.0
+        # NEVER 0.0: time.monotonic() counts from boot, so on a host up for
+        # less than PRODUCER_ADDR_RECHECK `now - 0.0` is still "within the
+        # hour" and the re-seed reads as verified. A Pi that has just
+        # rebooted is exactly that host, and so is a CI runner.
+        _producer_addr_cache["at"] = float("-inf")
     if boot is not None:
         _producer_addr_cache["boot"] = boot
 

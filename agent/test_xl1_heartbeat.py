@@ -5111,6 +5111,6 @@ def test_a_witness_day_is_anchored_and_a_diary_day_is_not(tmp_path, monkeypatch)
     for bad in ({**_good_entry(), "month": "2026-09-18"},                      # a diary day
                 {**_witness_entry(), "month": "2026-09-32"},                  # not a day
                 {**_witness_entry(), "month": "2026-13-01"}):                 # not a month
-        posted = _diary_setup(monkeypatch, tmp_path / "x", bad) if False else _diary_setup(monkeypatch, tmp_path, bad)
+        posted = _diary_setup(monkeypatch, tmp_path, bad)
         agent.anchor_pending_diary()
         assert posted == [], bad

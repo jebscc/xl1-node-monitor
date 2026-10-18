@@ -669,6 +669,25 @@ ask() { # ask <prompt> <default> -> answer on stdout
   printf '%s' "${reply:-$default}"
 }
 
+# THE RULE (Jim, 2026-10-18): a node's reward address is its own producer address, unless XYO has said otherwise.
+#
+# Why it is a rule and not a preference: a node paid to another wallet looks exactly like a healthy one. On one Pi the
+# payout was the throwaway wallet that pays for anchoring, for twelve days, and nothing said so -- this wizard kept
+# the value on every rebuild, because preserving what a node already has is what a rebuild is for.
+#
+# Prints "match", "differs <40 hex of the node's own address>", or "unknown". Unknown is never "differs": the node's own
+# address is learned by the agent from the node's startup output, so on a first install it is not known yet, and a
+# check that cries wolf there would be ignored where it matters.
+reward_vs_signer() { # reward_vs_signer <reward 0x...> <file holding the node's own address>
+  local reward signer
+  reward="$(printf '%s' "$1" | tr 'A-F' 'a-f' | sed 's/^0x//')"
+  signer="$($SUDO cat "$2" 2>/dev/null | tr -d ' \r\n' | tr 'A-F' 'a-f' | sed 's/^0x//')"
+  if ! printf '%s' "$reward" | grep -qE '^[0-9a-f]{40}$' || ! printf '%s' "$signer" | grep -qE '^[0-9a-f]{40}$'; then
+    printf 'unknown'; return
+  fi
+  if [ "$reward" = "$signer" ]; then printf 'match'; else printf 'differs %s' "$signer"; fi
+}
+
 ask_yn() { # ask_yn <prompt> <default y|n> -> 0 yes, 1 no
   local prompt="$1" default="${2:-n}" reply="" hint="y/N"
   # --yes took the default at two call sites and asked at the rest, so it read
@@ -2477,6 +2496,34 @@ while [ -z "$REWARD_ADDRESS" ] && [ "$tries" -lt 5 ]; do
   fi
 done
 [ -n "$REWARD_ADDRESS" ] || die "no reward address given. Nothing was changed."
+
+# Hold the reward address to the rule above. On a rebuild the agent already knows this node's own address, so the
+# comparison can be made; on a first install it cannot, and the dashboard says so later if they ever differ.
+# The default is the rule: an unattended run (--yes, or no terminal) switches to the node's own address, because the
+# safe answer to "should this follow the rule?" is yes. Keeping another address takes a deliberate "n".
+_rw_state="$(reward_vs_signer "$REWARD_ADDRESS" "${PRODUCER_ADDR_FILE:-/var/lib/xl1-heartbeat/producer-address}")"
+case "$_rw_state" in
+  match)
+    ok "Rewards go to this node's own producer address."
+    ;;
+  differs*)
+    _rw_signer="0x${_rw_state#differs }"
+    printf '\n'
+    warn "rewards are set to $REWARD_ADDRESS, but this node signs blocks as $_rw_signer"
+    note "The rule: a node's rewards are paid to its own producer address, unless XYO has told you otherwise."
+    note "Anything else is how a throwaway wallet ended up collecting a node's rewards without a word."
+    if ask_yn "  Pay rewards to this node's own address ($_rw_signer)?" y; then
+      REWARD_ADDRESS="$_rw_signer"
+      ok "rewards will go to $REWARD_ADDRESS"
+    else
+      warn "keeping $REWARD_ADDRESS, on your word that XYO told you to. The dashboard will keep saying it differs."
+    fi
+    ;;
+  *)
+    note "This node's own address is not known yet, so the reward address cannot be checked against it now."
+    note "Once the node is running, the dashboard warns if rewards are not going to its own producer address."
+    ;;
+esac
 
 # Which account of that phrase this node produces as.
 #

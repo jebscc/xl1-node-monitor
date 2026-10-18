@@ -559,6 +559,7 @@ REPORTED_FIELDS = {
     # every block it produces. The REWARD address is not here and should not
     # be: that is the operator's choice of wallet, not a fact about the node.
     "producer_address",
+    "reward_matches_producer",
     "os_updates", "os_security_updates", "os_apt_age_hours", "os_reboot_required",
     # What stands between this machine and the network. Nested, and
     # owner-only on the receiver: "sshd takes passwords and nothing is
@@ -5114,3 +5115,38 @@ def test_a_witness_day_is_anchored_and_a_diary_day_is_not(tmp_path, monkeypatch)
         posted = _diary_setup(monkeypatch, tmp_path, bad)
         agent.anchor_pending_diary()
         assert posted == [], bad
+
+
+# ---- THE RULE: rewards go to the node's own producer address ----------------------------------------------------
+# On the Pi 4 the reward address was the attestor wallet for twelve days and nothing said so: the node produced,
+# anchored and reported healthy throughout. The agent now says whether the two addresses agree.
+
+_SIG = "a6567633ac83a7017f3a2ef20fbbed890a2adae9"
+_ATT = "c6fcc91bd2b4aff1d803792c7b8a9ab3c8435a6f"
+
+
+def test_rewards_to_the_producer_address_match_in_any_spelling():
+    assert agent.reward_matches_producer(_SIG, _SIG) is True
+    assert agent.reward_matches_producer(_SIG, "0x" + _SIG.upper()) is True
+    assert agent.reward_matches_producer("0x" + _SIG, _SIG) is True
+
+
+def test_rewards_to_another_address_are_reported_as_a_mismatch():
+    assert agent.reward_matches_producer(_SIG, "0x" + _ATT) is False
+
+
+def test_unknown_is_never_reported_as_no():
+    """A guard that cries wolf on a node that has not found its own address yet gets ignored."""
+    assert agent.reward_matches_producer(None, _ATT) is None
+    assert agent.reward_matches_producer(_SIG, None) is None
+    assert agent.reward_matches_producer("", "") is None
+    assert agent.reward_matches_producer(_SIG, "not-an-address") is None
+    assert agent.reward_matches_producer("0x123", _SIG) is None
+
+
+def test_the_collector_reports_the_answer_and_never_the_reward_address():
+    import inspect
+    src = inspect.getsource(agent.collect)
+    assert 'payload["reward_matches_producer"] = _matches' in src
+    assert "_matches is not None" in src, "unknown is left out, not sent as a false"
+    assert 'payload["reward_address"]' not in src, "the reward address stays on this machine"

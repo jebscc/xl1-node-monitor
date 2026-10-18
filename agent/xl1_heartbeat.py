@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.47.3"
+AGENT_VERSION = "1.48.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1264,6 +1264,26 @@ _producer_cursor = {"block": None, "backfill": None, "backfill_done": False,
 # Explorer link for the block the panel displays, keyed by block number so it
 # is fetched once rather than on every beat.
 _explorer_link = {"block": None, "url": None}
+
+
+def reward_matches_producer(signer, reward):
+    """True if rewards are paid to the address this node signs with, False if to another, None if either is unknown.
+
+    THE RULE: a node's reward address is its own producer address, unless XYO has said otherwise. A node paid to
+    anywhere else looks exactly like a healthy one, and once paid a throwaway gas wallet for twelve days with nothing
+    saying so. This is only a yes/no: the reward address itself is the operator's choice of wallet and stays on
+    this machine. Unknown is never reported as "no": a guard that cries wolf on a node that has not found its own
+    address yet is a guard that gets ignored.
+    """
+    def bare(a):
+        a = (a or "").strip().lower()
+        return a[2:] if a.startswith("0x") else a
+
+    ok = re.compile(r"^[0-9a-f]{40}$")
+    s, r = bare(signer), bare(reward)
+    if not ok.match(s) or not ok.match(r):
+        return None
+    return s == r
 
 
 def read_reward_address(name):
@@ -4106,6 +4126,15 @@ def collect():
         _signer = read_producer_address(name)
         if _signer:
             payload["producer_address"] = _signer
+        # Whether rewards go to that address. A yes/no and nothing else: see reward_matches_producer.
+        _matches = reward_matches_producer(_signer, read_reward_address(name))
+        if _matches is not None:
+            payload["reward_matches_producer"] = _matches
+        if _matches is False:
+            _warn_once("reward-differs",
+                       "XL1_REWARD_ADDRESS is not this node's own producer address, so its block rewards are "
+                       "being paid to another wallet. The rule is that they go to the producer address unless "
+                       "XYO has said otherwise.")
 
     if stats:
         # Counts only. The reward address stays on this machine.

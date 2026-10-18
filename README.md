@@ -22,6 +22,13 @@ Windows via WSL2 has been tested too.
 the anchoring service and the agent together; Part 1 covers that and the
 Windows route beside it.
 
+**And a way to check what a pet witnessed.** [`witness/`](witness/) is the
+format of a *pet witness receipt* — a signed statement that something looked at
+an XL1 block, recomputed its hash from its own content, and checked who signed
+it — with a dependency-free verifier, a command-line checker and test vectors
+made by the XYO SDK. `node witness/verify.mjs receipt.json` checks one with no
+part of anyone's website. See [`witness/SPEC.md`](witness/SPEC.md).
+
 ---
 
 ## Before you start

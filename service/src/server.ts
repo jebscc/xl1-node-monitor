@@ -1863,7 +1863,10 @@ const buildAttestation = (body: Record<string, unknown>, net: string) => {
 }
 
 /**
- * A pet's monthly diary, committed by its hash alone.
+ * A pet's monthly diary, or a month of its witness receipts, committed by a hash alone.
+ *
+ * `kind` is what the hash is a hash OF -- 'diary' (the default, and all this ever was) or 'witness'. The two
+ * are recorded under different app names so a month of one can never be read as a month of the other.
  *
  * The phone keeps the month's line ("2026-09|blocks|xl1|bestDay|hours|est") and
  * sends only its sha256. Nothing about the month is published by anchoring it:
@@ -1878,7 +1881,7 @@ const buildDiaryRecord = (body: Record<string, unknown>, net: string) => {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return null
   if (!/^[0-9a-f]{64}$/.test(digest)) return null
   const record = {
-    app: 'xl1-pet-diary',
+    app: body.kind === 'witness' ? 'xl1-pet-witness' : 'xl1-pet-diary',
     v: 1,
     network: net,
     producer,
@@ -1903,8 +1906,9 @@ app.post('/attest', async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>
   const net = typeof body.network === 'string' && NETWORKS[body.network]
     ? body.network : DEFAULT_NETWORK
-  const built = body.kind === 'diary' ? buildDiaryRecord(body, net) : buildAttestation(body, net)
-  if (!built) return res.status(422).json({ error: 'a diary needs a month (yyyy-MM) and a 64-character hex digest' })
+  const monthly = body.kind === 'diary' || body.kind === 'witness'
+  const built = monthly ? buildDiaryRecord(body, net) : buildAttestation(body, net)
+  if (!built) return res.status(422).json({ error: 'a monthly record needs a month (yyyy-MM) and a 64-character hex digest' })
   const { record, idPayload } = built
   try {
     const contentHash = await PayloadBuilder.hash(idPayload)

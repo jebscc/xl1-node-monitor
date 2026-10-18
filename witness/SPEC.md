@@ -1,0 +1,180 @@
+# Pet witness receipts, version 1
+
+A **pet witness receipt** is a signed statement that something looked at a block of the
+[XL1](https://xyo.network/layer-one/) chain, checked it for itself, and says so. It is made by the *Blockwright*
+phone app's pets, but nothing about it is specific to that app: it is a standard XYO bound witness with one
+payload, and this document is everything needed to make one, or to check one without trusting anybody.
+
+This directory is the whole of it:
+
+| File | What it is |
+|---|---|
+| `SPEC.md` | this format |
+| `witness.js` | a verifier with **no dependencies**: its own hashing, Keccak-256 and secp256k1 recovery |
+| `verify.mjs` | a command-line checker built on it |
+| `test.mjs` | a self-test against the vectors below |
+| `fixtures/` | vectors made by the XYO SDK, and real mainnet blocks |
+
+```
+node verify.mjs receipt.json        # reads the block from XL1's public files and checks everything
+node test.mjs                       # no network; checks the verifier against the SDK's own output
+```
+
+## What a receipt says, and only this
+
+> This pet, at this time by its own clock, read block **N** on this network, recomputed the block's hash from its
+> own content and found it equals **blockHash**, and checked that the block's signature comes from the address
+> that signed it.
+
+A receipt is **never made for a block that failed either check**, and its `verified` field lists the checks that
+were made. It does not name who produced the block: the chain already says, and a receipt that named a producer
+would be publishing something the receipt's maker has no business labelling.
+
+### What it does not say
+
+* **Who the pet is.** A pet's key is free to make. Two receipts from one key show one key made them, not a person.
+* **When.** `seenAt` is the pet's own clock, an unattested claim. Servers that count receipts accept only a loose
+  window around their own time; that is a courtesy, not a proof.
+* **That the block is final or canonical.** A signed block from a fork, or from a bucket that has not caught up,
+  would pass. Ask the chain's head for that.
+
+## Shape
+
+A receipt is a JSON object with two members, `bw` and `payload`:
+
+```json
+{
+  "bw": {
+    "schema": "network.xyo.boundwitness",
+    "addresses": ["19e7e376e7c213b7e7e7e46cc70a5dd086daff2a"],
+    "payload_hashes": ["9fcd6b6d6922c2837d96a302cef0f9f0ed47700f38fbb3bcfcb5d2a3db754df2"],
+    "payload_schemas": ["com.jimtheexplorer.pet.witness"],
+    "previous_hashes": [null],
+    "$signatures": ["6477596faec25452fce27c9463fa166ce3bb6cf137d70d9db6ac400b2cb6c2e132b778b446962d284eeee14c94a4bcaef2fa1ea8558d69842bf48ef51bd41c15"]
+  },
+  "payload": {
+    "schema": "com.jimtheexplorer.pet.witness",
+    "v": 1,
+    "network": "mainnet",
+    "block": 1825700,
+    "blockHash": "<64 lower-case hex>",
+    "seenAt": 1792333874,
+    "pet": "cat",
+    "verified": ["content-hash", "producer-signature"]
+  }
+}
+```
+
+The payload has **exactly** these fields and no others; a verifier refuses extras, because receipts are stored and
+served to the public.
+
+| Field | Meaning |
+|---|---|
+| `schema` | `com.jimtheexplorer.pet.witness`. Never `network.xyo.*`: that namespace belongs to the XYO Foundation. |
+| `v` | the integer `1` |
+| `network` | `mainnet` or `sequence` |
+| `block` | the block number, a non-negative integer |
+| `blockHash` | the block's data hash, recomputed by the pet (see **Hashing**), 64 lower-case hex |
+| `seenAt` | seconds since the Unix epoch, by the pet's clock |
+| `pet` | 1 to 16 characters of `[a-z0-9]`: the kind of pet (`cat`, `slime`, `sentinel`, ...) |
+| `verified` | exactly `["content-hash", "producer-signature"]` |
+
+The bound witness has exactly one address, one payload hash, one payload schema, one previous hash and one
+signature, and exactly the six fields shown.
+
+## Hashing
+
+XYO's data hash is **SHA-256 of the canonical JSON** of an object:
+
+* keys sorted (by UTF-16 code unit) **at every level**;
+* no whitespace;
+* strings escaped as `JSON.stringify` does;
+* **at the top level only**, every key beginning with `_` or `$` is left out. (The XYO SDK strips no deeper:
+  `fixtures/` and the self-test pin a payload with nested `_` and `$` keys.)
+
+`payload_hashes[0]` is the data hash of `payload`. The receipt's own hash is the data hash of `bw`, which
+leaves out `$signatures`; it is what the signature is over and what the pet's next receipt names.
+
+## Signing
+
+* secp256k1, over the **32 raw bytes of a data hash** (not hashed again).
+* The signature is 64 bytes, `r` then `s`, lower-case hex, with `s` in the lower half of the range. It is
+  deterministic (RFC 6979, HMAC-SHA256). `fixtures/vectors.json` holds twelve SDK signatures for different keys.
+* An **address** is the last 20 bytes of Keccak-256 of the 64-byte public key (x then y, no prefix), lower-case
+  hex, no `0x`. This is the *original* Keccak padding, not NIST SHA-3's: they give different answers, and an
+  address built with the wrong one matches nothing.
+* A 64-byte signature carries no public key and no recovery id, so **who signed is worked out, not read**: both
+  curve points the signature allows are recovered, and the address that was expected must be one of the two.
+
+## Chaining
+
+`previous_hashes[0]` is the receipt hash of the **same pet's** previous receipt, or `null` for its first. A
+missing or reordered receipt shows. This is the standard per-signer chain of XYO bound witnesses; the SDK does
+it for you (`Account` remembers its last hash).
+
+## Checking a receipt
+
+Every step is independent of the pet and of whoever served the receipt:
+
+1. The receipt has the shape above and nothing else.
+2. `payload_hashes[0]` equals the data hash of `payload`.
+3. The signature recovers to `addresses[0]` over the data hash of `bw`.
+4. Read block `block` from XL1's public files (below).
+5. The block's data hash, **recomputed from its own content**, equals `blockHash`, and equals the block's own
+   `_dataHash` where it states one.
+6. For each address the block lists, the signature beside it recovers to that address over the block's data hash.
+
+Steps 1 to 3 need no network. A verifier that cannot reach the chain's files has **not failed the receipt**: it
+reports that the block could not be checked, which is a different answer.
+
+### Reading a block
+
+XL1's public static files, as the XL1 SDK's REST reader uses them:
+
+```
+https://blocks.<host>/block/number/<N>.json        a block: [boundWitness, payloads]
+https://state.<host>/chain/head.json               the current head
+```
+
+where `<host>` is `mainnet.xyo.space` or `sequence.xyo.space`. The `blocks.` host serves recent blocks by number
+but its own `chain/head.json` lags by months, so the head is read from `state.`. The files allow any origin, so a
+browser can read them directly.
+
+## A month of receipts, on the chain
+
+Optionally, the Blockwright app lists a month's receipts as one line and has the operator's own node anchor its
+hash:
+
+```
+yyyy-MM|<count>|<receipt hash>,<receipt hash>,...        hashes ascending, no repeats
+```
+
+The sha256 of that line (UTF-8, exactly as written) is written on chain by the operator's wallet as an
+`network.xyo.id` payload whose `salt` is the JSON text of:
+
+```json
+{"app": "xl1-pet-witness", "v": 1, "network": "mainnet", "producer": "<node address>", "month": "2026-09", "digest": "<sha256>"}
+```
+
+Anyone holding the receipts can rebuild the line, hash it, and see it match the anchored digest: the whole
+month's witnessing, committed when it closed. It covers the receipts the phone still held at that moment, and the
+count is in the line, so a month is never presented as more than it was.
+
+## Counting receipts (not part of the format)
+
+A site may collect receipts and count them per block. The one at <https://www.jimtheexplorer.com/witness> does so
+by **distinct account, not by key**, because a key costs nothing to make and an account does not, and it
+re-verifies every receipt (steps 1 to 6) before counting it. Its numbers are counts of receipts that can each be
+checked; they measure nothing else.
+
+## Making your own pet
+
+Build the payload with `PayloadBuilder`, the bound witness with `BoundWitnessBuilder().signer(account).payload(p)`,
+and check your output with `node verify.mjs`. Use your own `com.<your-org>.*` schema if you change the payload; do
+not reuse this one for a different meaning. The reference phone implementation (Kotlin, with its own secp256k1)
+is tested byte for byte against the SDK's output using the same `fixtures/`.
+
+## Versions
+
+`v` is `1`. A change to what the fields mean, or to the set of fields, is a new `v`; a verifier refuses a `v` it
+does not know rather than guessing.

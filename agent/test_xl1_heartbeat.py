@@ -5049,3 +5049,53 @@ def test_a_service_that_did_not_anchor_leaves_no_mark(tmp_path, monkeypatch):
     assert len(posted) == 1 and list(tmp_path.iterdir()) == []
     agent.anchor_pending_diary()
     assert len(posted) == 2          # nothing was spent, so asking again is right
+
+
+# --- a month of a pet's WITNESSING, anchored the same way --------------------
+#
+# Same queue, same wallet, same ceilings: only what the hash is a hash OF is new.
+# The kind must travel to the service and into the stored record, and each kind
+# keeps its own "already paid" mark so one can never stand in for the other.
+
+def _witness_entry():
+    return {**_good_entry(), "kind": "witness"}
+
+
+def test_a_waiting_witness_month_is_anchored_as_a_witness_month(tmp_path, monkeypatch):
+    posted = _diary_setup(monkeypatch, tmp_path, _witness_entry())
+    agent.anchor_pending_diary()
+    assert len(posted) == 1 and posted[0]["kind"] == "witness"
+    assert posted[0]["month"] == "2026-09" and posted[0]["digest"] == _DIARY_DIGEST
+    kept = list(tmp_path.glob("*.json"))
+    assert len(kept) == 1 and json.loads(kept[0].read_text())["kind"] == "witness"
+    assert (tmp_path / ("witness-2026-09-%s.done" % _DIARY_DIGEST[:16])).exists()
+
+
+def test_a_backend_that_sends_no_kind_is_a_diary_and_keeps_the_old_marker_name(tmp_path, monkeypatch):
+    posted = _diary_setup(monkeypatch, tmp_path, _good_entry())          # no "kind" at all
+    agent.anchor_pending_diary()
+    assert posted[0]["kind"] == "diary"
+    assert (tmp_path / ("diary-2026-09-%s.done" % _DIARY_DIGEST[:16])).exists()
+
+
+def test_a_witness_month_is_never_paid_for_twice_and_a_diary_mark_does_not_stand_in_for_it(tmp_path, monkeypatch):
+    posted = _diary_setup(monkeypatch, tmp_path, _witness_entry())
+    agent.anchor_pending_diary()
+    agent.anchor_pending_diary()
+    assert len(posted) == 1
+    for f in tmp_path.glob("*.json"):
+        f.unlink()
+    agent.anchor_pending_diary()                  # restarted: only the witness marker is left
+    assert len(posted) == 1
+    # a diary of the same month and digest is a different thing and is still owed
+    (tmp_path / ("witness-2026-09-%s.done" % _DIARY_DIGEST[:16])).unlink()
+    (tmp_path / ("diary-2026-09-%s.done" % _DIARY_DIGEST[:16])).write_text("x")
+    agent.anchor_pending_diary()
+    assert len(posted) == 2, "a diary mark must not stop a witness month from being anchored"
+
+
+def test_an_unknown_kind_is_never_anchored(tmp_path, monkeypatch):
+    for bad in ("anything", "Diary", 5, ["witness"]):
+        posted = _diary_setup(monkeypatch, tmp_path, {**_good_entry(), "kind": bad})
+        agent.anchor_pending_diary()
+        assert posted == [], bad

@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.47.1"
+AGENT_VERSION = "1.47.2"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -4559,8 +4559,10 @@ def attest(name, payload):
             pass
 
 
-def _diary_marker(month, digest):
-    return os.path.join(ATTEST_SPOOL, "diary-%s-%s.done" % (month, digest[:16]))
+def _diary_marker(month, digest, kind="diary"):
+    # A diary keeps the name it always had, so a marker written before there were
+    # two kinds still counts: dropping it would let an old month be paid for again.
+    return os.path.join(ATTEST_SPOOL, "%s-%s-%s.done" % (kind, month, digest[:16]))
 
 
 def fetch_pending_diary():
@@ -4586,6 +4588,10 @@ def fetch_pending_diary():
         return None
     month, digest = entry.get("month"), entry.get("digest")
     address = entry.get("address")
+    # What the hash is a hash OF. A backend that predates kinds sends none, and that is a diary.
+    kind = entry.get("kind") or "diary"
+    if kind not in ("diary", "witness"):
+        return None
     if not isinstance(month, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
         return None
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -4595,11 +4601,12 @@ def fetch_pending_diary():
     network = entry.get("network")
     if isinstance(network, str) and network and network != NODE_NETWORK:
         return None            # another chain's month is not this node's to anchor
-    return {"month": month, "digest": digest, "address": address.lower().replace("0x", "")}
+    return {"month": month, "digest": digest, "kind": kind,
+            "address": address.lower().replace("0x", "")}
 
 
-def _diary_spooled(month, digest):
-    """Whether a diary anchor for this month is already on disk awaiting delivery."""
+def _diary_spooled(month, digest, kind="diary"):
+    """Whether an anchor of this kind for this month is already on disk awaiting delivery."""
     try:
         names = [n for n in os.listdir(ATTEST_SPOOL) if n.endswith(".json")]
     except OSError:
@@ -4610,7 +4617,7 @@ def _diary_spooled(month, digest):
                 record = json.load(fh)
         except (OSError, ValueError):
             continue
-        if record.get("kind") == "diary" and month in str(record.get("payload")) \
+        if record.get("kind") == kind and month in str(record.get("payload")) \
                 and digest in str(record.get("payload")):
             return True
     return False
@@ -4633,10 +4640,10 @@ def anchor_pending_diary():
     entry = fetch_pending_diary()
     if not entry:
         return
-    key = (entry["month"], entry["digest"])
+    key = (entry["month"], entry["digest"], entry["kind"])
     if os.path.exists(_diary_marker(*key)) or _diary_spooled(*key):
         return
-    body = {"kind": "diary", "month": entry["month"], "digest": entry["digest"],
+    body = {"kind": entry["kind"], "month": entry["month"], "digest": entry["digest"],
             "producer": entry["address"], "network": NODE_NETWORK}
     headers = {"Content-Type": "application/json"}
     if ATTEST_TOKEN:
@@ -4660,7 +4667,7 @@ def anchor_pending_diary():
     record = {
         "node_id": NODE_ID,
         "network": result.get("network") or NODE_NETWORK,
-        "kind": "diary",
+        "kind": entry["kind"],
         "payload": json.dumps(result.get("payload"), separators=(",", ":")),
         "content_hash": result.get("contentHash") or "",
         "tx_hash": result.get("txHash") or "",

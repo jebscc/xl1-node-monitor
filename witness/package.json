@@ -1,0 +1,8 @@
+{
+  "name": "pet-witness",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Check a Blockwright pet witness receipt: a dependency-free verifier, the format spec and its test vectors",
+  "license": "MIT"
+}

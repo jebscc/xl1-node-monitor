@@ -4958,3 +4958,94 @@ def test_a_scan_that_signed_nothing_still_says_what_time_it_covered(monkeypatch)
     payload = agent.collect()
     assert "scan_blocks" not in payload
     assert payload["scan_from_epoch"] == 1760000000000
+
+
+# --- a pet's diary month, anchored on the operator's own wallet --------------
+#
+# The phone queues a month's hash with the backend; this node asks for it and
+# anchors it. The tests that matter are the ones about spending: it never
+# happens unconfigured, never for a malformed request, and never twice.
+
+_DIARY_DIGEST = "ab" * 32
+_DIARY_ADDR = "a6" * 20
+
+
+def _diary_setup(monkeypatch, tmp_path, entry, anchored=True):
+    monkeypatch.setattr(agent, "BACKEND_URL", "http://backend")
+    monkeypatch.setattr(agent, "NODE_TOKEN", "t")
+    monkeypatch.setattr(agent, "NODE_ID", "pi-1")
+    monkeypatch.setattr(agent, "NODE_NETWORK", "mainnet")
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    monkeypatch.setattr(agent, "ATTEST_SPOOL", str(tmp_path))
+    pending = "http://backend/api/node/diary-pending?node_id=pi-1"
+    posted = []
+    answers = {pending: {"entry": entry}}
+    answers["http://svc/attest"] = {
+        "anchored": anchored, "network": "mainnet",
+        "contentHash": "c" * 64, "txHash": "d" * 64, "attestedBy": "e" * 40,
+        "payload": {"schema": "network.xyo.id", "salt": "{}"},
+    }
+    _stub_urlopen(monkeypatch, answers)
+    real = agent.urllib.request.urlopen
+
+    def spy(req, timeout=0):
+        if getattr(req, "full_url", "") == "http://svc/attest":
+            posted.append(json.loads(req.data.decode()))
+        return real(req, timeout=timeout)
+    monkeypatch.setattr(agent.urllib.request, "urlopen", spy)
+    monkeypatch.setattr(agent, "post_attestation", lambda record: False)
+    return posted
+
+
+def _good_entry():
+    return {"month": "2026-09", "digest": _DIARY_DIGEST, "address": _DIARY_ADDR, "network": "mainnet"}
+
+
+def test_a_waiting_diary_month_is_anchored_once_with_its_digest(tmp_path, monkeypatch):
+    posted = _diary_setup(monkeypatch, tmp_path, _good_entry())
+    agent.anchor_pending_diary()
+    assert len(posted) == 1
+    assert posted[0]["kind"] == "diary"
+    assert posted[0]["month"] == "2026-09" and posted[0]["digest"] == _DIARY_DIGEST
+    assert posted[0]["producer"] == _DIARY_ADDR
+    kept = list(tmp_path.glob("*.json"))
+    assert len(kept) == 1 and json.loads(kept[0].read_text())["kind"] == "diary"
+
+
+def test_the_same_month_is_never_paid_for_twice(tmp_path, monkeypatch):
+    """The backend still lists a month as waiting until it hears the anchor; a
+    second call before that must not spend again, even after a restart."""
+    posted = _diary_setup(monkeypatch, tmp_path, _good_entry())
+    agent.anchor_pending_diary()
+    agent.anchor_pending_diary()
+    assert len(posted) == 1
+    for f in tmp_path.glob("*.json"):          # as if the spool were flushed
+        f.unlink()
+    agent.anchor_pending_diary()                # a restarted agent: only the marker is left
+    assert len(posted) == 1
+
+
+def test_diary_anchoring_is_off_unless_anchoring_is_configured(tmp_path, monkeypatch):
+    posted = _diary_setup(monkeypatch, tmp_path, _good_entry())
+    monkeypatch.setattr(agent, "ATTEST_URL", "")
+    agent.anchor_pending_diary()
+    assert posted == [] and list(tmp_path.iterdir()) == []
+
+
+def test_a_malformed_or_foreign_diary_request_is_never_anchored(tmp_path, monkeypatch):
+    for bad in ({**_good_entry(), "digest": "short"},
+                {**_good_entry(), "month": "2026-13"},
+                {**_good_entry(), "address": "nope"},
+                {**_good_entry(), "network": "sequence"},
+                None):
+        posted = _diary_setup(monkeypatch, tmp_path, bad)
+        agent.anchor_pending_diary()
+        assert posted == [], bad
+
+
+def test_a_service_that_did_not_anchor_leaves_no_mark(tmp_path, monkeypatch):
+    posted = _diary_setup(monkeypatch, tmp_path, _good_entry(), anchored=False)
+    agent.anchor_pending_diary()
+    assert len(posted) == 1 and list(tmp_path.iterdir()) == []
+    agent.anchor_pending_diary()
+    assert len(posted) == 2          # nothing was spent, so asking again is right

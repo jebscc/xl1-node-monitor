@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.47.0"
+AGENT_VERSION = "1.47.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -3744,6 +3744,8 @@ def _slow_worker():
             # there. A few per cycle; see check_anchors_on_chain for why the
             # failing answer is the only one worth anything.
             _step("check_anchors", check_anchors_on_chain)
+            # A month of a pet's diary the operator's phone queued, if any.
+            _step("anchor_diary", anchor_pending_diary)
             _step("sdk_latest", lambda: _slow_put("sdk_latest", fetch_sdk_latest()))
             _step("log_tail", lambda: _slow_put("log_tail", read_log_tail(name)))
             _step("image_inventory", lambda: _slow_put("image_inventory", read_image_inventory()))
@@ -4554,6 +4556,138 @@ def attest(name, payload):
         except OSError:
             # Left behind, which flush_attestations will retry. The store keys
             # on the content hash, so a second delivery changes nothing.
+            pass
+
+
+def _diary_marker(month, digest):
+    return os.path.join(ATTEST_SPOOL, "diary-%s-%s.done" % (month, digest[:16]))
+
+
+def fetch_pending_diary():
+    """The oldest diary month the backend is holding for this node, or None.
+
+    The node asks and the backend answers; nothing is ever pushed to a device.
+    Every field is checked here as well as at the far end, because whatever
+    this returns is about to be hashed onto a chain.
+    """
+    if not BACKEND_URL or not NODE_TOKEN:
+        return None
+    try:
+        url = (BACKEND_URL + "/api/node/diary-pending?"
+               + urllib.parse.urlencode({"node_id": NODE_ID}))
+        req = urllib.request.Request(url, headers={"X-Node-Token": NODE_TOKEN})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            entry = (json.loads(resp.read().decode("utf-8")) or {}).get("entry")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    if not isinstance(entry, dict):
+        return None
+    month, digest = entry.get("month"), entry.get("digest")
+    address = entry.get("address")
+    if not isinstance(month, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        return None
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return None
+    if not isinstance(address, str) or not re.fullmatch(r"(0x)?[0-9a-fA-F]{40}", address):
+        return None
+    network = entry.get("network")
+    if isinstance(network, str) and network and network != NODE_NETWORK:
+        return None            # another chain's month is not this node's to anchor
+    return {"month": month, "digest": digest, "address": address.lower().replace("0x", "")}
+
+
+def _diary_spooled(month, digest):
+    """Whether a diary anchor for this month is already on disk awaiting delivery."""
+    try:
+        names = [n for n in os.listdir(ATTEST_SPOOL) if n.endswith(".json")]
+    except OSError:
+        return False
+    for name in names:
+        try:
+            with open(os.path.join(ATTEST_SPOOL, name), encoding="utf-8") as fh:
+                record = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if record.get("kind") == "diary" and month in str(record.get("payload")) \
+                and digest in str(record.get("payload")):
+            return True
+    return False
+
+
+def anchor_pending_diary():
+    """Anchor one waiting diary month with this node's own wallet.
+
+    ONE PER CALL, AND NEVER TWICE. Each anchor is a transaction paid for by the
+    operator's wallet, so a month is anchored only when the backend lists it as
+    waiting AND nothing on this machine says it already was. The second half
+    matters: if the backend could not be told, the record sits in the spool and
+    the backend still lists the month as waiting, and asking again would spend
+    gas a second time for the same month.
+
+    Does nothing at all unless anchoring is configured on this node.
+    """
+    if not ATTEST_URL:
+        return
+    entry = fetch_pending_diary()
+    if not entry:
+        return
+    key = (entry["month"], entry["digest"])
+    if os.path.exists(_diary_marker(*key)) or _diary_spooled(*key):
+        return
+    body = {"kind": "diary", "month": entry["month"], "digest": entry["digest"],
+            "producer": entry["address"], "network": NODE_NETWORK}
+    headers = {"Content-Type": "application/json"}
+    if ATTEST_TOKEN:
+        headers["X-Anchor-Token"] = ATTEST_TOKEN
+    req = urllib.request.Request(
+        ATTEST_URL, data=json.dumps(body).encode("utf-8"),
+        headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            if not (200 <= resp.status < 300):
+                return
+            result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        _warn_once("diary-http", "diary anchor refused: HTTP %s" % e.code)
+        return
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        _warn_once("diary-unreachable", "diary anchor could not be reached: %s" % e)
+        return
+    if not result.get("anchored"):
+        return
+    record = {
+        "node_id": NODE_ID,
+        "network": result.get("network") or NODE_NETWORK,
+        "kind": "diary",
+        "payload": json.dumps(result.get("payload"), separators=(",", ":")),
+        "content_hash": result.get("contentHash") or "",
+        "tx_hash": result.get("txHash") or "",
+        "attested_by": result.get("attestedBy"),
+        "explorer_url": result.get("explorerUrl"),
+        "observed_at": None,
+    }
+    if not record["content_hash"] or not record["tx_hash"]:
+        return
+    # Remembered on disk before anything else can fail: it is anchored from
+    # here on, and a restart must not pay for the same month again. The marker
+    # is not a .json file, so the spool flush never touches it.
+    try:
+        os.makedirs(ATTEST_SPOOL, exist_ok=True)
+        with open(_diary_marker(*key), "w", encoding="utf-8") as fh:
+            fh.write(record["tx_hash"])
+    except OSError:
+        pass
+    if not spool_attestation(record):
+        _warn_once("diary-unsaved",
+                   "anchored a diary %s but could not save the payload locally"
+                   % record["content_hash"][:12])
+        return
+    if post_attestation(record):
+        try:
+            os.remove(_spool_path(record["content_hash"]))
+        except OSError:
             pass
 
 

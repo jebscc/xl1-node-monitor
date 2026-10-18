@@ -1862,6 +1862,33 @@ const buildAttestation = (body: Record<string, unknown>, net: string) => {
   return { record, idPayload }
 }
 
+/**
+ * A pet's monthly diary, committed by its hash alone.
+ *
+ * The phone keeps the month's line ("2026-09|blocks|xl1|bestDay|hours|est") and
+ * sends only its sha256. Nothing about the month is published by anchoring it:
+ * the person who holds the line can prove, later, that it said exactly this
+ * and was not rewritten after the month ended. Returns null for a malformed
+ * request, because whatever this builds is about to be written to a chain.
+ */
+const buildDiaryRecord = (body: Record<string, unknown>, net: string) => {
+  const month = typeof body.month === 'string' ? body.month : ''
+  const digest = typeof body.digest === 'string' ? body.digest : ''
+  const producer = typeof body.producer === 'string' ? body.producer.slice(0, 42) : null
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return null
+  if (!/^[0-9a-f]{64}$/.test(digest)) return null
+  const record = {
+    app: 'xl1-pet-diary',
+    v: 1,
+    network: net,
+    producer,
+    month,
+    digest,
+  }
+  const idPayload = { schema: asSchema('network.xyo.id', true), salt: JSON.stringify(record) }
+  return { record, idPayload }
+}
+
 app.post('/attest', async (req, res) => {
   if (SIGNING_CONFIGURED) {
     if (!ANCHOR_TOKEN) {
@@ -1876,7 +1903,9 @@ app.post('/attest', async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>
   const net = typeof body.network === 'string' && NETWORKS[body.network]
     ? body.network : DEFAULT_NETWORK
-  const { record, idPayload } = buildAttestation(body, net)
+  const built = body.kind === 'diary' ? buildDiaryRecord(body, net) : buildAttestation(body, net)
+  if (!built) return res.status(422).json({ error: 'a diary needs a month (yyyy-MM) and a 64-character hex digest' })
+  const { record, idPayload } = built
   try {
     const contentHash = await PayloadBuilder.hash(idPayload)
     // Without a key this still answers, and answering is the point: the hash

@@ -160,6 +160,19 @@ Anyone holding the receipts can rebuild the line, hash it, and see it match the 
 month's witnessing, committed when it closed. It covers the receipts the phone still held at that moment, and the
 count is in the line, so a month is never presented as more than it was.
 
+### By the day (v2)
+
+The app now anchors witnessing by the **day**, the phone's own calendar day a receipt was made on, rather than the
+month. The line is the same shape with a day in front, and the record carries `period` in place of `month`:
+
+```
+yyyy-MM-dd|<count>|<receipt hash>,<receipt hash>,...
+{"app": "xl1-pet-witness", "v": 2, "network": "mainnet", "producer": "<node address>", "period": "2026-10-18", "digest": "<sha256>"}
+```
+
+Records with `"v": 1` and a `month` are still valid and are checked as above. A day is written only once it has
+ended, and covers the receipts the phone held at that moment.
+
 ## Counting receipts (not part of the format)
 
 A site may collect receipts and count them per block. The one at <https://www.jimtheexplorer.com/witness> does so

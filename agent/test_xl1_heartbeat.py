@@ -5099,3 +5099,18 @@ def test_an_unknown_kind_is_never_anchored(tmp_path, monkeypatch):
         posted = _diary_setup(monkeypatch, tmp_path, {**_good_entry(), "kind": bad})
         agent.anchor_pending_diary()
         assert posted == [], bad
+
+
+def test_a_witness_day_is_anchored_and_a_diary_day_is_not(tmp_path, monkeypatch):
+    """A pet's witnessing is recorded by the DAY; a diary only by the month. A day for a diary is refused
+    here as well as at the far end, because whatever this returns is about to be hashed onto a chain."""
+    posted = _diary_setup(monkeypatch, tmp_path, {**_witness_entry(), "month": "2026-09-18"})
+    agent.anchor_pending_diary()
+    assert len(posted) == 1 and posted[0]["kind"] == "witness" and posted[0]["month"] == "2026-09-18"
+    assert (tmp_path / ("witness-2026-09-18-%s.done" % _DIARY_DIGEST[:16])).exists()
+    for bad in ({**_good_entry(), "month": "2026-09-18"},                      # a diary day
+                {**_witness_entry(), "month": "2026-09-32"},                  # not a day
+                {**_witness_entry(), "month": "2026-13-01"}):                 # not a month
+        posted = _diary_setup(monkeypatch, tmp_path / "x", bad) if False else _diary_setup(monkeypatch, tmp_path, bad)
+        agent.anchor_pending_diary()
+        assert posted == [], bad

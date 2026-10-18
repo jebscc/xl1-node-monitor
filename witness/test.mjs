@@ -85,6 +85,24 @@ await test('the block a receipt names passes, and nothing else does', async () =
   assert.equal((await checkBlock(flipped, 1000, bw._dataHash)).ok, false, 'a changed signature')
 })
 
+await test('a proof pack checks offline from the command line, and a changed block fails it', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const tmp = mkdtempSync(join(tmpdir(), 'pack-'))
+  const run = (pack) => {
+    const f = join(tmp, 'pack.json')
+    writeFileSync(f, JSON.stringify(pack))
+    return spawnSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'verify.mjs'), f], { encoding: 'utf8' }).status
+  }
+  const pack = { receipt: { bw: clone(A0.bw), payload: clone(A0.payload) }, block: json('mainnet-1000.json') }
+  assert.equal(run(pack), 0, 'a whole pack')
+  const bad = clone(pack)
+  bad.block[0].$signatures[0] = bad.block[0].$signatures[0].split('').reverse().join('')
+  assert.equal(run(bad), 1, 'a changed block')
+  assert.equal(run({ ...clone(pack), block: json('mainnet-500000.json') }), 1, 'another block')
+})
+
 if (failures) {
   console.error(`\n${failures} check(s) failed.`)
   process.exit(1)

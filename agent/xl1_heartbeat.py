@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.47.2"
+AGENT_VERSION = "1.47.3"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -4592,7 +4592,9 @@ def fetch_pending_diary():
     kind = entry.get("kind") or "diary"
     if kind not in ("diary", "witness"):
         return None
-    if not isinstance(month, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+    # A pet's witnessing is recorded by the day, a diary only by the month.
+    period = r"\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?" if kind == "witness" else r"\d{4}-(0[1-9]|1[0-2])"
+    if not isinstance(month, str) or not re.fullmatch(period, month):
         return None
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         return None

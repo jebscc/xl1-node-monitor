@@ -1878,16 +1878,17 @@ const buildDiaryRecord = (body: Record<string, unknown>, net: string) => {
   const month = typeof body.month === 'string' ? body.month : ''
   const digest = typeof body.digest === 'string' ? body.digest : ''
   const producer = typeof body.producer === 'string' ? body.producer.slice(0, 42) : null
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return null
+  // A pet's witnessing is recorded by the DAY ("2026-09-18"); a diary only by the month.
+  const witness = body.kind === 'witness'
+  const okPeriod = witness
+    ? /^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/.test(month)
+    : /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
+  if (!okPeriod) return null
   if (!/^[0-9a-f]{64}$/.test(digest)) return null
-  const record = {
-    app: body.kind === 'witness' ? 'xl1-pet-witness' : 'xl1-pet-diary',
-    v: 1,
-    network: net,
-    producer,
-    month,
-    digest,
-  }
+  // v1 named a month; a witness record is v2 and names its `period`, which may be a day or a month.
+  const record = witness
+    ? { app: 'xl1-pet-witness', v: 2, network: net, producer, period: month, digest }
+    : { app: 'xl1-pet-diary', v: 1, network: net, producer, month, digest }
   const idPayload = { schema: asSchema('network.xyo.id', true), salt: JSON.stringify(record) }
   return { record, idPayload }
 }

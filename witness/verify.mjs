@@ -6,6 +6,8 @@
  *   cat receipt.json | node verify.mjs -    the same, from standard input
  *   node verify.mjs receipt.json --block block.json
  *                                           check against a block you already hold, with no network at all
+ *   node verify.mjs pack.json               a proof pack ({"receipt": ..., "block": ...}): the receipt and its block
+ *                                           in one file, checked with no network at all
  *
  * The input may be the receipt alone ({"bw": ..., "payload": ...}) or any text that contains it, such as a
  * message a pet's owner shared: everything before the first "{" is ignored.
@@ -34,11 +36,15 @@ if (!input) {
 }
 
 let receipt
+let packBlock = null
 try {
   const text = input === '-' ? readFileSync(0, 'utf8') : readFileSync(input, 'utf8')
   const parsed = JSON.parse(text.slice(text.indexOf('{')))
-  if (!parsed?.bw || !parsed?.payload) throw new Error('that is not a receipt: it needs a "bw" and a "payload"')
-  receipt = { bw: parsed.bw, payload: parsed.payload }
+  // a proof pack holds the receipt and its block side by side
+  const r = parsed?.receipt && parsed?.block ? parsed.receipt : parsed
+  if (!r?.bw || !r?.payload) throw new Error('that is not a receipt: it needs a "bw" and a "payload"')
+  receipt = { bw: r.bw, payload: r.payload }
+  if (r !== parsed) packBlock = JSON.stringify(parsed.block)
 } catch (e) {
   console.error(`Could not read a receipt: ${e.message}`)
   process.exit(2)
@@ -51,13 +57,13 @@ const show = (steps) => {
 
 let steps
 let ok
-if (blockFile) {
+if (blockFile || packBlock) {
   // a block you already hold: check the receipt, then check that block against it, offline
   const r = await checkReceipt(receipt.bw, receipt.payload)
   steps = [{ id: 'receipt', label: 'The receipt is sound and the pet\'s signature is the pet\'s', status: r.ok ? 'pass' : 'fail', detail: r.ok ? `Signed by ${r.summary.address}.` : r.why }]
   ok = r.ok
   if (r.ok) {
-    const b = await checkBlock(readFileSync(blockFile, 'utf8'), r.summary.block, r.summary.blockHash)
+    const b = await checkBlock(blockFile ? readFileSync(blockFile, 'utf8') : packBlock, r.summary.block, r.summary.blockHash)
     steps.push({ id: 'block', label: 'The block\'s hash, recomputed from its own content, is the one the receipt names, and its signature is from the address it lists', status: b.ok ? 'pass' : 'fail', detail: b.ok ? `Block ${r.summary.block}, hash ${r.summary.blockHash}.` : b.why })
     ok = b.ok
   }

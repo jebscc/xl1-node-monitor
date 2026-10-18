@@ -597,7 +597,7 @@ REPORTED_FIELDS = {
     "pending_blocks", "last_block_epoch", "scan_from_block", "scan_to_block",
     "scan_produced", "scan_finalized", "finalized_head", "indexer_floor",
     "backfill_from_block", "backfill_to_block", "backfill_produced",
-    "scan_minted_by_day",
+    "scan_minted_by_day", "scan_blocks", "scan_from_epoch", "scan_to_epoch",
     "minted_from_block", "minted_to_block", "minted_by_day",
     "last_produced_block", "blocks_since_produced", "explorer_block_url",
     # staying current
@@ -4906,3 +4906,55 @@ def test_live_scan_looks_for_mints_at_the_reward_address_when_it_is_not_the_sign
     # No reward address known: say nothing rather than guess.
     _addr, none = run("a" * 40, None)
     assert "reward" not in none
+
+
+def _blk(n=1821788, t=1760000000000, w="750000000000000000000", h="ab" * 32):
+    return {"n": n, "t": t, "w": w, "h": h}
+
+
+def test_signed_blocks_are_passed_on_as_numbers_time_mint_and_hash():
+    out = agent.signed_blocks({"signedBlocks": [_blk(), _blk(n=1821790, h="")]})
+    assert out == [[1821788, 1760000000000, "750000000000000000000", "ab" * 32],
+                   [1821790, 1760000000000, "750000000000000000000", ""]]
+    assert agent.signed_blocks({}) is None
+    assert agent.signed_blocks({"signedBlocks": []}) is None
+    assert agent.signed_blocks(None) is None
+
+
+def test_one_bad_signed_block_drops_the_whole_list():
+    """These are accumulated by the backend and nothing re-derives them, so a partial list that
+    looks complete is worse than none."""
+    for bad in (
+        _blk(n=0), _blk(n=-5), _blk(n="12"), _blk(n=True), _blk(t=0), _blk(t=1.5),
+        _blk(w="-1"), _blk(w="1e21"), _blk(w=5), _blk(w="9" * 41),
+        _blk(h="XYZ"), _blk(h="a" * 65), _blk(h=7),
+    ):
+        assert agent.signed_blocks({"signedBlocks": [_blk(), bad]}) is None, bad
+    assert agent.signed_blocks({"signedBlocks": [_blk(), "not a dict"]}) is None
+    assert agent.signed_blocks({"signedBlocks": [_blk(), _blk()]}) is None, "the same block twice"
+    assert agent.signed_blocks({"signedBlocks": [_blk(n=i + 1) for i in range(501)]}) is None
+
+
+def test_the_scan_carries_its_blocks_and_the_time_it_covered(monkeypatch):
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: {
+        "fromBlock": 572000, "toBlock": 572100, "produced": 2,
+        "signedBlocks": [_blk(n=572050), _blk(n=572090)],
+        "fromEpoch": 1760000000000, "toEpoch": 1760000900000,
+    })
+    payload = agent.collect()
+    assert [b[0] for b in payload["scan_blocks"]] == [572050, 572090]
+    assert payload["scan_from_epoch"] == 1760000000000
+    assert payload["scan_to_epoch"] == 1760000900000
+
+
+def test_a_scan_that_signed_nothing_still_says_what_time_it_covered(monkeypatch):
+    """Nothing signed is an answer, and it is what lets a quiet day be called complete."""
+    monkeypatch.setattr(agent, "find_container", lambda: "xl1-producer")
+    monkeypatch.setattr(agent, "fetch_producer_stats", lambda name: {
+        "fromBlock": 572000, "toBlock": 572100, "produced": 0,
+        "signedBlocks": [], "fromEpoch": 1760000000000, "toEpoch": 1760000900000,
+    })
+    payload = agent.collect()
+    assert "scan_blocks" not in payload
+    assert payload["scan_from_epoch"] == 1760000000000

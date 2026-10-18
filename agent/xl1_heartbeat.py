@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.46.2"
+AGENT_VERSION = "1.47.0"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1380,6 +1380,44 @@ def minted_by_day(stats):
         if not isinstance(atto, str) or not re.fullmatch(r"[0-9]{1,40}", atto):
             return None
         out[day] = atto
+    return out
+
+
+def signed_blocks(stats):
+    """[[number, epoch_ms, atto, hash], ...] for every block this address signed in a scan, or None.
+
+    What the scan saw, block by block, so the backend can total earnings for ANY day in ANY time zone
+    (the daily totals above are UTC days and cannot be re-cut) and the phone can collect each block
+    rather than the latest one per report. The hash is the one the chain carries on the block.
+
+    Validated rather than forwarded, for the same reason minted_by_day is: the backend ACCUMULATES
+    these into running totals that nothing re-derives, so a malformed entry would be permanent. One bad
+    entry drops the whole list -- a partial list is worse than a missing one, because it looks complete.
+    Capped at 500, which is more than a forward scan signs; anything near it is a bug, not a big scan.
+    """
+    raw = (stats or {}).get("signedBlocks")
+    if not isinstance(raw, list) or not raw:
+        return None
+    if len(raw) > 500:
+        return None
+    out = []
+    seen = set()
+    for b in raw:
+        if not isinstance(b, dict):
+            return None
+        n, t, w, h = b.get("n"), b.get("t"), b.get("w"), b.get("h", "")
+        if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+            return None
+        if isinstance(t, bool) or not isinstance(t, int) or t <= 0:
+            return None
+        if not isinstance(w, str) or not re.fullmatch(r"[0-9]{1,40}", w):
+            return None
+        if not isinstance(h, str) or not re.fullmatch(r"[0-9a-f]{0,64}", h):
+            return None
+        if n in seen:
+            return None
+        seen.add(n)
+        out.append([n, t, w, h])
     return out
 
 
@@ -4103,6 +4141,16 @@ def collect():
         scanned = minted_by_day(stats)
         if scanned:
             payload["scan_minted_by_day"] = scanned
+        # Block by block, and the span of time the scan covered (what lets a day be called complete).
+        # The span goes with every accepted scan, blocks signed or not: "nothing signed" is an answer.
+        blocks = signed_blocks(stats)
+        if blocks:
+            payload["scan_blocks"] = blocks
+        from_epoch, to_epoch = stats.get("fromEpoch"), stats.get("toEpoch")
+        if isinstance(from_epoch, int) and not isinstance(from_epoch, bool) and from_epoch > 0:
+            payload["scan_from_epoch"] = from_epoch
+        if isinstance(to_epoch, int) and not isinstance(to_epoch, bool) and to_epoch > 0:
+            payload["scan_to_epoch"] = to_epoch
 
         chunk = _slow_get("backfill_chunk", lambda: fetch_backfill_chunk(name), take=True)
         if chunk:

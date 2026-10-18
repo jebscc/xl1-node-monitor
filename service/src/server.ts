@@ -394,6 +394,13 @@ const producerStats = async (
   // reports as money.
   const mintedByDay = new Map<string, bigint>()
   let mintedTotal = 0n
+  // Every block the address SIGNED in the range: its number, when it was made, what it minted to the
+  // reward address, and its hash. The hash is the one the chain itself carries on the block (`_hash`),
+  // read, never recomputed, so it is the same hash the explorer shows for that block.
+  const signedBlocks: { n: number, t: number, w: string, h: string }[] = []
+  // The span of time the scanned blocks cover, so a consumer can tell which days it holds all of.
+  let fromEpoch: number | undefined
+  let toEpoch: number | undefined
 
   // Fetch in batches rather than block by block. Each batch is processed and
   // released before the next is requested, so peak memory stays flat however
@@ -410,13 +417,17 @@ const producerStats = async (
     for (const blk of (Array.isArray(batch) ? batch : [batch])) {
       const parts = Array.isArray(blk) ? blk : [blk]
       const bw = parts.find((p: { schema?: string }) => p?.schema === 'network.xyo.boundwitness') as
-        { addresses?: string[]; $epoch?: number; block?: number } | undefined
+        { addresses?: string[]; $epoch?: number; block?: number; _hash?: string } | undefined
       if (!bw) continue
 
       // Mints are nested below the top level, so this needs the deep read that
       // finding the bound witness does not.
+      let blockWei = 0n
       if (typeof bw.$epoch === 'number') {
+        if (fromEpoch === undefined || bw.$epoch < fromEpoch) fromEpoch = bw.$epoch
+        if (toEpoch === undefined || bw.$epoch > toEpoch) toEpoch = bw.$epoch
         const wei = mintedToInBlock(flattenPayloads(blk), mintTarget)
+        blockWei = wei
         if (wei > 0n) {
           const day = new Date(bw.$epoch).toISOString().slice(0, 10)
           mintedByDay.set(day, (mintedByDay.get(day) ?? 0n) + wei)
@@ -435,6 +446,9 @@ const producerStats = async (
         if (blockNumber !== undefined
             && (lastProducedBlock === undefined || blockNumber > lastProducedBlock)) {
           lastProducedBlock = blockNumber
+        }
+        if (blockNumber !== undefined && typeof bw.$epoch === 'number') {
+          signedBlocks.push({ n: blockNumber, t: bw.$epoch, w: blockWei.toString(), h: String(bw._hash ?? '').replace(/^0x/i, '').toLowerCase().slice(0, 64) })
         }
       }
     }
@@ -462,6 +476,11 @@ const producerStats = async (
     lastProducedBlock,
     blocksSinceProduced: lastProducedBlock === undefined ? undefined : height - lastProducedBlock,
     latestEpoch, pendingTransactions, pendingBlocks,
+    // Every block signed in the range, newest first, capped: a forward scan covers a few hundred blocks and
+    // signs a few dozen, and a long history walk would otherwise return thousands nobody asked for.
+    signedBlocks: signedBlocks.sort((a, b) => b.n - a.n).slice(0, 500),
+    // The time the scanned blocks span, in ms. With the per-block mints this is what says a day is COMPLETE.
+    fromEpoch, toEpoch,
     // What this address was actually MINTED over the scanned range, by UTC day.
     // Atto as strings: these are summed into a lifetime total, and a float
     // cannot hold 1e22 without losing the low digits.

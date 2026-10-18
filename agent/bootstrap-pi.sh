@@ -3522,7 +3522,30 @@ $SUDO chown "$SVC_UID:$SVC_UID" "$KEYS_DIR" /var/lib/xl1-attestations
 $SUDO chmod 700 "$KEYS_DIR"
 $SUDO chmod 755 /var/lib/xl1-attestations
 
+# A recreate must not drop a tailnet publish the old container had.
+#
+# The site's backend reads this service over Tailscale (/chain, the field), so on some nodes the container also
+# publishes 8090 on the node's 100.x address, added by hand. A container's ports are fixed when it is created and
+# this function recreates it, so a wizard run silently removed that publish: the container came up healthy, the
+# node produced and anchored, and the site's chain height and field went dark until somebody noticed. It happened
+# twice in one day.
+#
+# Only addresses in Tailscale's own range (100.64.0.0/10) are kept. Everything else is deliberately left out: the
+# wizard's containment is "loopback only", and carrying over a 0.0.0.0 or a LAN address would turn a hand-made
+# exposure into a permanent one without anybody choosing it.
+preserved_tailnet_binds() { # -> the tailnet addresses the running anchor container publishes 8090 on, one a line
+  $SUDO docker inspect -f '{{range $p,$b := .HostConfig.PortBindings}}{{if eq $p "8090/tcp"}}{{range $b}}{{println .HostIp}}{{end}}{{end}}{{end}}' \
+    xl1-service-anchor-1 2>/dev/null | tr -d '\r' | sort -u \
+    | grep -E '^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}$' || true
+}
+
 start_anchor_service() { # start_anchor_service [env-file]
+  # Read BEFORE the container is removed: afterwards there is nothing left to read it from.
+  _tailnet_pub=""
+  # --publish, not -p: redeploy-anchor.sh counts the static -p flags in this function to know what it publishes,
+  # and the kept ones are counted separately, from the running container.
+  for _tn_addr in $(preserved_tailnet_binds); do _tailnet_pub="$_tailnet_pub --publish $_tn_addr:8090:8090"; done
+  [ -n "$_tailnet_pub" ] && note "keeping the tailnet publish this service had:$_tailnet_pub"
   $SUDO docker rm -f xl1-service-anchor-1 >/dev/null 2>&1 || true
   # Deliberately not `docker compose`. The wizard installs docker.io from apt,
   # which does not ship the compose plugin, so a compose call would fail on a
@@ -3564,6 +3587,7 @@ start_anchor_service() { # start_anchor_service [env-file]
     -e XL1_INDEXER_FLOOR_BLOCK=0 \
     -v /var/lib/xl1-attestations:/attestations \
     -p 127.0.0.1:8090:8090 \
+    $_tailnet_pub \
     xl1-service:local >/dev/null 2>&1
 }
 

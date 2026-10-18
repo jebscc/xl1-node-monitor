@@ -57,7 +57,7 @@ fi
 #
 # Each run says how the fake node behaves: whether the build works, how many
 # ports come back, and whether /health answers.
-run_case() { # run_case <build ok> <ports after> <health ok> [ports before]
+run_case() { # run_case <build ok> <ports after> <health ok> [ports before] [override yes|no] [tailnet bind kept yes|no]
   _d="$(mktemp -d)"
   cat > "$_d/docker" <<STUB
 #!/bin/sh
@@ -65,7 +65,7 @@ case "\$1" in
   build)  [ "$1" = yes ] || exit 1 ;;
   port)   if [ -f "$_d/.asked" ]; then n=$2; else n=${4:-$2}; : > "$_d/.asked"; fi
           i=0; while [ \$i -lt \$n ]; do echo "809\$i/tcp -> 127.0.0.1:809\$i"; i=\$((i+1)); done ;;
-  inspect) case "\$*" in *image*) exit 0 ;; *) echo "XL1_NETWORK=sequence" ;; esac ;;
+  inspect) case "\$*" in *image*) exit 0 ;; *PortBindings*) [ "${6:-no}" = yes ] && echo 100.90.149.28; exit 0 ;; *) echo "XL1_NETWORK=sequence" ;; esac ;;
   tag|rm|run) : ;;
 esac
 exit 0
@@ -175,6 +175,21 @@ if printf '%s' "$OUT" | grep -qE '\-f[[:space:]]*$|\-f[[:space:]]+up'; then
   bad "it prints -f with no file after it" "$OUT"
 else
   ok "with no override it says so rather than printing an empty path"
+fi
+# A TAILNET PUBLISH IS NOT A SHORTFALL ANY MORE. The wizard's function now keeps the 100.x publish a running
+# container has, so a node with loopback plus its tailnet address redeploys safely and this script must not refuse it.
+OUT="$(run_case yes 2 yes 2 no yes)"
+if printf '%s' "$OUT" | grep -qi "would drop"; then
+  bad "a node with a tailnet publish is refused although the wizard now keeps it" "$OUT"
+else
+  ok "a node with a tailnet publish still deploys, because the wizard keeps it"
+fi
+# ...but ONLY that: a third binding that is not the tailnet one would still be dropped, and still refused.
+OUT="$(run_case yes 1 yes 3 no yes)"
+if printf '%s' "$OUT" | grep -qi "would drop"; then
+  ok "a binding that is not a tailnet one is still refused"
+else
+  bad "an extra binding other than the tailnet one is no longer refused" "the wizard would drop it"
 fi
 # AND NOT THE OTHER WAY. An ordinary single-binding node must still deploy,
 # or this refusal has simply disabled the script everywhere.

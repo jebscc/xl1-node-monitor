@@ -70,6 +70,9 @@ SVC="${XL1_SERVICE_DIR:-$(find_service)}"
 eval "$(sed -n 's/^\(XL1_NET\|XL1_SEQUENCE_RPC_URL\|XL1_MAINNET_RPC_URL\|ANCHOR_ENV\)=\(.*\)$/\1=\2/p' "$BOOTSTRAP")"
 START_FN="$(sed -n '/^start_anchor_service() {/,/^}/p' "$BOOTSTRAP")"
 eval "$START_FN"
+# The tailnet publishes a running container has, which start_anchor_service now keeps. Borrowed from the wizard like
+# everything else here, so the range it keeps is defined once.
+eval "$(sed -n '/^preserved_tailnet_binds() {/,/^}/p' "$BOOTSTRAP")"
 eval "$(sed -n '/^wait_for_service() {/,/^}/p' "$BOOTSTRAP")"
 command -v start_anchor_service >/dev/null 2>&1 \
   || die "could not read start_anchor_service out of $BOOTSTRAP"
@@ -106,6 +109,13 @@ fi
 # port, this follows it instead of going stale against it.
 WOULD="$(printf '%s' "$START_FN" | grep -vE '^[[:space:]]*#' \
          | grep -cE '(^|[[:space:]])-p[[:space:]]')"
+# PLUS the tailnet publishes the wizard now keeps: those are not dropped on a recreate, so they are not a shortfall.
+# (Without this the script refused to redeploy a node it could now redeploy safely.) Anything else the container
+# publishes is still dropped, and still refused.
+if command -v preserved_tailnet_binds >/dev/null 2>&1; then
+  KEPT="$(preserved_tailnet_binds 2>/dev/null | grep -c .)"
+  WOULD=$((WOULD + ${KEPT:-0}))
+fi
 
 # The override that reproduces the extra binding, looked for in the same three
 # places xl1-menu looks, and named only when one is actually there.

@@ -4873,3 +4873,36 @@ def test_producer_request_lets_a_caller_override_the_network(monkeypatch):
     assert "network=sequence" in seen["url"], seen["url"]
     assert "network=mainnet" not in seen["url"], seen["url"]
 
+
+def test_live_scan_looks_for_mints_at_the_reward_address_when_it_is_not_the_signer(monkeypatch):
+    """Blocks carry the SIGNER; the reward is minted to the REWARD address. On a
+    node paid to a separate wallet the live scan counted its blocks and then
+    looked for mints to the signer, found none, and today's measured earnings
+    never filled in -- verified on a real node: 39 blocks signed, mintedByDay
+    empty. The scan must say where the mints go."""
+    seen = []
+
+    def fake_request(address, params):
+        seen.append((address, dict(params)))
+        return {"fromBlock": 1, "toBlock": 100, "produced": 2}
+
+    def run(signer, reward):
+        seen.clear()
+        monkeypatch.setattr(agent, "_producer_request", fake_request)
+        monkeypatch.setattr(agent, "counting_address", lambda _n: (signer, False))
+        monkeypatch.setattr(agent, "read_reward_address", lambda _n: reward)
+        monkeypatch.setattr(agent, "PRODUCER_URL", "http://127.0.0.1:8090/producer")
+        agent._producer_cache["at"] = 0.0
+        agent._producer_cache["value"] = None
+        agent._producer_cursor["known"] = True
+        agent.fetch_producer_stats("node")
+        return seen[0]
+
+    address, params = run("a" * 40, "0x" + "b" * 40)
+    assert address == "a" * 40 and params["reward"] == "0x" + "b" * 40
+    # The same address, in either spelling, needs no second one.
+    _addr, same = run("a" * 40, "0x" + "A" * 40)
+    assert "reward" not in same
+    # No reward address known: say nothing rather than guess.
+    _addr, none = run("a" * 40, None)
+    assert "reward" not in none

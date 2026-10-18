@@ -333,8 +333,16 @@ const producerStats = async (
   // and unreachable defaults are how the second caller silently gets the
   // behaviour the first one refuses. Required, so the compiler asks.
   range: { from: number; to: number } | undefined, floor: number,
+  // WHERE THE MINTS ARE LOOKED FOR, when that is not the address blocks are
+  // counted against. A block carries the address that SIGNED it, but the reward
+  // is minted to the REWARD address, and the two differ on any node whose
+  // rewards go to a separate wallet. Without this, a live scan counted the
+  // signer's blocks and looked for mints to the signer, found none, and
+  // reported "minted nothing" for every block -- while the history walk, which
+  // is asked about the reward address directly, was right.
+  reward?: string,
 ) => {
-  const key = `${network}:${normalizeAddress(address)}:${window}:`
+  const key = `${network}:${normalizeAddress(address)}:${reward ? normalizeAddress(reward) : ''}:${window}:`
     + (range ? `r${range.from}-${range.to}` : (since ?? 'window'))
   const cached = producerCache[key]
   const now = Date.now()
@@ -354,6 +362,7 @@ const producerStats = async (
   const bound = await finalizedBound(viewer, latest)
   const height = bound.height
   const target = normalizeAddress(address)
+  const mintTarget = reward ? normalizeAddress(reward) : target
 
   // Two modes. With `since` we scan only what is new, which is ~15 blocks per
   // 15 minutes at a 60s block time -- far cheaper than re-reading a window
@@ -407,7 +416,7 @@ const producerStats = async (
       // Mints are nested below the top level, so this needs the deep read that
       // finding the bound witness does not.
       if (typeof bw.$epoch === 'number') {
-        const wei = mintedToInBlock(flattenPayloads(blk), target)
+        const wei = mintedToInBlock(flattenPayloads(blk), mintTarget)
         if (wei > 0n) {
           const day = new Date(bw.$epoch).toISOString().slice(0, 10)
           mintedByDay.set(day, (mintedByDay.get(day) ?? 0n) + wei)
@@ -1691,6 +1700,11 @@ app.get('/producer', async (req, res) => {
   const range = hasRange
     ? { from: Math.max(0, Math.floor(fromRaw)), to: Math.floor(toRaw) }
     : undefined
+  // Optional: the address mints are paid to, when it is not the signer.
+  const rewardRaw = typeof req.query.reward === 'string' ? req.query.reward : undefined
+  if (rewardRaw !== undefined && !/^(0x)?[0-9a-fA-F]{40}$/.test(rewardRaw)) {
+    return res.status(422).json({ error: 'reward must be a valid 20-byte address' })
+  }
 
   // Fail closed rather than walking to an implicit 0 nobody chose.
   const floor = indexerFloor()
@@ -1701,7 +1715,7 @@ app.get('/producer', async (req, res) => {
     })
   }
   try {
-    res.json(await producerStats(network, address, window, since, range, floor))
+    res.json(await producerStats(network, address, window, since, range, floor, rewardRaw))
   } catch (e) {
     res.status(502).json({ error: e instanceof Error ? e.message : String(e) })
   }

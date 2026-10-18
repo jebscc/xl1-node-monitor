@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.46.1"
+AGENT_VERSION = "1.46.2"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1457,6 +1457,13 @@ def fetch_producer_stats(name):
     if not address:
         return None
     params = {"address": address, "window": PRODUCER_WINDOW}
+    # Blocks are counted against the signer but REWARDS are minted to the
+    # reward address, which differs on any node paid to a separate wallet.
+    # Without saying where to look, this scan found no mint for a block it had
+    # just counted as ours, and today's measured earnings never filled in.
+    reward = read_reward_address(name)
+    if reward and reward.lower().replace("0x", "") != address.lower().replace("0x", ""):
+        params["reward"] = reward
     if _producer_cursor["block"] is not None:
         # Scan only what is new. ~15 blocks per 15 minutes at a 60s block time,
         # versus re-reading the whole window every cycle.

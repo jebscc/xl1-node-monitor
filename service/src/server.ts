@@ -22,6 +22,7 @@ import {
 } from '@xyo-network/xl1-sdk'
 
 import { anchorRecord } from './anchorRecord.ts'
+import { anchorCost } from './anchorCost.ts'
 import { confirmAnchored } from './confirmAnchored.ts'
 import { getSignerAccount } from './getSignerAccount.ts'
 import { singleFlight } from './singleFlight.ts'
@@ -956,19 +957,17 @@ app.get('/anchor-cost', async (req, res) => {
 
     if (moves === null) return unmeasured('the gateway would not return this wallet history')
     if (balance === null) return unmeasured('the gateway would not return this wallet balance')
-    const spends = moves.filter(m => m.out > 0n).map(m => m.out).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-    if (spends.length === 0) return unmeasured('this wallet has not spent anything yet')
+    const measured = anchorCost(moves.filter(m => m.out > 0n).map(m => m.out))
+    if (measured === null) return unmeasured('this wallet has not spent anything yet')
 
-    // The median, not the mean. Anchors cost near-identical amounts, so the
-    // two agree in the ordinary case; where they disagree it is because
-    // something that was not an anchor left this wallet -- a sweep, a
-    // mis-send -- and that should not be allowed to set the runway an operator
-    // decides top-ups from. The median describes the typical anchor; the mean
-    // would describe the typical anchor plus one bad day.
-    const mid = spends.length >> 1
-    const perAnchor = spends.length % 2 === 1
-      ? spends[mid]
-      : (spends[mid - 1] + spends[mid]) / 2n
+    // The typical anchor, from the biggest group of spends that sit close
+    // together; anything far outside it (a sweep, a mis-send) is set aside and
+    // reported rather than allowed to set the runway an operator decides
+    // top-ups from. A plain median was not enough: two sweeps in a short
+    // window outnumbered the anchors and moved it to hundreds of tokens.
+    // See anchorCost.ts and test-anchor-cost.ts.
+    const spends = measured.counted
+    const perAnchor = measured.perAnchor
 
     res.json({
       network,
@@ -983,6 +982,9 @@ app.get('/anchor-cost', async (req, res) => {
       // steady cost or papering over a wide one.
       cheapestAnchor: toXL1(spends[0]),
       dearestAnchor: toXL1(spends[spends.length - 1]),
+      // What left the wallet that was not an anchor, so a screen can say so.
+      setAside: measured.setAside.length,
+      setAsideLargest: measured.setAside.length ? toXL1(measured.setAside[measured.setAside.length - 1]) : null,
       // The window the figure rests on.
       fromBlock: moves[0]?.height ?? null,
       toBlock: moves[moves.length - 1]?.height ?? null,

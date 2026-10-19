@@ -29,6 +29,7 @@ const sha256Hex = async (text) => {
 };
 
 export const SCHEMA = "com.jimtheexplorer.pet.witness";
+export const DEED_SCHEMA = "com.jimtheexplorer.pet.deed";
 export const BW_SCHEMA = "network.xyo.boundwitness";
 export const VERIFIED = ["content-hash", "producer-signature"];
 export const HOSTS = { mainnet: "mainnet.xyo.space", sequence: "sequence.xyo.space" };
@@ -228,6 +229,71 @@ export const checkReceipt = async (bw, payload) => {
   };
 };
 
+// ------------------------------------------------------------------ the deed
+
+const DEED_FIELDS = {
+  bought: ["item", "price"],
+  milestone: ["stamp", "value"],
+  gift: ["item", "to"],
+  received: ["item", "from", "gift"],
+  week: ["week", "receipts", "blocks", "sealed", "anchored", "root"],
+};
+const SLUG = /^[a-z0-9_]{1,40}$/;
+const WEEK_ID = /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/;
+const COUNT = (v) => isInt(v) && v >= 0;
+
+/** Is this a sound deed? { ok, why, summary }. A deed is signed by the Archivist's key: see SPEC.md. Fails closed. */
+export const checkDeed = async (bw, payload) => {
+  const fail = (why) => ({ ok: false, why });
+  if (!bw || typeof bw !== "object" || !payload || typeof payload !== "object") return fail("a deed is a bound witness and a payload");
+  const bwKeys = ["$signatures", "addresses", "payload_hashes", "payload_schemas", "previous_hashes", "schema"];
+  if (!same(Object.keys(bw).sort(), bwKeys)) return fail("the bound witness has fields a deed does not");
+  if (bw.schema !== BW_SCHEMA) return fail("not a bound witness");
+  for (const f of ["addresses", "payload_hashes", "payload_schemas", "previous_hashes", "$signatures"]) {
+    if (!Array.isArray(bw[f]) || bw[f].length !== 1) return fail("one signer, one payload");
+  }
+  const [address] = bw.addresses;
+  if (typeof address !== "string" || !HEX40.test(address)) return fail("bad address");
+  if (bw.payload_schemas[0] !== DEED_SCHEMA || payload.schema !== DEED_SCHEMA) return fail("not a deed");
+  if (payload.v !== 1) return fail("unknown version");
+  const fields = DEED_FIELDS[payload.kind];
+  if (!fields) return fail("unknown kind of deed");
+  if (!same(Object.keys(payload).sort(), ["kind", "schema", "seenAt", "v", ...fields].sort())) return fail(`the fields are not the ones a ${payload.kind} deed has`);
+  if (!isInt(payload.seenAt) || payload.seenAt <= 0) return fail("no time");
+  const addr = (v) => typeof v === "string" && HEX40.test(v);
+  const bad = {
+    bought: () => !SLUG.test(payload.item) || !isInt(payload.price) || payload.price < 1,
+    milestone: () => !SLUG.test(payload.stamp) || !isInt(payload.value) || payload.value < 1,
+    gift: () => !SLUG.test(payload.item) || !addr(payload.to),
+    received: () => !SLUG.test(payload.item) || !addr(payload.from) || !(typeof payload.gift === "string" && HEX64.test(payload.gift)),
+    week: () => !(typeof payload.week === "string" && WEEK_ID.test(payload.week)) || !["receipts", "blocks", "sealed", "anchored"].every((k) => COUNT(payload[k])) || !(typeof payload.root === "string" && HEX64.test(payload.root)),
+  }[payload.kind]();
+  if (bad) return fail(`bad ${payload.kind} deed`);
+  const prev = bw.previous_hashes[0];
+  if (prev !== null && !(typeof prev === "string" && HEX64.test(prev))) return fail("bad previous hash");
+  if (bw.payload_hashes[0] !== (await dataHash(payload))) return fail("the payload is not the one signed");
+  const sig = bw.$signatures[0];
+  if (typeof sig !== "string" || !/^[0-9a-f]{128}$/.test(sig)) return fail("bad signature");
+  const receiptHash = await dataHash(bw);
+  if (!signedBy(address, receiptHash, sig)) return fail("the signature is not the keeper's");
+  const { schema, v, ...rest } = payload;
+  return { ok: true, summary: { ...rest, address, receiptHash, previous: prev } };
+};
+
+const nice = (slug) => String(slug).replace(/_/g, " ");
+
+/** A deed as one plain sentence, saying only what it says. */
+export const describeDeed = (d) => {
+  switch (d.kind) {
+    case "bought": return `Bought ${nice(d.item)} for ${d.price} marks.`;
+    case "milestone": return `Reached the stamp "${nice(d.stamp)}" with ${d.value}.`;
+    case "gift": return `Gave ${nice(d.item)} to the pet at ${d.to}.`;
+    case "received": return `Received ${nice(d.item)} from the pet at ${d.from}, in answer to the gift ${d.gift}.`;
+    case "week": return `Week ${d.week}: ${d.receipts} receipt${d.receipts === 1 ? "" : "s"} for ${d.blocks} block${d.blocks === 1 ? "" : "s"}, ${d.sealed} day${d.sealed === 1 ? "" : "s"} sealed, ${d.anchored} on the chain. Its fingerprint is ${d.root}.`;
+    default: return "A deed.";
+  }
+};
+
 // ------------------------------------------------------------------ the block it names
 
 /** Is [text] block [number], hashing to [expectedHash], signed by each address it lists? { ok, why, signers }. */
@@ -276,6 +342,12 @@ export const readBlock = async (network, number, fetchFn = fetch) => {
 export const verifyReceipt = async (receipt, fetchFn = fetch) => {
   const steps = [];
   const push = (id, label, status, detail) => steps.push({ id, label, status, detail });
+  if (receipt?.payload?.schema === DEED_SCHEMA) {
+    // a deed names no block, so there is nothing to read from the chain: the one check is its signature, and it needs no network
+    const d = await checkDeed(receipt.bw, receipt.payload);
+    push("deed", "The deed is sound and the keeper's signature is the keeper's", d.ok ? "pass" : "fail", d.ok ? `Signed by ${d.summary.address}.` : d.why);
+    return d.ok ? { steps, ok: true, deed: d.summary } : { steps, ok: false };
+  }
   const r = await checkReceipt(receipt?.bw, receipt?.payload);
   if (!r.ok) {
     push("receipt", "The receipt is sound and the pet's signature is the pet's", "fail", r.why);

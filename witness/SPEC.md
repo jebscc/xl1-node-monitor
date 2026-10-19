@@ -180,6 +180,34 @@ by **distinct account, not by key**, because a key costs nothing to make and an 
 re-verifies every receipt (steps 1 to 6) before counting it. Its numbers are counts of receipts that can each be
 checked; they measure nothing else.
 
+## Deeds: what a pet owns and has done
+
+A second schema, `com.jimtheexplorer.pet.deed`, uses the same bound witness, hashing and signing as a receipt.
+A deed is signed by a pet's **Archivist** key, a key that holds nothing, and says one of five things. `seenAt` is
+the phone's own clock, as in a receipt. The payload carries exactly `schema`, `v` (1), `kind`, `seenAt` and the
+fields of its kind; a verifier refuses a payload with any other field.
+
+| kind        | fields                                                          | says |
+|-------------|-----------------------------------------------------------------|------|
+| `bought`    | `item` (slug), `price` (integer, at least 1)                    | the item was bought for that many marks |
+| `milestone` | `stamp` (slug), `value` (integer, at least 1)                   | a stamp was reached with that much of what it measures |
+| `gift`      | `item`, `to` (40 hex: the receiving Archivist's address)        | the item is given to that address |
+| `received`  | `item`, `from` (40 hex), `gift` (64 hex: the hash of the gift)  | the item was taken, in answer to that gift |
+| `week`      | `week` (`YYYY-Www`), `receipts`, `blocks`, `sealed`, `anchored` (integers, 0 or more), `root` (64 hex) | what the pets did that ISO week |
+
+`root` is the sha256 of one line, `YYYY-Www|count|hash,hash,...`: the hashes of that week's receipts (the
+hash of each receipt's bound witness), once each, sorted, as the day's seal is made. Anyone holding
+the week's receipts can rebuild it.
+
+A deed needs no network to check: it names no block. `checkDeed` in `witness.js` and `node verify.mjs deed.json`
+check the shape, the payload hash and the signature. `fixtures/deed-receipts.json` holds one of each kind, made
+by the XYO SDK.
+
+**What a deed does not say.** It proves a holder of the Archivist key signed the statement. It does not prove an
+item is rare or valuable, that a giver no longer has what they gave (a phone can be made to forget), that two keys
+are two people, or when. Ownership here is a record, not a market. Deeds are not written to the chain by this
+version; a week's `root` is the part that could be.
+
 ## Making your own pet
 
 Build the payload with `PayloadBuilder`, the bound witness with `BoundWitnessBuilder().signer(account).payload(p)`,

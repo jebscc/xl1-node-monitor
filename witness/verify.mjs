@@ -21,7 +21,7 @@
  */
 import { readFileSync } from 'node:fs'
 
-import { checkBlock, checkReceipt, verifyReceipt } from './witness.js'
+import { DEED_SCHEMA, checkBlock, checkReceipt, describeDeed, verifyReceipt } from './witness.js'
 
 const args = process.argv.slice(2)
 const blockFlag = args.indexOf('--block')
@@ -57,7 +57,9 @@ const show = (steps) => {
 
 let steps
 let ok
-if (blockFile || packBlock) {
+let deed = null
+const isDeed = receipt.payload.schema === DEED_SCHEMA
+if ((blockFile || packBlock) && !isDeed) {
   // a block you already hold: check the receipt, then check that block against it, offline
   const r = await checkReceipt(receipt.bw, receipt.payload)
   steps = [{ id: 'receipt', label: 'The receipt is sound and the pet\'s signature is the pet\'s', status: r.ok ? 'pass' : 'fail', detail: r.ok ? `Signed by ${r.summary.address}.` : r.why }]
@@ -71,10 +73,13 @@ if (blockFile || packBlock) {
   const v = await verifyReceipt(receipt)
   steps = v.steps
   ok = v.ok
+  deed = v.deed ?? null
 }
 
-console.log('A pet\'s witness receipt:')
+console.log(isDeed ? 'A deed signed by a pet\'s Archivist:' : 'A pet\'s witness receipt:')
 show(steps)
+if (deed) console.log(`
+  ${describeDeed(deed)}`)
 const failed = steps.some((s) => s.status === 'fail')
 console.log(ok ? '\nEvery check holds.' : failed ? '\nA check FAILED: this receipt is not what it claims.' : '\nCould not be confirmed (a check could not be run). That is not a verdict on the receipt.')
 process.exit(ok ? 0 : failed ? 1 : 2)

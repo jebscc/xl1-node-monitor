@@ -1,0 +1,151 @@
+{
+ "priv": "3333333333333333333333333333333333333333333333333333333333333333",
+ "address": "5cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb",
+ "receipts": [
+  {
+   "bw": {
+    "addresses": [
+     "5cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb"
+    ],
+    "payload_hashes": [
+     "04e935ab790d49e1e172444ff7190f7b12d468e13cbebc779ea236a5e2a4f259"
+    ],
+    "payload_schemas": [
+     "com.jimtheexplorer.pet.deed"
+    ],
+    "previous_hashes": [
+     null
+    ],
+    "schema": "network.xyo.boundwitness",
+    "$signatures": [
+     "e7f08dabff1250cdb134277a5cc79cdcf2e88d3e4e756384aaa37c788dfdcc47290e04badece2316fdc795016201c7ccf734c2072325ffd183f2da3834918c0b"
+    ]
+   },
+   "payload": {
+    "schema": "com.jimtheexplorer.pet.deed",
+    "v": 1,
+    "kind": "bought",
+    "seenAt": 1792333874,
+    "item": "kite",
+    "price": 40
+   }
+  },
+  {
+   "bw": {
+    "addresses": [
+     "5cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb"
+    ],
+    "payload_hashes": [
+     "0d1cd109f6eaa9aa27fbd08b137b7feaaf0944be72fd44dc9f3383c1fa27c54b"
+    ],
+    "payload_schemas": [
+     "com.jimtheexplorer.pet.deed"
+    ],
+    "previous_hashes": [
+     "202238b1baab2930520ff911e4ac9a2387b91793f914b7ab80e683bffc20e88c"
+    ],
+    "schema": "network.xyo.boundwitness",
+    "$signatures": [
+     "c3aac75ab4fa547c2c7910529e487cc5625de5ec7cad8ee32763d90753a96e88632fe117a12403ca4e310713f3b4e6c62036283621f2f04c98553ef354bc09bc"
+    ]
+   },
+   "payload": {
+    "schema": "com.jimtheexplorer.pet.deed",
+    "v": 1,
+    "kind": "milestone",
+    "seenAt": 1792333875,
+    "stamp": "first_witness",
+    "value": 1
+   }
+  },
+  {
+   "bw": {
+    "addresses": [
+     "5cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb"
+    ],
+    "payload_hashes": [
+     "ee83fe246b05a6d2370dbb16807ea35d148a04066c789b2d88d66ea5fa2ea183"
+    ],
+    "payload_schemas": [
+     "com.jimtheexplorer.pet.deed"
+    ],
+    "previous_hashes": [
+     "e47bbff7fdb664232bdf190661131b97d852fdbc9eab182b15e28a837e882ccb"
+    ],
+    "schema": "network.xyo.boundwitness",
+    "$signatures": [
+     "9f22f2c3f57cc708d8609409b1786561b306db40a3e870518820fc1a5ff679371d7ebf10d90830db5ea60a0e7e487fbe863c49f309634cb662b0807523df18a4"
+    ]
+   },
+   "payload": {
+    "schema": "com.jimtheexplorer.pet.deed",
+    "v": 1,
+    "kind": "gift",
+    "seenAt": 1792333876,
+    "item": "teddy",
+    "to": "abababababababababababababababababababab"
+   }
+  },
+  {
+   "bw": {
+    "addresses": [
+     "5cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb"
+    ],
+    "payload_hashes": [
+     "19cfd304a8f6b32a02d736dff4d1a6288f84f5b1c038562244e5637db71613a2"
+    ],
+    "payload_schemas": [
+     "com.jimtheexplorer.pet.deed"
+    ],
+    "previous_hashes": [
+     "bc5816c9a3b4479e06cdc167f3ab6a875582c5d2d9807350ae141bba05aa73d2"
+    ],
+    "schema": "network.xyo.boundwitness",
+    "$signatures": [
+     "cac62a4cc0bbfa4e598393a185e6163382ba05f3820a88992f5afa1b929f6916761c612808952e124fd322397ebc4ac18e9bea04182a36be824652168d46251a"
+    ]
+   },
+   "payload": {
+    "schema": "com.jimtheexplorer.pet.deed",
+    "v": 1,
+    "kind": "received",
+    "seenAt": 1792333877,
+    "item": "teddy",
+    "from": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "gift": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+   }
+  },
+  {
+   "bw": {
+    "addresses": [
+     "5cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb"
+    ],
+    "payload_hashes": [
+     "4af22c6d16ad9ff6c8b57ab69bd35172ba2e01f960c5fd644e9184cf34a10cd5"
+    ],
+    "payload_schemas": [
+     "com.jimtheexplorer.pet.deed"
+    ],
+    "previous_hashes": [
+     "81a0b61dfda213d103538a26838cda967cdf8e83278ca2740cb90eb870a38387"
+    ],
+    "schema": "network.xyo.boundwitness",
+    "$signatures": [
+     "ebc974dd88ec8e5c5467885beec912bf1ee98baaa4b4ee05716d7f5e9e240b92555facfe6d1c1d47616c78e5cd78528234da0a85a80ee132e54471840b7371cf"
+    ]
+   },
+   "payload": {
+    "schema": "com.jimtheexplorer.pet.deed",
+    "v": 1,
+    "kind": "week",
+    "seenAt": 1792333878,
+    "week": "2026-W42",
+    "receipts": 5,
+    "blocks": 4,
+    "sealed": 2,
+    "anchored": 1,
+    "root": "1212121212121212121212121212121212121212121212121212121212121212"
+   }
+  }
+ ]
+}

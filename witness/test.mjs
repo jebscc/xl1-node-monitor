@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 
-import { bytesToHex, checkBlock, checkReceipt, dataHash, keccak256, recoverAddresses, signedBy } from './witness.js'
+import { bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyReceipt } from './witness.js'
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const load = (n) => readFileSync(join(dir, n), 'utf8')
@@ -101,6 +101,54 @@ await test('a proof pack checks offline from the command line, and a changed blo
   bad.block[0].$signatures[0] = bad.block[0].$signatures[0].split('').reverse().join('')
   assert.equal(run(bad), 1, 'a changed block')
   assert.equal(run({ ...clone(pack), block: json('mainnet-500000.json') }), 1, 'another block')
+})
+
+await test('deeds the SDK made are sound, say what they say, and are not receipts', async () => {
+  const deeds = json('deed-receipts.json')
+  assert.equal(deeds.receipts.length, 5)
+  for (const d of deeds.receipts) {
+    const r = await checkDeed(d.bw, d.payload)
+    assert.equal(r.ok, true, d.payload.kind)
+    assert.equal(r.summary.address, deeds.address)
+    assert.equal((await checkReceipt(d.bw, d.payload)).ok, false, 'a deed is not a block receipt')
+    const v = await verifyReceipt(d, () => { throw new Error('a deed needs no network') })
+    assert.equal(v.ok, true, 'verifyReceipt reads a deed with no network')
+  }
+  assert.equal(describeDeed((await checkDeed(deeds.receipts[0].bw, deeds.receipts[0].payload)).summary), 'Bought kite for 40 marks.')
+  assert.equal((await checkDeed(A0.bw, A0.payload)).ok, false, 'a block receipt is not a deed')
+})
+
+await test('a deed with anything changed is refused', async () => {
+  const [bought, , gift, , week] = json('deed-receipts.json').receipts
+  const cases = [[bought, 'payload', 'price', 1], [bought, 'payload', 'item', 'hoodie'], [bought, 'payload', 'seenAt', 5], [bought, 'payload', 'kind', 'milestone'],
+    [gift, 'payload', 'to', 'ab'.repeat(19)], [week, 'payload', 'root', 'zz'], [week, 'payload', 'week', '2026-W54'], [week, 'bw', 'addresses', ['00'.repeat(20)]], [bought, 'bw', 'previous_hashes', ['cd'.repeat(32)]]]
+  for (const [d, where, field, value] of cases) {
+    const r = clone(d)
+    r[where][field] = value
+    assert.equal((await checkDeed(r.bw, r.payload)).ok, false, `${where}.${field}`)
+  }
+  const extra = clone(bought); extra.payload.extra = 'x'
+  assert.equal((await checkDeed(extra.bw, extra.payload)).ok, false, 'an extra field')
+  const stolen = clone(bought); stolen.bw.$signatures = clone(gift.bw.$signatures)
+  assert.equal((await checkDeed(stolen.bw, stolen.payload)).ok, false, 'a different deed signature')
+})
+
+await test('a deed checks from the command line with no network, and a changed one fails', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const tmp = mkdtempSync(join(tmpdir(), 'deed-'))
+  const run = (d) => {
+    const f = join(tmp, 'deed.json')
+    writeFileSync(f, JSON.stringify(d))
+    return spawnSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'verify.mjs'), f], { encoding: 'utf8' })
+  }
+  const good = json('deed-receipts.json').receipts[0]
+  const ok = run(good)
+  assert.equal(ok.status, 0)
+  assert.match(ok.stdout, /Bought kite for 40 marks/)
+  const bad = clone(good); bad.payload.price = 1
+  assert.equal(run(bad).status, 1)
 })
 
 if (failures) {

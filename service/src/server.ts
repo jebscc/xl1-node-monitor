@@ -22,6 +22,7 @@ import {
 } from '@xyo-network/xl1-sdk'
 
 import { anchorRecord } from './anchorRecord.ts'
+import { buildDiaryRecord, isDiaryKind } from './diaryRecord.ts'
 import { anchorCost } from './anchorCost.ts'
 import { confirmAnchored } from './confirmAnchored.ts'
 import { getSignerAccount } from './getSignerAccount.ts'
@@ -1864,36 +1865,7 @@ const buildAttestation = (body: Record<string, unknown>, net: string) => {
   return { record, idPayload }
 }
 
-/**
- * A pet's monthly diary, or a month of its witness receipts, committed by a hash alone.
- *
- * `kind` is what the hash is a hash OF -- 'diary' (the default, and all this ever was) or 'witness'. The two
- * are recorded under different app names so a month of one can never be read as a month of the other.
- *
- * The phone keeps the month's line ("2026-09|blocks|xl1|bestDay|hours|est") and
- * sends only its sha256. Nothing about the month is published by anchoring it:
- * the person who holds the line can prove, later, that it said exactly this
- * and was not rewritten after the month ended. Returns null for a malformed
- * request, because whatever this builds is about to be written to a chain.
- */
-const buildDiaryRecord = (body: Record<string, unknown>, net: string) => {
-  const month = typeof body.month === 'string' ? body.month : ''
-  const digest = typeof body.digest === 'string' ? body.digest : ''
-  const producer = typeof body.producer === 'string' ? body.producer.slice(0, 42) : null
-  // A pet's witnessing is recorded by the DAY ("2026-09-18"); a diary only by the month.
-  const witness = body.kind === 'witness'
-  const okPeriod = witness
-    ? /^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/.test(month)
-    : /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
-  if (!okPeriod) return null
-  if (!/^[0-9a-f]{64}$/.test(digest)) return null
-  // v1 named a month; a witness record is v2 and names its `period`, which may be a day or a month.
-  const record = witness
-    ? { app: 'xl1-pet-witness', v: 2, network: net, producer, period: month, digest }
-    : { app: 'xl1-pet-diary', v: 1, network: net, producer, month, digest }
-  const idPayload = { schema: asSchema('network.xyo.id', true), salt: JSON.stringify(record) }
-  return { record, idPayload }
-}
+// The record a diary month, a day of witnessing or a week of deeds becomes lives in diaryRecord.ts, where a test can build one.
 
 app.post('/attest', async (req, res) => {
   if (SIGNING_CONFIGURED) {
@@ -1909,9 +1881,9 @@ app.post('/attest', async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>
   const net = typeof body.network === 'string' && NETWORKS[body.network]
     ? body.network : DEFAULT_NETWORK
-  const monthly = body.kind === 'diary' || body.kind === 'witness'
+  const monthly = isDiaryKind(body.kind)
   const built = monthly ? buildDiaryRecord(body, net) : buildAttestation(body, net)
-  if (!built) return res.status(422).json({ error: 'a monthly record needs a month (yyyy-MM) and a 64-character hex digest' })
+  if (!built) return res.status(422).json({ error: 'a diary, witness or deed record needs a period (a month, or a day for witnessing and deeds) and a 64-character hex digest' })
   const { record, idPayload } = built
   try {
     const contentHash = await PayloadBuilder.hash(idPayload)

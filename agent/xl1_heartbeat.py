@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.48.0"
+AGENT_VERSION = "1.48.1"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -4604,8 +4604,10 @@ def fetch_pending_diary():
     if not BACKEND_URL or not NODE_TOKEN:
         return None
     try:
+        # THE KINDS THIS AGENT UNDERSTANDS, said out loud. The backend lists only what is asked for, so a newer kind
+        # can be queued without an older agent stalling on an entry it does not know.
         url = (BACKEND_URL + "/api/node/diary-pending?"
-               + urllib.parse.urlencode({"node_id": NODE_ID}))
+               + urllib.parse.urlencode({"node_id": NODE_ID, "kinds": "diary,witness,deed"}))
         req = urllib.request.Request(url, headers={"X-Node-Token": NODE_TOKEN})
         with urllib.request.urlopen(req, timeout=30) as resp:
             if not (200 <= resp.status < 300):
@@ -4619,10 +4621,16 @@ def fetch_pending_diary():
     address = entry.get("address")
     # What the hash is a hash OF. A backend that predates kinds sends none, and that is a diary.
     kind = entry.get("kind") or "diary"
-    if kind not in ("diary", "witness"):
+    if kind not in ("diary", "witness", "deed"):
         return None
-    # A pet's witnessing is recorded by the day, a diary only by the month.
-    period = r"\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?" if kind == "witness" else r"\d{4}-(0[1-9]|1[0-2])"
+    # A pet's witnessing is recorded by the day (or a month), a diary only by the month, and a week of deeds by
+    # the week's last day: a day, and only a day.
+    if kind == "witness":
+        period = r"\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?"
+    elif kind == "deed":
+        period = r"\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])"
+    else:
+        period = r"\d{4}-(0[1-9]|1[0-2])"
     if not isinstance(month, str) or not re.fullmatch(period, month):
         return None
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):

@@ -4978,7 +4978,7 @@ def _diary_setup(monkeypatch, tmp_path, entry, anchored=True):
     monkeypatch.setattr(agent, "NODE_NETWORK", "mainnet")
     monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
     monkeypatch.setattr(agent, "ATTEST_SPOOL", str(tmp_path))
-    pending = "http://backend/api/node/diary-pending?node_id=pi-1"
+    pending = "http://backend/api/node/diary-pending?node_id=pi-1&kinds=diary%2Cwitness%2Cdeed"
     posted = []
     answers = {pending: {"entry": entry}}
     answers["http://svc/attest"] = {
@@ -5115,6 +5115,51 @@ def test_a_witness_day_is_anchored_and_a_diary_day_is_not(tmp_path, monkeypatch)
         posted = _diary_setup(monkeypatch, tmp_path, bad)
         agent.anchor_pending_diary()
         assert posted == [], bad
+
+
+def _deed_entry():
+    return {**_good_entry(), "kind": "deed", "month": "2026-09-20"}
+
+
+def test_a_waiting_week_of_deeds_is_anchored_as_a_deed_ledger(tmp_path, monkeypatch):
+    posted = _diary_setup(monkeypatch, tmp_path, _deed_entry())
+    agent.anchor_pending_diary()
+    assert len(posted) == 1 and posted[0]["kind"] == "deed"
+    assert posted[0]["month"] == "2026-09-20" and posted[0]["digest"] == _DIARY_DIGEST
+    kept = list(tmp_path.glob("*.json"))
+    assert len(kept) == 1 and json.loads(kept[0].read_text())["kind"] == "deed"
+    assert (tmp_path / ("deed-2026-09-20-%s.done" % _DIARY_DIGEST[:16])).exists()
+
+
+def test_a_deed_ledger_is_named_by_a_day_and_only_a_day(tmp_path, monkeypatch):
+    for bad in ({**_deed_entry(), "month": "2026-09"},                        # a month is not a week's last day
+                {**_deed_entry(), "month": "2026-09-32"},
+                {**_deed_entry(), "month": "2026-13-01"},
+                {**_deed_entry(), "digest": "ab" * 31},
+                {**_deed_entry(), "address": "zz"}):
+        posted = _diary_setup(monkeypatch, tmp_path, bad)
+        agent.anchor_pending_diary()
+        assert posted == [], bad
+
+
+def test_a_deed_ledger_is_never_paid_for_twice_and_other_marks_do_not_stand_in_for_it(tmp_path, monkeypatch):
+    posted = _diary_setup(monkeypatch, tmp_path, _deed_entry())
+    agent.anchor_pending_diary()
+    agent.anchor_pending_diary()
+    assert len(posted) == 1
+    for f in tmp_path.glob("*.json"):
+        f.unlink()
+    agent.anchor_pending_diary()                  # restarted: only the deed marker is left
+    assert len(posted) == 1
+    (tmp_path / ("deed-2026-09-20-%s.done" % _DIARY_DIGEST[:16])).unlink()
+    (tmp_path / ("witness-2026-09-20-%s.done" % _DIARY_DIGEST[:16])).write_text("x")
+    agent.anchor_pending_diary()
+    assert len(posted) == 2, "a witness mark for the same day must not stop a deed ledger from being anchored"
+
+
+def test_the_agent_asks_for_deeds_by_name_so_an_older_one_is_never_handed_them():
+    src = Path(agent.__file__).read_text(encoding="utf-8")
+    assert '"kinds": "diary,witness,deed"' in src
 
 
 # ---- THE RULE: rewards go to the node's own producer address ----------------------------------------------------

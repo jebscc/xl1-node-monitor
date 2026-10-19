@@ -205,8 +205,27 @@ by the XYO SDK.
 
 **What a deed does not say.** It proves a holder of the Archivist key signed the statement. It does not prove an
 item is rare or valuable, that a giver no longer has what they gave (a phone can be made to forget), that two keys
-are two people, or when. Ownership here is a record, not a market. Deeds are not written to the chain by this
-version; a week's `root` is the part that could be.
+are two people, or when. Ownership here is a record, not a market.
+
+### The deed ledger: a week of deeds on the chain, if the operator turns it on
+
+A deed's own `root` (in a `week` deed) fingerprints the week's witness receipts, which the daily witness anchor already
+covers. What goes on the chain for deeds is separate: a **deed ledger**, the hashes of the deeds themselves. When an ISO
+week has ended, the phone seals the hash of every deed made in it (as the phone's own calendar sees the week), sorted,
+once each, as one line:
+
+    2026-W42|3|<deed hash>,<deed hash>,<deed hash>
+
+and queues the sha256 of that line, named by the week's last day (the Sunday, `2026-10-18`). It is off unless the person
+turns it on. The person's own node writes it on the chain with its own wallet, under the app name `xl1-pet-deed`:
+
+    { "app": "xl1-pet-deed", "v": 1, "network": "...", "producer": "0x...", "period": "2026-10-18", "digest": "<sha256 of the line>" }
+
+Anyone holding the deeds can rebuild the line from their hashes, hash it, and compare. A match shows that those deeds
+existed by the time of the anchor and were not rewritten afterwards. That is all it shows: it does not make an item rare
+or valuable, it does not show that a giver gave up what they gave, and it covers only the deeds the phone still held
+when it sealed the week. The same period can also carry a daily witness anchor (`xl1-pet-witness`); the two are
+different records under different app names and never stand in for each other.
 
 ## Making your own pet
 

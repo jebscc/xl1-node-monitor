@@ -265,6 +265,11 @@ day, and a day is closed once and never reopened.
 the anchor and was not made up afterwards. The receipt itself is still just a pet's signed statement about a block, and the
 block is checked against XL1's own files when it arrives.
 
+**What the server keeps.** A day's batch (its root and the receipt hashes it was built from) is kept for good, and every proof
+is made from it. The signed receipt itself is kept for 90 days after its day is on the chain and then deleted; a receipt
+whose day never reached the chain is kept. After that a proof can still be made from the batch for a hash someone already
+holds, but the server can no longer hand back the receipt, so keep yours.
+
 **What it does not show.** That the server kept EVERY receipt it was sent: a receipt left out has no proof, its pet would see
 that, and nothing else would. That a batch contains only honest pets: anyone can make a pet key, so a count of receipts is
 a count of keys and nothing about people. And it says nothing about which pets are the same person.

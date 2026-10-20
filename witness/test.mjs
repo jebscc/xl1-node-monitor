@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 
-import { bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyReceipt } from './witness.js'
+import { batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const load = (n) => readFileSync(join(dir, n), 'utf8')
@@ -149,6 +149,50 @@ await test('a deed checks from the command line with no network, and a changed o
   assert.match(ok.stdout, /Bought kite for 40 marks/)
   const bad = clone(good); bad.payload.price = 1
   assert.equal(run(bad).status, 1)
+})
+
+await test('sentinel batches: the roots and proofs agree with the vectors made by the server code', async () => {
+  const v = json('batch-vectors.json')
+  assert.equal(v.cases.length, 9)
+  for (const c of v.cases) {
+    assert.equal(await batchRoot(c.leaves), c.root)
+    for (const [leaf, steps] of Object.entries(c.proofs)) assert.equal(await verifyBatchProof(leaf, steps, c.root), true, leaf)
+  }
+})
+
+await test('sentinel batches: one receipt is its own leaf, and two are hashed together by hand', async () => {
+  const sha = async (b) => new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', b))
+  const a = '11'.repeat(32), b = '22'.repeat(32)
+  assert.equal(await batchRoot([a]), bytesToHex(await sha(Uint8Array.from([0, ...Buffer.from(a, 'hex')]))))
+  const la = await sha(Uint8Array.from([0, ...Buffer.from(a, 'hex')])), lb = await sha(Uint8Array.from([0, ...Buffer.from(b, 'hex')]))
+  assert.equal(await batchRoot([b, a, a]), bytesToHex(await sha(Uint8Array.from([1, ...la, ...lb]))), 'any order, each once')
+  assert.notEqual(bytesToHex(await batchLeaf(a)), bytesToHex(await sha(Buffer.from(a, 'hex'))), 'a leaf is not a bare hash')
+})
+
+await test('sentinel batches: a proof that has been touched, or is for another receipt or another root, is refused', async () => {
+  const c = json('batch-vectors.json').cases[8]
+  const [leaf, other] = Object.keys(c.proofs)
+  const steps = c.proofs[leaf]
+  assert.equal(await verifyBatchProof(leaf, steps, c.root), true)
+  assert.equal(await verifyBatchProof(other, steps, c.root), false, "somebody else's proof")
+  const flipped = clone(steps); flipped[0].hash = flipped[0].hash.slice(0, -1) + (flipped[0].hash.endsWith('0') ? '1' : '0')
+  assert.equal(await verifyBatchProof(leaf, flipped, c.root), false, 'a digit changed')
+  const swapped = clone(steps); swapped[0].side = swapped[0].side === 'L' ? 'R' : 'L'
+  assert.equal(await verifyBatchProof(leaf, swapped, c.root), false, 'a step on the wrong side')
+  assert.equal(await verifyBatchProof(leaf, steps.slice(1), c.root), false, 'a step missing')
+  assert.equal(await verifyBatchProof(leaf, steps, json('batch-vectors.json').cases[7].root), false, "another batch's root")
+})
+
+await test('sentinel batches: anything that is not a proof is refused and never throws', async () => {
+  const c = json('batch-vectors.json').cases[2]
+  const leaf = c.leaves[0]
+  for (const bad of [null, 'x', 5, {}, [null], [{}], [{ side: 'X', hash: leaf }], [{ side: 'L', hash: 'zz' }], [{ side: 'L' }], Array(100).fill({ side: 'L', hash: leaf })]) {
+    assert.equal(await verifyBatchProof(leaf, bad, c.root), false)
+  }
+  assert.equal(await verifyBatchProof('nope', [], c.root), false)
+  assert.equal(await verifyBatchProof(leaf, [], 'nope'), false)
+  await assert.rejects(() => batchRoot([]))
+  await assert.rejects(() => batchLeaf(leaf.toUpperCase()))
 })
 
 if (failures) {

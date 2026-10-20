@@ -227,6 +227,48 @@ or valuable, it does not show that a giver gave up what they gave, and it covers
 when it sealed the week. The same period can also carry a daily witness anchor (`xl1-pet-witness`); the two are
 different records under different app names and never stand in for each other.
 
+## Sentinel batches: many pets, one fingerprint a day
+
+A pet whose owner runs no node and has no account (a **sentinel**) still signs its receipts. It sends them to one
+server, which keeps them, and once a UTC day has ended folds the hashes of that day's receipts into a single Merkle root.
+One of the crew's nodes writes the root on the chain with its own wallet. The cost is one small anchor a day however many
+pets there were, and no phone ever holds a wallet or a key that can spend.
+
+**The tree.** Take the day's receipt hashes (each 64 lower-case hex characters, the `hash` of the receipt's bound
+witness), sort them, drop repeats, and build:
+
+    leaf = SHA-256( 0x00 || receipt hash, as 32 bytes )
+    node = SHA-256( 0x01 || left || right )
+
+Pair neighbours left to right at each level. An odd one out at a level is carried up unchanged (it is not paired with
+itself). The single value left is the **root**. The two prefix bytes keep a leaf from ever being read as a node.
+
+**A proof** that a receipt is in a batch is the list of siblings met on the way up, bottom to top, each marked with the side
+it stands on:
+
+    [ { "side": "L", "hash": "..." }, { "side": "R", "hash": "..." }, ... ]
+
+Start from the receipt's leaf; at each step hash `sibling || current` if the side is `"L"`, else `current || sibling`; the
+result after the last step must equal the root. A batch of one has an empty proof. `witness.js` has `batchRoot`,
+`batchLeaf` and `verifyBatchProof`, and `fixtures/batch-vectors.json` has batches of one to nine receipts with every proof,
+made by the server's own code and checked against hand-computed hashes and by the JavaScript here and the phone's Kotlin.
+
+**On the chain.** The node records, as it does for a diary month or a week of deeds:
+
+    { "app": "xl1-pet-batch", "v": 1, "network": "...", "producer": "0x...", "period": "2026-10-19", "digest": "<the root>" }
+
+`period` is the UTC day the batch covers (the day the server RECEIVED each receipt, not the day its pet saw the block).
+A day is only batched once it has been over for five minutes, so a receipt sent just after midnight belongs to the next
+day, and a day is closed once and never reopened.
+
+**What it shows.** A root on the chain, and a proof that a receipt is under it, shows the receipt existed by the time of
+the anchor and was not made up afterwards. The receipt itself is still just a pet's signed statement about a block, and the
+block is checked against XL1's own files when it arrives.
+
+**What it does not show.** That the server kept EVERY receipt it was sent: a receipt left out has no proof, its pet would see
+that, and nothing else would. That a batch contains only honest pets: anyone can make a pet key, so a count of receipts is
+a count of keys and nothing about people. And it says nothing about which pets are the same person.
+
 ## Making your own pet
 
 Build the payload with `PayloadBuilder`, the bound witness with `BoundWitnessBuilder().signer(account).payload(p)`,

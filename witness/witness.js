@@ -369,3 +369,59 @@ export const verifyReceipt = async (receipt, fetchFn = fetch) => {
   push("block", "The block's hash, recomputed from its own content, is the one the receipt names, and its signature is from the address it lists", b.ok ? "pass" : "fail", b.ok ? `Hash ${blockHash}.` : b.why);
   return { steps, ok: b.ok, summary: r.summary, signers: b.signers };
 };
+
+/* ------------------------------------------------------------------------------------------------ sentinel batches */
+/*
+ * Pets with no account of their own send their receipts to one server, which folds a day's receipt hashes into a
+ * Merkle root that a crew node writes on the chain. A pet can then check, with no part of that server, that its receipt
+ * is under the root. The rules (witness/SPEC.md, "Sentinel batches"):
+ *
+ *   leaf  = SHA-256(0x00 || receiptHash)         receiptHash is 64 hex characters (32 bytes)
+ *   node  = SHA-256(0x01 || left || right)
+ *   tree  = the sorted, de-duplicated leaves, paired left to right level by level; an odd one out is carried up
+ *   proof = [{ side: "L" | "R", hash }, ...] from the leaf up: the sibling, and which side it stands on
+ */
+const sha256Bytes = async (bytes) => new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes));
+const concatBytes = (...parts) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+
+/** The leaf for one receipt hash. Throws for anything that is not 64 lower-case hex characters. */
+export const batchLeaf = async (receiptHash) => {
+  if (typeof receiptHash !== "string" || !HEX64.test(receiptHash)) throw new Error("a receipt hash is 64 lower-case hex characters");
+  return sha256Bytes(concatBytes(Uint8Array.of(0), hexToBytes(receiptHash)));
+};
+
+const batchNode = async (left, right) => sha256Bytes(concatBytes(Uint8Array.of(1), left, right));
+
+/** The Merkle root (64 hex) of a set of receipt hashes: sorted, each once. Throws if there are none or one is malformed. */
+export const batchRoot = async (receiptHashes) => {
+  const sorted = [...new Set(receiptHashes)].sort();
+  if (!sorted.length) throw new Error("no receipts, no batch");
+  let level = await Promise.all(sorted.map(batchLeaf));
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) next.push(i + 1 < level.length ? await batchNode(level[i], level[i + 1]) : level[i]);
+    level = next;
+  }
+  return bytesToHex(level[0]);
+};
+
+/** Whether [receiptHash] is under [rootHex] by way of [steps]. False for anything malformed; never throws. */
+export const verifyBatchProof = async (receiptHash, steps, rootHex) => {
+  try {
+    if (!Array.isArray(steps) || steps.length > 64 || typeof rootHex !== "string" || !HEX64.test(rootHex)) return false;
+    let h = await batchLeaf(receiptHash);
+    for (const s of steps) {
+      if (!s || (s.side !== "L" && s.side !== "R") || typeof s.hash !== "string" || !HEX64.test(s.hash)) return false;
+      const sib = hexToBytes(s.hash);
+      h = s.side === "L" ? await batchNode(sib, h) : await batchNode(h, sib);
+    }
+    return bytesToHex(h) === rootHex;
+  } catch {
+    return false;
+  }
+};

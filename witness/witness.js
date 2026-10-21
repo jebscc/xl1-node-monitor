@@ -40,6 +40,10 @@ export const HOSTS = { mainnet: "mainnet.xyo.space", sequence: "sequence.xyo.spa
 export const dataHash = async (obj) =>
   sha256Hex(canonical(Object.fromEntries(Object.entries(obj).filter(([k]) => !k.startsWith("_") && !k.startsWith("$")))));
 
+/** XYO's full hash, the one a transaction is listed by in a block: the same, but with the top level's `$` keys (the signatures) KEPT. */
+export const fullHash = async (obj) =>
+  sha256Hex(canonical(Object.fromEntries(Object.entries(obj).filter(([k]) => !k.startsWith("_")))));
+
 // ------------------------------------------------------------------ keccak-256 (the original padding, not NIST SHA-3's)
 
 const M64 = (1n << 64n) - 1n;
@@ -528,4 +532,106 @@ export const verifyBatchDocument = async (document, fetchPayload, { expectedHash
   if (new Set(receiptHashes).size !== receiptHashes.length) return fail("the same receipt twice");
   if ((await batchRoot(receiptHashes)) !== doc.root) return fail("the root is not the root of these receipts");
   return { ok: true, summary: { hash, network: doc.network, day: doc.day, part: doc.part, final: doc.final, previous: doc.previous, root: doc.root, count: doc.count, receiptHashes } };
+};
+
+/**
+ * READING A DAY OF THE LEDGER BACK FROM THE CHAIN.
+ *
+ * The anchor is one transaction: a bound witness, signed by the node's anchor wallet, that lists two payloads -- a hash payload naming the
+ * id payload, and the id payload whose `salt` is the record (`{app, v, network, producer, period, digest}`). The digest is the manifest's
+ * hash (app `xl1-pet-ledger`) or, for the first day, which was written before manifests existed, the Merkle root (app `xl1-pet-batch`).
+ * A block of the chain lists the transaction by its hash, and that block is signed by its producer.
+ *
+ * [fetchPayload(hash)] reads a payload from the data layer (null if it has none); [fetchBlock(number)] answers the text of a block's static
+ * file (null if there is none). Both are injectable, so the same code runs in a browser, on a command line, and against saved copies.
+ * Like the rest of this file it only VERIFIES. What it cannot show is that the block is the one the network finalised: it shows the block is
+ * signed by the address it names and lists this transaction, which is the same standing a receipt's block has.
+ */
+export const LEDGER_APPS = { "xl1-pet-ledger": "manifest", "xl1-pet-batch": "root" };
+
+export const readAnchor = async (txHash, fetchPayload, fetchBlock) => {
+  const fail = (why) => ({ ok: false, why });
+  if (typeof txHash !== "string" || !HEX64.test(txHash)) return fail("a transaction is named by its 64-character hash");
+  const tx = stripMeta(await fetchPayload(txHash));
+  if (!tx || typeof tx !== "object" || tx.schema !== BW_SCHEMA) return fail("the data layer has no such transaction");
+  if ((await fullHash(tx)) !== txHash) return fail("the data layer returned something else than the transaction asked for");
+  const signed = await dataHash(tx);
+  const { addresses, $signatures: sigs } = tx;
+  if (!Array.isArray(addresses) || !Array.isArray(sigs) || !addresses.length || addresses.length !== sigs.length) return fail("the transaction's addresses and signatures do not pair up");
+  for (let i = 0; i < addresses.length; i += 1) {
+    if (typeof sigs[i] !== "string" || !signedBy(addresses[i], signed, sigs[i])) return fail("the transaction is not signed by the address it names");
+  }
+  const ids = [];
+  const listed = Array.isArray(tx.payload_hashes) ? tx.payload_hashes : [];
+  for (let i = 0; i < listed.length; i += 1) {
+    if (tx.payload_schemas?.[i] !== "network.xyo.id") continue;
+    const p = stripMeta(await fetchPayload(listed[i]));
+    if (!p || (await dataHash(p)) !== listed[i]) return fail("the data layer returned something else than the record asked for");
+    ids.push(p);
+  }
+  if (ids.length !== 1) return fail("the transaction carries one record");
+  let record;
+  try { record = JSON.parse(ids[0].salt); } catch { return fail("the record is not readable"); }
+  if (!record || typeof record !== "object" || !LEDGER_APPS[record.app] || record.v !== 1) return fail("not a pet ledger record");
+  if (!HOSTS[record.network] || !DAY.test(record.period) || !HEX64.test(record.digest)) return fail("the record is malformed");
+  const lo = tx.nbf, hi = tx.exp;
+  if (!isInt(lo) || !isInt(hi) || hi < lo || hi - lo > 1000) return fail("the transaction has no usable window");
+  for (let n = lo; n <= hi + 1; n += 1) {
+    const text = await fetchBlock(n);
+    if (!text) continue;
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { continue; }
+    const bw = Array.isArray(parsed) ? parsed.find((x) => x && x.schema === BW_SCHEMA) : parsed;
+    if (!bw || bw.block !== n || !(bw.payload_hashes || []).includes(txHash)) continue;
+    const seen = await checkBlock(text, n, await dataHash(bw));
+    if (!seen.ok) return fail(`the block that lists it does not check out: ${seen.why}`);
+    return { ok: true, txHash, signer: addresses[0], block: n, blockSigners: seen.signers, record, kind: LEDGER_APPS[record.app] };
+  }
+  return fail("no block in its window lists it (yet)");
+};
+
+/**
+ * A whole day: the anchor, then -- for a manifest -- the manifest read back from the data layer by the hash the chain committed, and every
+ * receipt in it checked. A root-only day is reported as such: its receipts are not on the data layer, so only the anchor can be shown.
+ */
+export const verifyLedgerDay = async (txHash, fetchPayload, fetchBlock) => {
+  const anchor = await readAnchor(txHash, fetchPayload, fetchBlock);
+  if (!anchor.ok) return anchor;
+  if (anchor.kind === "root") return { ...anchor, batch: null };
+  const manifest = await fetchPayload(anchor.record.digest);
+  if (!manifest) return { ok: false, why: "the manifest the chain committed is not on the data layer", anchor };
+  const batch = await verifyBatchDocument(manifest, fetchPayload, { expectedHash: anchor.record.digest });
+  if (!batch.ok) return { ok: false, why: batch.why, anchor };
+  if (batch.summary.day !== anchor.record.period || batch.summary.network !== anchor.record.network) return { ok: false, why: "the manifest is for another day or network than the record says", anchor };
+  return { ...anchor, batch: batch.summary };
+};
+
+/**
+ * Walks the ledger back from a manifest, by the `previous` each one names, and says what it found: { ok, chain, complete, why }.
+ * [chain] is newest first, each { digest, day, part, final }. [complete] is true only when the walk reached a manifest that names nothing
+ * before it -- the start. A manifest that is named but not on the data layer is a GAP, and the walk stops there saying so (`why`, `gapAt`):
+ * a missing day, or a data layer that lost one. Each manifest is checked against the hash that named it, so none can be swapped, and the
+ * order is checked: a part follows the part before it of the same day, and a new day follows a finished earlier one. Receipts are not
+ * re-checked here (verifyBatchDocument does that, for one manifest); this is the shape of the whole ledger.
+ */
+export const walkLedger = async (digest, fetchPayload, { limit = 400 } = {}) => {
+  const chain = [];
+  let want = digest;
+  let later = null;
+  for (let i = 0; i < limit && want; i += 1) {
+    if (typeof want !== "string" || !HEX64.test(want)) return { ok: false, chain, complete: false, why: "a manifest is named by its 64-character hash" };
+    const got = stripMeta(await fetchPayload(want));
+    if (!got) return { ok: true, chain, complete: false, gapAt: want, why: later ? `the manifest for the day before ${later.day} is not on the data layer` : "the newest manifest is not on the data layer" };
+    if (!got || got.schema !== BATCH_SCHEMA || (await dataHash(got)) !== want) return { ok: false, chain, complete: false, why: "the data layer returned something else than the manifest asked for" };
+    if (!DAY.test(got.day) || !isInt(got.part) || typeof got.final !== "boolean") return { ok: false, chain, complete: false, why: "a manifest in the chain is malformed" };
+    if (later) {
+      const sameDay = got.day === later.day;
+      if (sameDay && !(later.part === got.part + 1 && got.final === false)) return { ok: false, chain, complete: false, why: `the parts of ${got.day} do not follow one another` };
+      if (!sameDay && !(got.day < later.day && got.final === true && later.part === 1)) return { ok: false, chain, complete: false, why: `${later.day} does not follow ${got.day}` };
+    }
+    chain.push({ digest: want, day: got.day, part: got.part, final: got.final });
+    later = got;
+    want = got.previous;
+  }
+  return { ok: true, chain, complete: !want, ...(want ? { why: "stopped at the limit" } : {}) };
 };

@@ -1,0 +1,59 @@
+{
+ "network": "mainnet",
+ "tx": "66db40c39c1057f10558404e4dd16488025b90322880a53303200cf0e3dd0d4b",
+ "payloads": {
+  "66db40c39c1057f10558404e4dd16488025b90322880a53303200cf0e3dd0d4b": {
+   "$signatures": [
+    "89307b78ecc956637a2e5f89467c8e7e0c09e8652d77620d25f05c79c368226a0b64d1b6dc6a07b99ac415f028a16430e21c7ab4daacb714c074974b620c5036"
+   ],
+   "chain": "319e667ced10452a117472811130444ded357f26",
+   "fees": {
+    "base": "e8d4a51000",
+    "gasLimit": "e8d4a51000",
+    "gasPrice": "02540be400",
+    "priority": "00"
+   },
+   "nbf": 1846122,
+   "exp": 1846132,
+   "from": "c6fcc91bd2b4aff1d803792c7b8a9ab3c8435a6f",
+   "script": [
+    "elevate|61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2"
+   ],
+   "addresses": [
+    "c6fcc91bd2b4aff1d803792c7b8a9ab3c8435a6f"
+   ],
+   "payload_hashes": [
+    "61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2",
+    "4a4b74935cdec1ca2a1361db2b0beb29ac8866d6b5c5c31ae29307e7d28063e3"
+   ],
+   "payload_schemas": [
+    "network.xyo.hash",
+    "network.xyo.id"
+   ],
+   "previous_hashes": [
+    "cf7f81b545a5afde4764ff1099fd5e1597556c1af8f672c43296b5aafc069151"
+   ],
+   "schema": "network.xyo.boundwitness",
+   "_dataHash": "e6d2a92c706932b6cf795e7b7029850e11437df5bc60c02a8a0011aac30be028",
+   "_hash": "66db40c39c1057f10558404e4dd16488025b90322880a53303200cf0e3dd0d4b",
+   "_sequence": "000001a15bc6f4f800000002e3dd0d4b"
+  },
+  "61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2": {
+   "hash": "4a4b74935cdec1ca2a1361db2b0beb29ac8866d6b5c5c31ae29307e7d28063e3",
+   "schema": "network.xyo.hash",
+   "_dataHash": "61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2",
+   "_hash": "61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2",
+   "_sequence": "000001a15bc6f4f800000000eabb25c2"
+  },
+  "4a4b74935cdec1ca2a1361db2b0beb29ac8866d6b5c5c31ae29307e7d28063e3": {
+   "salt": "{\"app\":\"xl1-pet-batch\",\"v\":1,\"network\":\"mainnet\",\"producer\":\"a6567633ac83a7017f3a2ef20fbbed890a2adae9\",\"period\":\"2026-10-20\",\"digest\":\"cf8fcd2917ce858bdd3368936ec75fb45691a21a1d70e10ce0ce56fd988d576e\"}",
+   "schema": "network.xyo.id",
+   "_dataHash": "4a4b74935cdec1ca2a1361db2b0beb29ac8866d6b5c5c31ae29307e7d28063e3",
+   "_hash": "4a4b74935cdec1ca2a1361db2b0beb29ac8866d6b5c5c31ae29307e7d28063e3",
+   "_sequence": "000001a15bc6f4f800000001d28063e3"
+  }
+ },
+ "blocks": {
+  "1846124": "[{\"schema\":\"network.xyo.boundwitness\",\"addresses\":[\"2152e6aec996742fb6e52ae1aad87bd44f2ccc91\"],\"payload_hashes\":[\"6d2d98b52da6a9c0441120fb3f9bf80ddf5de1f66da16ea475f51c25c9764946\",\"66db40c39c1057f10558404e4dd16488025b90322880a53303200cf0e3dd0d4b\",\"3ac3c9a6d937a428c5fc741d685b90049296b465bb7236f2e829b4a47d441239\",\"e15f7abef906145748e2e9361319e03561e000d9ca5084c8c1474b7c52135511\",\"9c9edbc0ba3741b81ec1c4809c6f73f64ff72136c93e0f5002bdfaed6469e910\",\"7491f7515958811cb3207e04a1e3eb72b65889b0e6522e449c026203f673c20e\",\"61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2\"],\"payload_schemas\":[\"network.xyo.boundwitness\",\"network.xyo.boundwitness\",\"network.xyo.transfer\",\"network.xyo.transfer\",\"network.xyo.transfer\",\"network.xyo.time\",\"network.xyo.hash\"],\"previous_hashes\":[\"e62fde87d868dc561404f6d79c2af387b68d8f9aec3c18856238292928de022d\"],\"$signatures\":[\"e7b65e740b000aeef56eedcb0960397c6f3f5f7b740465c3298f7b48cf1b6ad018f5a267d15e60a74313cbc6bef9eaf4504285dcfdaed82e24040ff3aaae6300\"],\"block\":1846124,\"chain\":\"319e667ced10452a117472811130444ded357f26\",\"previous\":\"ea547349168620fc2129c951e57ad81989c62515662b6a74226b15592c3999a9\",\"protocol\":1003000,\"step_hashes\":[\"ea547349168620fc2129c951e57ad81989c62515662b6a74226b15592c3999a9\",\"5ac6e5b8d3e2106644c5cdf0c9efdfecf095471f4d60e9668d50e7ea085246f1\",\"43d563b24a8490499c02aa692cb95a5b181f8cb06c9c80388febd5793b0436d6\",\"933872415daef0b0ed929f034c56ffcbfbd6aff157ed6422180e6bbadec80f69\",\"9b549b986fd0ba6bd1021382bf4b2a52030995ac2540c9a1382176294ec01693\",\"82676951c3c2992e6b1b6c519b1cc5750ff2906ab69f94b8d27649f944fe5732\"],\"$epoch\":1792541131662,\"_dataHash\":\"db9fdc59e3ba5873a02c2cb304da83d38d317f64fe04eef50290fe89825add9f\",\"_hash\":\"1b53ccfc4083f198b5a398be9dec12a418adc52787a16419ef43747a7fedb095\",\"_sequence\":\"000001a15bc70c82000000077fedb095\"},[{\"schema\":\"network.xyo.boundwitness\",\"$signatures\":[\"299b21a0f67c7a65c3cdd2462d44ca65dd4cab78637aab3040a7bf61c0a049ff38f2dd6d584b14f19c040eacb5a606668ddeb8d8ef4b8d4d6c1b91ddbc5b4d82\"],\"addresses\":[\"f74a8b095f92024106ac612ce575af4ef10527de\"],\"chain\":\"319e667ced10452a117472811130444ded357f26\",\"exp\":1846129,\"fees\":{\"base\":\"e8d4a51000\",\"gasLimit\":\"e8d4a51000\",\"gasPrice\":\"02540be400\",\"priority\":\"00\"},\"from\":\"f74a8b095f92024106ac612ce575af4ef10527de\",\"nbf\":1846119,\"payload_hashes\":[\"19b66784ffcf1bc4ae17ca424220f2c970770f2094cec13dc9c674d3fa168aad\",\"40cf14fde2d35dbec407c1100537bbd68496c1ba90af6c7b0a65cfef61a89092\",\"a7559bc363b4abd59890565da3f4e8260f3897fba272065d83900ce11468f0ac\",\"c9c482b5fdea0d6a588d3484f64ef6112aa1b74da56e3940791f5e6e0e0b52b2\",\"022b17b1b0dd9e5257f8093e9e69402ef252d585ff777ac94733b67888f4d756\",\"7733649f2fde2f17f7c1d7c332fac0428fb09806a725ab208ac2fe8fa7f3315f\",\"8a148e842011f60ae9d4f589b28d2d1cb080f9b78ab2a42da5be911600d2bb8f\",\"143d97c8ab2ace0f27bed10b1b37f8d7e5fae56507ee7434d94aaec71c483da9\",\"53472eb7769e5a5f2a008802945a6a14a5a0c10f6331e7d09de02174fa2e11d9\",\"964492a364c0597f3865428ef889b9814f4aa64b99193a31de8cc629d0bf91eb\",\"1bf13311e004149cbfbe95b3cc9da1c42c8e0201a17b252a3de8dba7355419dd\",\"6ab54c569ff6a1f9da3cfbe9bdb8fbb4e0ba977ea9e268441ce06ab8295c0dd1\",\"6571c97d1acacaae3265c825e6df9e88e8a26ba9644f81941224d50b8c41b33e\",\"60b516a9f0372cf375d409b2c96123661cbcd379022406526d43365077d427bf\",\"bce9853ef5a997a495b165dbbf0a505008745ea31122b709ecfebb5df063deae\",\"96f65b3e3243bc8e9c183d94ddc5254155774ed5344f511d0cb0a94b83c6c0da\",\"d41add67b1ed12c7ab1162b4284f80d7a359c4380fa7029c48eecad88e81c5ce\",\"d0a32db107b669dfdc475f335866c17657c71944382ec2cb99a41a8bd34714cf\",\"0e04db6326dae88978ba447e09b10da0833f771056a54feaa5e47b2bd42bcb12\",\"69a56354bc3444f5b372fa0ffbadb4c06835f13059dde13b5cdd43faa0032d14\",\"765ce94248f6ec5e3cf79224cdc837490b3935e95a6ee90092c05c044d523720\",\"14f090192352550456726e2d61caf4f785d286820a6773f3a029917d5a29be1b\",\"62208aa23490c598285d14fb4a5fc9725e4d42ac67b6ca82d99a44e115b19e80\",\"5ed58723dff8c9a2200370e53381bb55f05e3d66c47dad0839be49dcc4c24de8\"],\"payload_schemas\":[\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.hodl.collected.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.hodl.collected.v1\",\"co.coinapp.hodl.collected.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.geomine.first.of.day.v1\",\"co.coinapp.hodl.collected.v1\",\"co.coinapp.geomine.first.of.day.v1\"],\"previous_hashes\":[\"23aa756c8bdcf2bb9149bb529682ca3119353fcc48d42aea962831b732bdf4b2\"],\"_dataHash\":\"70f17616b48147fe33c972fb3cfc88163c689ca53c2dddd1ed2ba45b37127255\",\"_hash\":\"6d2d98b52da6a9c0441120fb3f9bf80ddf5de1f66da16ea475f51c25c9764946\",\"_sequence\":\"000001a15bc70c8200000000c9764946\"},{\"schema\":\"network.xyo.boundwitness\",\"$signatures\":[\"89307b78ecc956637a2e5f89467c8e7e0c09e8652d77620d25f05c79c368226a0b64d1b6dc6a07b99ac415f028a16430e21c7ab4daacb714c074974b620c5036\"],\"addresses\":[\"c6fcc91bd2b4aff1d803792c7b8a9ab3c8435a6f\"],\"chain\":\"319e667ced10452a117472811130444ded357f26\",\"exp\":1846132,\"fees\":{\"base\":\"e8d4a51000\",\"gasLimit\":\"e8d4a51000\",\"gasPrice\":\"02540be400\",\"priority\":\"00\"},\"from\":\"c6fcc91bd2b4aff1d803792c7b8a9ab3c8435a6f\",\"nbf\":1846122,\"payload_hashes\":[\"61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2\",\"4a4b74935cdec1ca2a1361db2b0beb29ac8866d6b5c5c31ae29307e7d28063e3\"],\"payload_schemas\":[\"network.xyo.hash\",\"network.xyo.id\"],\"previous_hashes\":[\"cf7f81b545a5afde4764ff1099fd5e1597556c1af8f672c43296b5aafc069151\"],\"script\":[\"elevate|61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2\"],\"_dataHash\":\"e6d2a92c706932b6cf795e7b7029850e11437df5bc60c02a8a0011aac30be028\",\"_hash\":\"66db40c39c1057f10558404e4dd16488025b90322880a53303200cf0e3dd0d4b\",\"_sequence\":\"000001a15bc70c8200000001e3dd0d4b\"},{\"schema\":\"network.xyo.transfer\",\"epoch\":1792541131660,\"from\":\"0000000000000000000000000000000000000000\",\"transfers\":{\"1216197612161976121619761216197612161976\":\"172cc11902077e0000\",\"2152e6aec996742fb6e52ae1aad87bd44f2ccc91\":\"029331e6558f0e0000\"},\"_dataHash\":\"3ac3c9a6d937a428c5fc741d685b90049296b465bb7236f2e829b4a47d441239\",\"_hash\":\"3ac3c9a6d937a428c5fc741d685b90049296b465bb7236f2e829b4a47d441239\",\"_sequence\":\"000001a15bc70c82000000027d441239\"},{\"schema\":\"network.xyo.transfer\",\"epoch\":1792541131662,\"from\":\"f74a8b095f92024106ac612ce575af4ef10527de\",\"transfers\":{\"0000000000000000000000000000000000000000\":\"e8d4a51000\",\"2152e6aec996742fb6e52ae1aad87bd44f2ccc91\":\"01214f6d80c800\"},\"_dataHash\":\"e15f7abef906145748e2e9361319e03561e000d9ca5084c8c1474b7c52135511\",\"_hash\":\"e15f7abef906145748e2e9361319e03561e000d9ca5084c8c1474b7c52135511\",\"_sequence\":\"000001a15bc70c820000000352135511\"},{\"schema\":\"network.xyo.transfer\",\"epoch\":1792541131662,\"from\":\"c6fcc91bd2b4aff1d803792c7b8a9ab3c8435a6f\",\"transfers\":{\"0000000000000000000000000000000000000000\":\"e8d4a51000\",\"2152e6aec996742fb6e52ae1aad87bd44f2ccc91\":\"6b2373279000\"},\"_dataHash\":\"9c9edbc0ba3741b81ec1c4809c6f73f64ff72136c93e0f5002bdfaed6469e910\",\"_hash\":\"9c9edbc0ba3741b81ec1c4809c6f73f64ff72136c93e0f5002bdfaed6469e910\",\"_sequence\":\"000001a15bc70c82000000046469e910\"},{\"schema\":\"network.xyo.time\",\"epoch\":1792541131662,\"ethereum\":26237267,\"ethereumHash\":\"5d1d4721768e528dfc30b103ee84be40382c8f12aa2c22a371004c705695d3cd\",\"xl1\":1846123,\"xl1Hash\":\"ea547349168620fc2129c951e57ad81989c62515662b6a74226b15592c3999a9\",\"_dataHash\":\"7491f7515958811cb3207e04a1e3eb72b65889b0e6522e449c026203f673c20e\",\"_hash\":\"7491f7515958811cb3207e04a1e3eb72b65889b0e6522e449c026203f673c20e\",\"_sequence\":\"000001a15bc70c8200000005f673c20e\"},{\"schema\":\"network.xyo.hash\",\"hash\":\"4a4b74935cdec1ca2a1361db2b0beb29ac8866d6b5c5c31ae29307e7d28063e3\",\"_dataHash\":\"61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2\",\"_hash\":\"61fb3b5e2ccb8f60f448ecf97cf963e7765ef4389fe9f8ba62655b97eabb25c2\",\"_sequence\":\"000001a15bc70c8200000006eabb25c2\"}]]"
+ }
+}

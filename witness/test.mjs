@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 
-import { BATCH_MAX, BATCH_SCHEMA, RECEIPT_SCHEMA, buildBatchDocument, filedReceipt, stripMeta, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
+import { walkLedger, readAnchor, verifyLedgerDay, BATCH_MAX, BATCH_SCHEMA, RECEIPT_SCHEMA, buildBatchDocument, filedReceipt, stripMeta, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const load = (n) => readFileSync(join(dir, n), 'utf8')
@@ -305,6 +305,56 @@ await test('a batch: a change to the manifest moves its hash, so the chain\'s co
   const moved = clone(document); moved.final = !moved.final
   assert.notEqual(await dataHash(moved), hash)
   assert.equal(BATCH_SCHEMA, 'com.jimtheexplorer.pet.batch')
+})
+
+const anchorFx = json('anchor-mainnet.json')
+const anchorLayer = (extra = {}) => async (h) => { const p = extra[h] !== undefined ? extra[h] : anchorFx.payloads[h]; return p ? clone(p) : null }
+const anchorBlocks = (blocks = anchorFx.blocks) => async (n) => blocks[String(n)] ?? null
+
+await test('an anchor: the first real mainnet day reads back from the data layer and the block that lists it', async () => {
+  const r = await readAnchor(anchorFx.tx, anchorLayer(), anchorBlocks())
+  assert.equal(r.ok, true, r.why)
+  assert.equal(r.block, 1846124)
+  assert.equal(r.kind, 'root')
+  assert.equal(r.record.period, '2026-10-20')
+  assert.equal(r.record.digest, 'cf8fcd2917ce858bdd3368936ec75fb45691a21a1d70e10ce0ce56fd988d576e')
+  const day = await verifyLedgerDay(anchorFx.tx, anchorLayer(), anchorBlocks())
+  assert.equal(day.ok, true); assert.equal(day.batch, null)
+})
+
+await test('an anchor: every way of tampering with what is read is refused', async () => {
+  const t = clone(anchorFx.payloads[anchorFx.tx]); t.nbf = 1
+  assert.match((await readAnchor(anchorFx.tx, anchorLayer({ [anchorFx.tx]: t }), anchorBlocks())).why, /something else/)
+  const idHash = '4a4b74935cdec1ca2a1361db2b0beb29ac8866d6b5c5c31ae29307e7d28063e3'
+  const id = clone(anchorFx.payloads[idHash]); id.salt = id.salt.replace('cf8fcd', 'cf8fce')
+  assert.match((await readAnchor(anchorFx.tx, anchorLayer({ [idHash]: id }), anchorBlocks())).why, /something else/)
+  assert.match((await readAnchor(anchorFx.tx, async () => null, anchorBlocks())).why, /no such transaction/)
+  assert.match((await readAnchor('zz', anchorLayer(), anchorBlocks())).why, /64-character/)
+  assert.match((await readAnchor(anchorFx.tx, anchorLayer(), anchorBlocks({}))).why, /no block/)
+  const forged = JSON.parse(anchorFx.blocks['1846124']); forged[0].$signatures[0] = '0'.repeat(128)
+  assert.match((await readAnchor(anchorFx.tx, anchorLayer(), anchorBlocks({ 1846124: JSON.stringify(forged) }))).why, /does not check out/)
+  const other = JSON.parse(anchorFx.blocks['1846124']); other[0].payload_hashes = other[0].payload_hashes.filter((h) => h !== anchorFx.tx)
+  assert.match((await readAnchor(anchorFx.tx, anchorLayer(), anchorBlocks({ 1846124: JSON.stringify(other) }))).why, /no block/)
+})
+
+await test('the ledger: walked back by its previous links, whole, with a gap named and a swapped or misordered manifest refused', async () => {
+  const [one, two] = ledger.documents
+  const docs = { [one.hash]: one.document, [two.hash]: two.document }
+  const whole = await walkLedger(two.hash, served(docs))
+  assert.equal(whole.ok, true); assert.equal(whole.complete, true)
+  assert.deepEqual(whole.chain.map((c) => [c.day, c.part, c.final]), [['2026-10-20', 2, true], ['2026-10-20', 1, false]])
+  const gap = await walkLedger(two.hash, served({ [two.hash]: two.document }))
+  assert.equal(gap.ok, true); assert.equal(gap.complete, false); assert.equal(gap.gapAt, one.hash)
+  assert.match(gap.why, /not on the data layer/)
+  const swapped = await walkLedger(two.hash, served({ [two.hash]: two.document, [one.hash]: { ...one.document, count: 99 } }))
+  assert.equal(swapped.ok, false); assert.match(swapped.why, /something else/)
+  const skewed = clone(one.document); skewed.final = true
+  const skewHash = await dataHash(skewed)
+  const after = { ...two.document, previous: skewHash }
+  const afterHash = await dataHash(after)
+  const bad = await walkLedger(afterHash, served({ [afterHash]: after, [skewHash]: skewed }))
+  assert.equal(bad.ok, false); assert.match(bad.why, /do not follow/)
+  assert.equal((await walkLedger('zz', served({}))).ok, false)
 })
 
 if (failures) {

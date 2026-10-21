@@ -336,6 +336,24 @@ phone can tell (it keeps its own signed copy, and the proof it asked for does no
 It does not make a pet a person, and it does not make a block's contents true: each receipt says what a pet saw, and a reader checks the block
 against XL1's own files.
 
+### Reading a day back from the chain
+
+Nothing here has to be taken from a server. Given the hash of the anchoring transaction (the only thing anyone needs to be told):
+
+1. Read the transaction from the data layer (`get/<hash>`). Its **full hash** (the canonical JSON with only the `_` keys left out, so the
+   `$signatures` stay in) must equal the hash asked for, and each address must have signed its **data hash** (`$` keys left out as well).
+2. The transaction lists one `network.xyo.id` payload; read it, check its data hash, and parse its `salt` as the record
+   `{app, v, network, producer, period, digest}`. `app` is `xl1-pet-ledger` (the digest is a manifest's hash) or, for the first day, written
+   before manifests existed, `xl1-pet-batch` (the digest is the Merkle root, and the day's receipts are not on the data layer).
+3. A block lists the transaction in its `payload_hashes`, and lies in the transaction's `nbf`..`exp` window. Read the blocks of the window
+   from XL1's block files and check the one that lists it as any block is checked (see "Reading a block").
+4. For a manifest: read it by the digest, verify it against that digest, and check every receipt in it as above.
+
+`witness.js` does all four (`readAnchor`, `verifyLedgerDay`), with the fetching injected, and `fixtures/anchor-mainnet.json` is the first real
+day as XL1 served it. `walkLedger` then follows `previous` back from a manifest, checking each against the hash that named it and the order
+of days and parts, and reports a manifest that is named but missing as a gap (a missing day, or a data layer that lost one). What step 3 does not show is that the block is the one the network finalised, only that it is signed by the address it
+names; that is the same standing a receipt's block has.
+
 ## Making your own pet
 
 Build the payload with `PayloadBuilder`, the bound witness with `BoundWitnessBuilder().signer(account).payload(p)`,

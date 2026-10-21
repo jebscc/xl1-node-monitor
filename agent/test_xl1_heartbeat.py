@@ -4978,7 +4978,7 @@ def _diary_setup(monkeypatch, tmp_path, entry, anchored=True):
     monkeypatch.setattr(agent, "NODE_NETWORK", "mainnet")
     monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
     monkeypatch.setattr(agent, "ATTEST_SPOOL", str(tmp_path))
-    pending = "http://backend/api/node/diary-pending?node_id=pi-1&kinds=diary%2Cwitness%2Cdeed%2Cbatch"
+    pending = "http://backend/api/node/diary-pending?node_id=pi-1&kinds=diary%2Cwitness%2Cdeed%2Cledger"
     posted = []
     answers = {pending: {"entry": entry}}
     answers["http://svc/attest"] = {
@@ -5159,47 +5159,106 @@ def test_a_deed_ledger_is_never_paid_for_twice_and_other_marks_do_not_stand_in_f
 
 def test_the_agent_asks_for_deeds_by_name_so_an_older_one_is_never_handed_them():
     src = Path(agent.__file__).read_text(encoding="utf-8")
-    assert '"kinds": "diary,witness,deed,batch"' in src
+    assert '"kinds": "diary,witness,deed,ledger"' in src
 
 
-def _batch_entry():
-    return {**_good_entry(), "kind": "batch", "month": "2026-09-20"}
+def _ledger_entry():
+    return {**_good_entry(), "kind": "ledger", "month": "2026-09-20"}
 
 
-def test_a_waiting_days_batch_of_sentinel_receipts_is_anchored_as_a_batch(tmp_path, monkeypatch):
-    posted = _diary_setup(monkeypatch, tmp_path, _batch_entry())
+_LEDGER_BATCH = {"document": {"schema": "com.jimtheexplorer.pet.batch", "day": "2026-09-20", "receipts": ["11" * 32]},
+                 "payloads": {"11" * 32: {"schema": "com.jimtheexplorer.pet.receipt"}}}
+
+
+def _ledger_setup(monkeypatch, tmp_path, entry, batch=_LEDGER_BATCH):
+    posted = _diary_setup(monkeypatch, tmp_path, entry)
+    # the ledger goes to its own route on the service, and the batch is fetched from the backend first
+    real = agent.urllib.request.urlopen
+    fetched = []
+
+    def route(req, timeout=0):
+        url = getattr(req, "full_url", "")
+        if url.startswith("http://backend/api/node/ledger-batch"):
+            fetched.append(url)
+            if batch is None:
+                raise agent.urllib.error.URLError("down")
+            return _FakeResponse(batch)
+        if url == "http://svc/attest-ledger":
+            posted.append(json.loads(req.data.decode()))
+            return _FakeResponse({"anchored": True, "network": "mainnet", "contentHash": "c" * 64, "txHash": "d" * 64,
+                                  "attestedBy": "e" * 40, "payload": {"schema": "network.xyo.id", "salt": "{}"}})
+        return real(req, timeout=timeout)
+    monkeypatch.setattr(agent.urllib.request, "urlopen", route)
+    return posted, fetched
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self.status, self._body = 200, json.dumps(body).encode()
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_a_waiting_day_of_the_ledger_is_fetched_from_the_backend_and_anchored_on_the_services_own_route(tmp_path, monkeypatch):
+    posted, fetched = _ledger_setup(monkeypatch, tmp_path, _ledger_entry())
+    posted.clear()
     agent.anchor_pending_diary()
-    assert len(posted) == 1 and posted[0]["kind"] == "batch"
-    assert posted[0]["month"] == "2026-09-20" and posted[0]["digest"] == _DIARY_DIGEST
+    assert len(fetched) == 1 and "day=2026-09-20" in fetched[0] and "node_id=pi-1" in fetched[0]
+    assert len(posted) == 1
+    sent = posted[0]
+    assert sent["kind"] == "ledger" and sent["month"] == "2026-09-20" and sent["digest"] == _DIARY_DIGEST
+    assert sent["document"] == _LEDGER_BATCH["document"] and sent["payloads"] == _LEDGER_BATCH["payloads"]
     kept = list(tmp_path.glob("*.json"))
-    assert len(kept) == 1 and json.loads(kept[0].read_text())["kind"] == "batch"
-    assert (tmp_path / ("batch-2026-09-20-%s.done" % _DIARY_DIGEST[:16])).exists()
+    assert len(kept) == 1 and json.loads(kept[0].read_text())["kind"] == "ledger"
+    assert (tmp_path / ("ledger-2026-09-20-%s.done" % _DIARY_DIGEST[:16])).exists()
 
 
-def test_a_batch_is_named_by_a_day_and_only_a_day(tmp_path, monkeypatch):
-    for bad in ({**_batch_entry(), "month": "2026-09"},
-                {**_batch_entry(), "month": "2026-09-32"},
-                {**_batch_entry(), "month": "2026-13-01"},
-                {**_batch_entry(), "digest": "ab" * 31},
-                {**_batch_entry(), "address": "zz"}):
-        posted = _diary_setup(monkeypatch, tmp_path, bad)
+def test_a_ledger_day_is_named_by_a_day_and_only_a_day(tmp_path, monkeypatch):
+    for bad in ({**_ledger_entry(), "month": "2026-09"},
+                {**_ledger_entry(), "month": "2026-09-32"},
+                {**_ledger_entry(), "month": "2026-13-01"},
+                {**_ledger_entry(), "digest": "ab" * 31},
+                {**_ledger_entry(), "address": "zz"}):
+        posted, fetched = _ledger_setup(monkeypatch, tmp_path, bad)
+        posted.clear()
         agent.anchor_pending_diary()
-        assert posted == [], bad
+        assert posted == [] and fetched == [], bad
 
 
-def test_a_batch_is_never_paid_for_twice_and_a_deed_mark_does_not_stand_in_for_it(tmp_path, monkeypatch):
-    posted = _diary_setup(monkeypatch, tmp_path, _batch_entry())
+def test_a_ledger_day_is_never_paid_for_twice_and_nothing_is_sent_if_the_batch_cannot_be_fetched(tmp_path, monkeypatch):
+    posted, fetched = _ledger_setup(monkeypatch, tmp_path, _ledger_entry())
+    posted.clear()
     agent.anchor_pending_diary()
     agent.anchor_pending_diary()
     assert len(posted) == 1
     for f in tmp_path.glob("*.json"):
         f.unlink()
-    agent.anchor_pending_diary()                  # restarted: only the batch marker is left
+    agent.anchor_pending_diary()                  # restarted: only the marker is left
     assert len(posted) == 1
-    (tmp_path / ("batch-2026-09-20-%s.done" % _DIARY_DIGEST[:16])).unlink()
-    (tmp_path / ("deed-2026-09-20-%s.done" % _DIARY_DIGEST[:16])).write_text("x")
+    for f in tmp_path.glob("*.done"):
+        f.unlink()
+    posted2, fetched2 = _ledger_setup(monkeypatch, tmp_path, _ledger_entry(), batch=None)
+    posted2.clear()
     agent.anchor_pending_diary()
-    assert len(posted) == 2, "a deed mark for the same day must not stop a batch from being anchored"
+    assert posted2 == [], "a batch that could not be fetched is never guessed at"
+
+
+def test_without_a_ledger_route_nothing_is_attempted_and_the_service_url_is_derived_from_the_attest_one(tmp_path, monkeypatch):
+    assert agent._ledger_url() == ""
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/attest")
+    assert agent._ledger_url() == "http://svc/attest-ledger"
+    monkeypatch.setattr(agent, "ATTEST_LEDGER_URL", "http://other/ledger")
+    assert agent._ledger_url() == "http://other/ledger"
+    monkeypatch.setattr(agent, "ATTEST_LEDGER_URL", "")
+    monkeypatch.setattr(agent, "ATTEST_URL", "http://svc/elsewhere")
+    assert agent._ledger_url() == ""
 
 
 # ---- THE RULE: rewards go to the node's own producer address ----------------------------------------------------

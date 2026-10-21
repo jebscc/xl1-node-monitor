@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.48.2"
+AGENT_VERSION = "1.48.3"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -268,6 +268,8 @@ SDK_PACKAGE = "@xyo-network/xl1-sdk"
 # Off unless ATTEST_URL is set, and the service refuses to sign without its own
 # key and token, so this cannot start spending gas by being deployed.
 ATTEST_URL = os.environ.get("XL1_ATTEST_URL", "")
+# The pet ledger's batch is large (a manifest and every receipt), so the service takes it on a route of its own, beside /attest.
+ATTEST_LEDGER_URL = os.environ.get("XL1_ATTEST_LEDGER_URL", "")
 ATTEST_INTERVAL = int(os.environ.get("XL1_ATTEST_INTERVAL", "3600"))
 # Written to disk the moment an anchor succeeds, BEFORE the backend is told.
 # The chain stores only a hash and the gateway will not serve the payload back,
@@ -4607,7 +4609,7 @@ def fetch_pending_diary():
         # THE KINDS THIS AGENT UNDERSTANDS, said out loud. The backend lists only what is asked for, so a newer kind
         # can be queued without an older agent stalling on an entry it does not know.
         url = (BACKEND_URL + "/api/node/diary-pending?"
-               + urllib.parse.urlencode({"node_id": NODE_ID, "kinds": "diary,witness,deed,batch"}))
+               + urllib.parse.urlencode({"node_id": NODE_ID, "kinds": "diary,witness,deed,ledger"}))
         req = urllib.request.Request(url, headers={"X-Node-Token": NODE_TOKEN})
         with urllib.request.urlopen(req, timeout=30) as resp:
             if not (200 <= resp.status < 300):
@@ -4621,14 +4623,14 @@ def fetch_pending_diary():
     address = entry.get("address")
     # What the hash is a hash OF. A backend that predates kinds sends none, and that is a diary.
     kind = entry.get("kind") or "diary"
-    if kind not in ("diary", "witness", "deed", "batch"):
+    if kind not in ("diary", "witness", "deed", "batch", "ledger"):
         return None
     # A pet's witnessing is recorded by the day (or a month), a diary only by the month, and a week of deeds by
     # the week's last day: a day, and only a day.
     if kind == "witness":
         period = r"\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?"
-    elif kind in ("deed", "batch"):
-        # a week of deeds is named by its last day; a day's batch of sentinel receipts by that day (UTC): a day, only a day
+    elif kind in ("deed", "batch", "ledger"):
+        # a week of deeds is named by its last day; a day's batch of sentinel receipts, and a day of the pet ledger, by that day (UTC): a day, only a day
         period = r"\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])"
     else:
         period = r"\d{4}-(0[1-9]|1[0-2])"
@@ -4643,6 +4645,36 @@ def fetch_pending_diary():
         return None            # another chain's month is not this node's to anchor
     return {"month": month, "digest": digest, "kind": kind,
             "address": address.lower().replace("0x", "")}
+
+
+def _ledger_url():
+    """Where this node's service takes a ledger batch: the setting if there is one, else /attest-ledger beside /attest."""
+    if ATTEST_LEDGER_URL:
+        return ATTEST_LEDGER_URL
+    return ATTEST_URL[:-len("/attest")] + "/attest-ledger" if ATTEST_URL.endswith("/attest") else ""
+
+
+def fetch_ledger_batch(day):
+    """The pet ledger's bytes for a finished day, from the backend: {"document": the manifest, "payloads": {hash: filed receipt}}, or None.
+
+    Checked for shape here (the service verifies every receipt and the hash before anything is written), because what this hands
+    on is about to be filed to a data layer and committed in a transaction that cannot be taken back.
+    """
+    try:
+        url = (BACKEND_URL + "/api/node/ledger-batch?"
+               + urllib.parse.urlencode({"node_id": NODE_ID, "day": day}))
+        req = urllib.request.Request(url, headers={"X-Node-Token": NODE_TOKEN})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            got = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    if not isinstance(got, dict) or not isinstance(got.get("document"), dict) or not isinstance(got.get("payloads"), dict):
+        return None
+    if not got["payloads"] or got["document"].get("day") != day:
+        return None
+    return {"document": got["document"], "payloads": got["payloads"]}
 
 
 def _diary_spooled(month, digest, kind="diary"):
@@ -4685,14 +4717,25 @@ def anchor_pending_diary():
         return
     body = {"kind": entry["kind"], "month": entry["month"], "digest": entry["digest"],
             "producer": entry["address"], "network": NODE_NETWORK}
+    target, wait = ATTEST_URL, 120
+    if entry["kind"] == "ledger":
+        # a day of the pet ledger: the batch itself goes to the service, which verifies it, files it, and writes the transaction
+        target, wait = _ledger_url(), 300
+        if not target:
+            _warn_once("ledger-url", "a ledger day is waiting but this node's service has no ledger route (XL1_ATTEST_LEDGER_URL)")
+            return
+        batch = fetch_ledger_batch(entry["month"])
+        if not batch:
+            return
+        body.update(batch)
     headers = {"Content-Type": "application/json"}
     if ATTEST_TOKEN:
         headers["X-Anchor-Token"] = ATTEST_TOKEN
     req = urllib.request.Request(
-        ATTEST_URL, data=json.dumps(body).encode("utf-8"),
+        target, data=json.dumps(body).encode("utf-8"),
         headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=wait) as resp:
             if not (200 <= resp.status < 300):
                 return
             result = json.loads(resp.read().decode("utf-8"))

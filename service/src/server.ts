@@ -12,6 +12,8 @@ import {
   GatewayBuilder,
   HashSchema,
   type HashPayload,
+  createRestDataLakeRunner,
+  createRestDataLakeViewer,
   getRestGateway,
   NetworkDataLakeUrls,
   restGatewayConfigFromEndpoint,
@@ -23,6 +25,7 @@ import {
 
 import { anchorRecord } from './anchorRecord.ts'
 import { buildDiaryRecord, isDiaryKind } from './diaryRecord.ts'
+import { buildLedgerRecord } from './ledgerRecord.ts'
 import { anchorCost } from './anchorCost.ts'
 import { confirmAnchored } from './confirmAnchored.ts'
 import { getSignerAccount } from './getSignerAccount.ts'
@@ -505,7 +508,10 @@ const producerStats = async (
 }
 
 const app = express()
-app.use(express.json({ limit: '256kb' }))
+const smallBody = express.json({ limit: '256kb' })
+// The pet ledger's batch (a manifest and every receipt, up to a thousand of them) is a few hundred kilobytes, so its route has a
+// limit of its own; everything else keeps the small one.
+app.use((req, res, next) => (req.path === '/attest-ledger' ? next() : smallBody(req, res, next)))
 
 // Liveness for the read path, which is all this deployment has. It must NOT
 // require a signer: the Pi runs this with no mnemonic on purpose, so a health
@@ -1918,6 +1924,69 @@ app.post('/attest', async (req, res) => {
     res.json(answer)
   } catch (e) {
     console.error('[xl1] attest failed:', e)
+    res.status(502).json({ error: e instanceof Error ? e.message : String(e) })
+  }
+})
+
+
+/* THE PET LEDGER: write one day's batch.
+ *
+ * What a crew node does for a day the backend has closed (witness/SPEC.md, "The pet ledger on XL1"): verify the whole batch here
+ * (buildLedgerRecord: every receipt's signature, the order, the root, the manifest's hash), file the receipts and the manifest to the
+ * data layer and read the manifest back, then write ONE transaction that commits the manifest's hash. The data layer is a store and
+ * not the record (its runner can delete), so the batch is also archived on disk when XL1_ATTEST_ARCHIVE is set, before the caller is
+ * answered. The same token as /attest, checked before the body is read, because the body is large.
+ */
+const archiveLedger = (manifestHash: string, document: unknown, payloads: unknown) => {
+  if (!ATTEST_ARCHIVE) return
+  try {
+    mkdirSync(ATTEST_ARCHIVE, { recursive: true })
+    writeFileSync(`${ATTEST_ARCHIVE}/${manifestHash}.ledger.json`, JSON.stringify({ document, payloads }), { encoding: 'utf8', mode: 0o644 })
+  } catch (e) {
+    console.error('[xl1] LEDGER WRITTEN BUT NOT ARCHIVED:', manifestHash, e instanceof Error ? e.message : String(e))
+  }
+}
+
+app.post('/attest-ledger', (req, res, next) => {
+  if (SIGNING_CONFIGURED) {
+    if (!ANCHOR_TOKEN) return res.status(503).json({ error: 'Signing is configured but unprotected. Set XL1_ANCHOR_TOKEN to enable /attest-ledger.' })
+    if (!tokenOk(String(req.get('x-anchor-token') ?? ''))) return res.status(401).json({ error: 'invalid anchor token' })
+  }
+  next()
+}, express.json({ limit: '4mb' }), async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>
+  const net = typeof body.network === 'string' && NETWORKS[body.network] ? body.network : DEFAULT_NETWORK
+  const built = await buildLedgerRecord(body, net)
+  if ('why' in built) return res.status(422).json({ error: built.why })
+  const { record, idPayload, document, payloads, manifestHash } = built
+  try {
+    const contentHash = await PayloadBuilder.hash(idPayload)
+    // Without a key this answers and writes nothing, as /attest does: the batch can be exercised and reviewed before gas is spent.
+    if (!SIGNING_CONFIGURED) {
+      return res.json({ anchored: false, reason: 'no signing key configured; verified only', network: net, contentHash, manifestHash, record, payload: idPayload, count: Object.keys(payloads).length })
+    }
+    const lake = NetworkDataLakeUrls[net as keyof typeof NetworkDataLakeUrls]
+    if (!lake) return res.status(503).json({ error: `no data layer is configured for ${net}` })
+    const runner = await createRestDataLakeRunner(lake)
+    const viewer = await createRestDataLakeViewer(lake)
+    // File first, then commit: a transaction whose hash points at nothing is the "Unable to Find Payload" a reader would meet.
+    await runner.insert([...Object.values(payloads), document] as never)
+    const back = (await viewer.get([manifestHash as never]))[0]
+    if (!back) return res.status(502).json({ error: 'the data layer did not return the manifest after it was filed, so nothing was written to the chain' })
+    archiveLedger(manifestHash, document, payloads)
+    const gateway = await getGateway(net)
+    const hashPayload: HashPayload = { schema: HashSchema, hash: contentHash }
+    const [txHash] = await gateway.addPayloadsToChain([hashPayload], [idPayload, document as never])
+    const confirmed = await confirmAnchored(gateway, net, txHash)
+    const account = await getSignerAccount()
+    const answer = {
+      anchored: true, confirmed, network: net, contentHash, manifestHash, record, payload: idPayload,
+      count: Object.keys(payloads).length, txHash, explorerUrl: explorerFor(net).transaction(txHash), attestedBy: account.address,
+    }
+    archiveAttestation(answer, contentHash)
+    res.json(answer)
+  } catch (e) {
+    console.error('[xl1] ledger attest failed:', e)
     res.status(502).json({ error: e instanceof Error ? e.message : String(e) })
   }
 })

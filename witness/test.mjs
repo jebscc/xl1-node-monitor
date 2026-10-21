@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 
-import { batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
+import { BATCH_MAX, BATCH_SCHEMA, buildBatchDocument, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const load = (n) => readFileSync(join(dir, n), 'utf8')
@@ -193,6 +193,75 @@ await test('sentinel batches: anything that is not a proof is refused and never 
   assert.equal(await verifyBatchProof(leaf, [], 'nope'), false)
   await assert.rejects(() => batchRoot([]))
   await assert.rejects(() => batchLeaf(leaf.toUpperCase()))
+})
+
+// ---------------------------------------------------------------------------------------------- the pet ledger: a day's batch, whole
+
+const ledger = json('batch-document.json').documents
+const routeFixture = json('route-receipts.json')
+const allReceipts = [...routeFixture.a.receipts, ...routeFixture.b.receipts]
+
+await test('a batch document: both parts of the fixture verify, against the hash the chain would have committed', async () => {
+  for (const { document, hash } of ledger) {
+    const r = await verifyBatchDocument(document, { expectedHash: hash })
+    assert.equal(r.ok, true, r.why)
+    assert.equal(r.summary.hash, hash)
+    assert.equal(r.summary.count, document.receipts.length)
+  }
+  assert.equal(ledger[1].document.previous, ledger[0].hash, 'part 2 names part 1')
+  assert.equal(ledger[0].document.previous, null)
+})
+
+await test('a batch document: built the same whatever order the receipts come in, in order of their hash, each once', async () => {
+  const forward = await buildBatchDocument({ network: 'mainnet', day: '2026-10-20', receipts: allReceipts })
+  const backward = await buildBatchDocument({ network: 'mainnet', day: '2026-10-20', receipts: [...allReceipts].reverse() })
+  assert.equal(await dataHash(forward), await dataHash(backward))
+  await assert.rejects(() => buildBatchDocument({ network: 'mainnet', day: '2026-10-20', receipts: [allReceipts[0], allReceipts[0]] }), /twice/)
+  await assert.rejects(() => buildBatchDocument({ network: 'mainnet', day: '2026-10-20', receipts: [] }), /at least one/)
+  await assert.rejects(() => buildBatchDocument({ network: 'nowhere', day: '2026-10-20', receipts: allReceipts }), /network/)
+  await assert.rejects(() => buildBatchDocument({ network: 'mainnet', day: '20 Oct', receipts: allReceipts }), /day/)
+  await assert.rejects(() => buildBatchDocument({ network: 'mainnet', day: '2026-10-20', receipts: Array(BATCH_MAX + 1).fill(allReceipts[0]) }), /at most/)
+})
+
+await test('a batch document: any change to it is refused, by name', async () => {
+  const { document, hash } = ledger[0]
+  const refused = async (mutate, why) => {
+    const d = clone(document); mutate(d)
+    const r = await verifyBatchDocument(d)
+    assert.equal(r.ok, false, `should be refused: ${why}`)
+    return r.why
+  }
+  await refused((d) => { d.receipts[0].payload.block += 1 }, 'a receipt altered')
+  await refused((d) => { d.receipts[0].bw.$signatures[0] = '0'.repeat(128) }, 'a signature replaced')
+  await refused((d) => { d.receipts.pop() }, 'a receipt removed (count and root no longer agree)')
+  await refused((d) => { d.receipts.reverse() }, 'receipts out of order')
+  await refused((d) => { d.receipts.push(clone(d.receipts[0])) }, 'a receipt twice')
+  await refused((d) => { d.root = 'ab'.repeat(32) }, 'a root that is not theirs')
+  await refused((d) => { d.count = 9 }, 'a count that is not the number')
+  await refused((d) => { d.day = '2026-13-01' }, 'a day that is not a day')
+  await refused((d) => { d.network = 'sequence' }, 'receipts for another network')
+  await refused((d) => { d.extra = 1 }, 'a field a batch does not have')
+  await refused((d) => { delete d.final }, 'a field missing')
+  await refused((d) => { d.previous = 'zz' }, 'a previous that is not a hash')
+  await refused((d) => { d.v = 2 }, 'a version it does not know')
+  await refused((d) => { d.schema = 'com.example.other' }, 'another schema')
+  await refused((d) => { d.receipts[0].extra = 1 }, 'a receipt with a field it should not have')
+  for (const bad of [null, 'x', 5, [], {}]) assert.equal((await verifyBatchDocument(bad)).ok, false)
+  // the same document, but not the one the chain committed: refused though every receipt in it is fine
+  const other = clone(document); other.part = 3
+  const r = await verifyBatchDocument(other, { expectedHash: hash })
+  assert.equal(r.ok, false)
+  assert.match(r.why, /not the one the chain committed/)
+})
+
+await test('a batch document: a change to the document moves its hash, so the chain\'s commitment pins every byte', async () => {
+  const { document, hash } = ledger[0]
+  assert.equal(await dataHash(document), hash)
+  const moved = clone(document); moved.final = !moved.final
+  assert.notEqual(await dataHash(moved), hash)
+  const sig = clone(document); sig.receipts[0].bw.$signatures[0] = sig.receipts[0].bw.$signatures[0].replace(/.$/, (c) => (c === '0' ? '1' : '0'))
+  assert.notEqual(await dataHash(sig), hash, 'a nested signature is inside the hash too')
+  assert.equal(BATCH_SCHEMA, 'com.jimtheexplorer.pet.batch')
 })
 
 if (failures) {

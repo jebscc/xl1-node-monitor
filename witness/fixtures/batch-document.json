@@ -1,0 +1,136 @@
+{
+ "_about": "Two parts of one day, built by witness.js buildBatchDocument from receipts the XYO SDK signed (route-receipts.json). Part 2 names the hash of part 1. The hashes are checked against the SDK by xl1-service/test-batch-document.ts, so they are not this code agreeing with itself.",
+ "documents": [
+  {
+   "document": {
+    "schema": "com.jimtheexplorer.pet.batch",
+    "v": 1,
+    "network": "mainnet",
+    "day": "2026-10-20",
+    "part": 1,
+    "final": false,
+    "previous": null,
+    "root": "04b07af832b113616271cd16a935522fc368158a15f4132e1df52ee9dec10497",
+    "count": 2,
+    "receipts": [
+     {
+      "bw": {
+       "addresses": [
+        "19e7e376e7c213b7e7e7e46cc70a5dd086daff2a"
+       ],
+       "payload_hashes": [
+        "c6486b03ca687410b2211aea55465ff1b3cdd961ff069650dccc0096ab8dfdd7"
+       ],
+       "payload_schemas": [
+        "com.jimtheexplorer.pet.witness"
+       ],
+       "previous_hashes": [
+        null
+       ],
+       "schema": "network.xyo.boundwitness",
+       "$signatures": [
+        "025a2b9151dc5c400aa48973ec925f804adcc7228ebeac1245f444afea7ba87e5342f4ee0a9c6db942f022e186ec53a2790a354978d81986aac80ba5470504e6"
+       ]
+      },
+      "payload": {
+       "schema": "com.jimtheexplorer.pet.witness",
+       "v": 1,
+       "network": "mainnet",
+       "block": 1000,
+       "blockHash": "5091bda04ce962837ee527acee070f60ca5da3216e21ecf6dabd574838d155e3",
+       "seenAt": 1792333874,
+       "pet": "cat",
+       "verified": [
+        "content-hash",
+        "producer-signature"
+       ]
+      }
+     },
+     {
+      "bw": {
+       "addresses": [
+        "19e7e376e7c213b7e7e7e46cc70a5dd086daff2a"
+       ],
+       "payload_hashes": [
+        "513e639fa8706bb7b7bcfe48a754ff83fa88e8e89708c07a997afae1bbf7c03c"
+       ],
+       "payload_schemas": [
+        "com.jimtheexplorer.pet.witness"
+       ],
+       "previous_hashes": [
+        "39a36447f0881a31e973aa59b8079c6c37cdd21a0b00a7ff420252d75f4c6ce7"
+       ],
+       "schema": "network.xyo.boundwitness",
+       "$signatures": [
+        "f828500e5f4ce2f31286f25d9c276a058be6e858e5aa082288b0f7aac729aae16318708ec5ceaba9cc12ff59492d73deebddc58498e3539ccf022483febfe4b2"
+       ]
+      },
+      "payload": {
+       "schema": "com.jimtheexplorer.pet.witness",
+       "v": 1,
+       "network": "mainnet",
+       "block": 1825700,
+       "blockHash": "5d113ed0836abce69587eb1042e55d6e16f56188289ae5f477f0f85d8ebca475",
+       "seenAt": 1792333874,
+       "pet": "cat",
+       "verified": [
+        "content-hash",
+        "producer-signature"
+       ]
+      }
+     }
+    ]
+   },
+   "hash": "c993489a33e74d17451a3143bd5cdffdb5db4252465b7c4829890fc40557a0dd"
+  },
+  {
+   "document": {
+    "schema": "com.jimtheexplorer.pet.batch",
+    "v": 1,
+    "network": "mainnet",
+    "day": "2026-10-20",
+    "part": 2,
+    "final": true,
+    "previous": "c993489a33e74d17451a3143bd5cdffdb5db4252465b7c4829890fc40557a0dd",
+    "root": "4aded26062fedc39962a5d10a8fd3ed578cc7b40341131c4db49387030407b2b",
+    "count": 1,
+    "receipts": [
+     {
+      "bw": {
+       "addresses": [
+        "1563915e194d8cfba1943570603f7606a3115508"
+       ],
+       "payload_hashes": [
+        "1cc58c113dd0fe81a19a2a98222d2b7697a8e5d82fcf8c1f688f15008f797c20"
+       ],
+       "payload_schemas": [
+        "com.jimtheexplorer.pet.witness"
+       ],
+       "previous_hashes": [
+        null
+       ],
+       "schema": "network.xyo.boundwitness",
+       "$signatures": [
+        "eeb0f2f5bb15a5c4b04ded0abeba362ab4df782acf01b245c75460d1a1ad004f4a9153a79cb311668bedec8ab11d199046f3665a7a4ea369a29a2f44d682b0dd"
+       ]
+      },
+      "payload": {
+       "schema": "com.jimtheexplorer.pet.witness",
+       "v": 1,
+       "network": "mainnet",
+       "block": 1000,
+       "blockHash": "5091bda04ce962837ee527acee070f60ca5da3216e21ecf6dabd574838d155e3",
+       "seenAt": 1792333874,
+       "pet": "slime",
+       "verified": [
+        "content-hash",
+        "producer-signature"
+       ]
+      }
+     }
+    ]
+   },
+   "hash": "479428829713e5edbe183112e020c55dc32c2fc3e15f482f7f5afbfdff64260b"
+  }
+ ]
+}

@@ -425,3 +425,70 @@ export const verifyBatchProof = async (receiptHash, steps, rootHex) => {
     return false;
   }
 };
+
+// ------------------------------------------------------------------ the pet ledger: a day's batch, whole
+
+/*
+ * THE BATCH DOCUMENT. A day's receipts, whole, as one payload: the thing that is filed to XL1's data layer and whose hash a
+ * crew node commits in a transaction. Because the document holds every receipt, anyone who fetches it by that hash can check
+ * every signature themselves: there is no proof to be handed, and nothing to take on a server's word. The rules are in SPEC.md
+ * ("The pet ledger on XL1"). This is the only code that decides what a valid one is, besides the service that writes them.
+ */
+export const BATCH_SCHEMA = "com.jimtheexplorer.pet.batch";
+/** The most receipts one document holds, so a document stays a size a data layer takes (a receipt is about 700 bytes). A bigger day is more parts. */
+export const BATCH_MAX = 1000;
+const DAY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const BATCH_KEYS = ["count", "day", "final", "network", "part", "previous", "receipts", "root", "schema", "v"];
+
+/** The document for one part of a day, built to the rules: receipts in order of their hash, each once, the root and the count worked out. Throws if the rules cannot be met. */
+export const buildBatchDocument = async ({ network, day, part = 1, final = true, previous = null, receipts }) => {
+  if (!HOSTS[network]) throw new Error("unknown network");
+  if (!DAY.test(day)) throw new Error("a day is YYYY-MM-DD");
+  if (!Array.isArray(receipts) || receipts.length === 0) throw new Error("a batch holds at least one receipt");
+  if (receipts.length > BATCH_MAX) throw new Error(`a batch holds at most ${BATCH_MAX} receipts; make another part`);
+  const keyed = await Promise.all(receipts.map(async (r) => ({ r: { bw: r.bw, payload: r.payload }, h: await dataHash(r.bw) })));
+  keyed.sort((a, b) => (a.h < b.h ? -1 : a.h > b.h ? 1 : 0));
+  for (let i = 1; i < keyed.length; i += 1) if (keyed[i].h === keyed[i - 1].h) throw new Error("the same receipt twice");
+  return {
+    schema: BATCH_SCHEMA, v: 1, network, day, part, final, previous,
+    root: await batchRoot(keyed.map((k) => k.h)), count: keyed.length, receipts: keyed.map((k) => k.r),
+  };
+};
+
+/**
+ * Is this a sound batch document? { ok, why, summary }. Fails closed on anything it does not expect. [expectedHash] is the
+ * hash the chain's transaction committed: when given, the document must hash to it. Every receipt inside is checked as a
+ * receipt would be on its own, so a document with one altered or forged receipt is refused whole.
+ */
+export const verifyBatchDocument = async (doc, { expectedHash } = {}) => {
+  const fail = (why) => ({ ok: false, why });
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return fail("a batch is an object");
+  if (!same(Object.keys(doc).sort(), BATCH_KEYS)) return fail("the batch has fields a batch does not, or lacks one");
+  if (doc.schema !== BATCH_SCHEMA) return fail("not a pet batch");
+  if (doc.v !== 1) return fail("unknown version");
+  if (!HOSTS[doc.network]) return fail("unknown network");
+  if (typeof doc.day !== "string" || !DAY.test(doc.day)) return fail("bad day");
+  if (!isInt(doc.part) || doc.part < 1) return fail("bad part");
+  if (typeof doc.final !== "boolean") return fail("bad final");
+  if (doc.previous !== null && !(typeof doc.previous === "string" && HEX64.test(doc.previous))) return fail("bad previous");
+  if (typeof doc.root !== "string" || !HEX64.test(doc.root)) return fail("bad root");
+  if (!Array.isArray(doc.receipts) || !doc.receipts.length) return fail("a batch holds at least one receipt");
+  if (doc.receipts.length > BATCH_MAX) return fail("too many receipts for one batch");
+  if (doc.count !== doc.receipts.length) return fail("the count is not the number of receipts");
+  const hashes = [];
+  for (const r of doc.receipts) {
+    if (!r || typeof r !== "object" || !same(Object.keys(r).sort(), ["bw", "payload"])) return fail("a receipt is a bound witness and a payload");
+    const checked = await checkReceipt(r.bw, r.payload);
+    if (!checked.ok) return fail(`a receipt inside does not check out: ${checked.why}`);
+    if (checked.summary.network !== doc.network) return fail("a receipt is for another network than the batch");
+    hashes.push(checked.summary.receiptHash);
+  }
+  for (let i = 1; i < hashes.length; i += 1) {
+    if (hashes[i] === hashes[i - 1]) return fail("the same receipt twice");
+    if (hashes[i] < hashes[i - 1]) return fail("the receipts are not in order of their hash");
+  }
+  if ((await batchRoot(hashes)) !== doc.root) return fail("the root is not the root of these receipts");
+  const hash = await dataHash(doc);
+  if (expectedHash !== undefined && hash !== expectedHash) return fail("the document is not the one the chain committed");
+  return { ok: true, summary: { hash, network: doc.network, day: doc.day, part: doc.part, final: doc.final, previous: doc.previous, root: doc.root, count: doc.count, receiptHashes: hashes } };
+};

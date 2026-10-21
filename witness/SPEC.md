@@ -276,53 +276,65 @@ a count of keys and nothing about people. And it says nothing about which pets a
 ## The pet ledger on XL1
 
 A root on the chain, and a proof under it, shows a receipt existed. It still asks a reader to be handed the proof, and it leaves the
-receipts themselves with a server. The ledger removes both: **the whole day's receipts are filed to XL1's data layer as one document,
-and the chain commits that document's hash.** Anyone who fetches the document by the hash on the chain can check every receipt
-themselves. There is nothing to be handed and nothing to take on trust.
+receipts themselves with a server. The ledger removes both: **every receipt is filed to XL1's data layer as a payload of its own, one small
+manifest lists them by hash, and the chain commits the manifest's hash.** Anyone who fetches the manifest by the hash on the chain, and
+each receipt by the hash in the manifest, can check every receipt themselves. There is nothing to be handed and nothing to take on trust.
 
-**The record.** One payload, schema `com.jimtheexplorer.pet.batch` (our own namespace; `network.xyo.*` is the Foundation's):
+**The filed receipt.** A payload, schema `com.jimtheexplorer.pet.receipt` (our own namespace; `network.xyo.*` is the Foundation's), that wraps
+a receipt exactly as the pet made it:
+
+    { "schema": "com.jimtheexplorer.pet.receipt", "v": 1, "bw": { ...the bound witness, with its $signatures... }, "payload": { ...the witness payload... } }
+
+**The manifest.** One payload, schema `com.jimtheexplorer.pet.batch`:
 
     {
       "schema": "com.jimtheexplorer.pet.batch", "v": 1,
       "network": "mainnet",            // the chain the receipts' blocks are on, and the chain this is written to
       "day": "2026-10-20",             // the UTC day the receipts were received, as the batcher says; the BLOCK's time is what is signed
       "part": 1, "final": true,        // a day over 1000 receipts is more parts; "final" is true on the last
-      "previous": null,                // the data hash of the batch before this one in the ledger (any day, any part), or null for the first
-      "root": "<64 hex>",              // the Merkle root of the receipt hashes, by the rules above, so a single receipt can still be proved without the whole
+      "previous": null,                // the data hash of the manifest before this one in the ledger (any day, any part), or null for the first
+      "root": "<64 hex>",              // the Merkle root of the receipt hashes (the data hash of each bound witness), by the rules above, so one receipt can still be proved without the rest
       "count": 2,
-      "receipts": [ { "bw": {...}, "payload": {...} }, ... ]    // each receipt exactly as the pet signed it
+      "receipts": ["<64 hex>", ...]    // the filed receipts, by data hash, in ascending order, each once
     }
 
-The receipts are in ascending order of their receipt hash (the data hash of each bound witness), each once. There is no field
-for who wrote the document: the transaction that carries it names its signer, as XYO's rules say, and each receipt names its pet.
+There is no field for who wrote the manifest: the transaction that carries it names its signer, as XYO's rules say, and each receipt names its pet.
 
-**The hash** is XYO's data hash of the whole document (the same rule as a receipt: canonical JSON, the top level's `_` and `$`
-keys left out, keys sorted at every depth). Signatures nested inside the receipts are inside the hash, so a changed byte anywhere
-changes it. `fixtures/batch-document.json` holds two parts of a day, and `xl1-service/test-batch-document.ts` has the XYO SDK
-hash them, so the hash is the SDK's and not this verifier agreeing with itself.
+**The hash** is XYO's data hash (canonical JSON, the top level's `_` and `$` keys left out, keys sorted at every depth), for the manifest and for
+each filed receipt. A filed receipt keeps the pet's `$signatures` nested inside `bw`, where the hash covers them, so a changed byte anywhere, a
+replaced signature included, changes the address. `fixtures/batch-document.json` holds two parts of a day, and `xl1-service/test-batch-document.ts`
+has the XYO SDK hash all of it, so the hashes are the SDK's and not this verifier agreeing with itself.
 
-**On the chain.** A crew node's transaction carries the document as an off-chain payload: the data layer holds the bytes, the
-transaction commits the hash (the default carrier in XYO's chain-data patterns). The block's signed time is "existed by".
+**On the chain.** A crew node's transaction carries the manifest as an off-chain payload: the data layer holds the bytes, the transaction commits
+the hash (the default carrier in XYO's chain-data patterns). The block's signed time is "existed by".
 
-**A verifier** with the document and the hash the chain committed (`verifyBatchDocument(document, { expectedHash })` in
-`witness.js`) checks, in this order, and refuses the whole document at the first that fails:
+**Why a receipt is filed wrapped.** Measured against the mainnet data layer (2026-10-21, `xl1-service/scripts/probe-datalake-insert.ts`):
+it **refuses** a single payload that holds an array of payload-like objects, however small, so receipts are not nested in the manifest; and it
+**drops** the top-level `$signatures` of a bound witness filed on its own, so a receipt cannot be filed as the bare bound witness without losing
+the pet's signature. It keeps an object-valued field exactly, nested signatures and all, which is what the wrapper uses. It accepted payloads of
+100 KB and 1 MB. The data layer returns each payload with `_hash`, `_dataHash` and `_sequence` added; those are the layer's and are left out
+(`stripMeta`) before anything is checked. Its runner can also delete and clear: it is a store, not the record. The chain commits the hash; a
+copy elsewhere is what keeps the bytes available.
 
-1. The record has exactly these fields, a known version and network, a real day, and a count that is the number of receipts, at most 1000.
-2. Every receipt passes the receipt checks on its own (a pet's signature over its own statement), and is for the document's network.
-3. The receipts are in order of their hash and no hash appears twice.
-4. The root is the root of these receipts.
-5. The document's data hash is the hash the chain committed.
+**A verifier** with the manifest, the hash the chain committed, and a way to fetch a payload by hash (`verifyBatchDocument(manifest, fetchPayload,
+{ expectedHash })` in `witness.js`) checks, and refuses the whole batch at the first failure:
 
-And, reading the ledger from the chain: `previous` must name a document the ledger already wrote, so a missing day shows as a
-break in the chain, and only finalized blocks are read.
+1. The manifest has exactly these fields, a known version and network, a real day, a count that is the number listed (at most 1000), and the receipts listed in order, each once, by 64-character hash.
+2. The manifest's data hash is the hash the chain committed.
+3. Each listed receipt is fetched, and what comes back hashes to the address it was fetched by: a data layer cannot hand back something else.
+4. Each is a filed receipt (exactly the four fields, the right schema and version), and passes the receipt checks on its own: a pet's signature over its own statement, for the manifest's network.
+5. No receipt appears twice, and the root is the root of these receipts' hashes.
 
-**What it shows.** Every receipt in a day was signed by its pet, and the whole day existed, unaltered, by the block that committed it.
-A document cannot be altered after the fact, or a receipt added to or removed from it, without its hash changing.
+And, reading the ledger from the chain: `previous` must name a manifest the ledger already wrote, so a missing day shows as a break in the chain,
+and only finalized blocks are read.
 
-**What it does not show.** That the batcher included every receipt it was sent: a receipt left out before batching is in no
-document. A pet's phone can tell (it keeps its own signed copy, and the proof it asked for does not come), and says so, but no
-design with a batcher can prevent it. It does not make a pet a person, and it does not make a block's contents true: each receipt
-says what a pet saw, and a reader checks the block against XL1's own files.
+**What it shows.** Every receipt in a day was signed by its pet, and the whole day existed, unaltered, by the block that committed it. A receipt
+cannot be altered after the fact, or one added or removed, without an address changing.
+
+**What it does not show.** That the batcher included every receipt it was sent: a receipt left out before batching is in no manifest. A pet's
+phone can tell (it keeps its own signed copy, and the proof it asked for does not come), and says so, but no design with a batcher can prevent it.
+It does not make a pet a person, and it does not make a block's contents true: each receipt says what a pet saw, and a reader checks the block
+against XL1's own files.
 
 ## Making your own pet
 

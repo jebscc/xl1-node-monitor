@@ -14,6 +14,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 
 import { walkLedger, readAnchor, verifyLedgerDay, BATCH_MAX, BATCH_SCHEMA, RECEIPT_SCHEMA, buildBatchDocument, filedReceipt, stripMeta, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
 
@@ -355,6 +358,20 @@ await test('the ledger: walked back by its previous links, whole, with a gap nam
   const bad = await walkLedger(afterHash, served({ [afterHash]: after, [skewHash]: skewed }))
   assert.equal(bad.ok, false); assert.match(bad.why, /do not follow/)
   assert.equal((await walkLedger('zz', served({}))).ok, false)
+})
+
+await test('verify-day.mjs: the saved real day passes offline (exit 0), and a tampered copy fails (exit 1), and a bad file is a 2', async () => {
+  const run = (...a) => spawnSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'verify-day.mjs'), ...a], { encoding: 'utf8' })
+  const good = run('--saved', join(dir, 'anchor-mainnet.json'))
+  assert.equal(good.status, 0, good.stdout + good.stderr)
+  assert.match(good.stdout, /block 1846124/)
+  const bad = clone(anchorFx); bad.payloads[anchorFx.tx].nbf = 1
+  const f = join(tmpdir(), `bad-day-${process.pid}.json`)
+  writeFileSync(f, JSON.stringify(bad))
+  assert.equal(run('--saved', f).status, 1)
+  writeFileSync(f, '{"tx":1}')
+  assert.equal(run('--saved', f).status, 2)
+  assert.equal(run('nonsense').status, 2)
 })
 
 if (failures) {

@@ -12,6 +12,7 @@ This directory is the whole of it:
 | `SPEC.md` | this format |
 | `witness.js` | a verifier with **no dependencies**: its own hashing, Keccak-256 and secp256k1 recovery |
 | `verify.mjs` | a command-line checker built on it |
+| `verify-day.mjs` | reads a day of the pet ledger back from XL1 by its transaction hash (`node verify-day.mjs <hash>`), or from a saved copy |
 | `test.mjs` | a self-test against the vectors below |
 | `fixtures/` | vectors made by the XYO SDK, and real mainnet blocks |
 

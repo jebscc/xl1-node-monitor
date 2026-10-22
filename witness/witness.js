@@ -32,6 +32,8 @@ export const SCHEMA = "com.jimtheexplorer.pet.witness";
 export const DEED_SCHEMA = "com.jimtheexplorer.pet.deed";
 export const BW_SCHEMA = "network.xyo.boundwitness";
 export const VERIFIED = ["content-hash", "producer-signature"];
+/** What a CO-WITNESS receipt lists: the same two checks, and that the pet also checked another pet's receipt for the same block. */
+export const COVERIFIED = ["content-hash", "producer-signature", "peer-receipt"];
 export const HOSTS = { mainnet: "mainnet.xyo.space", sequence: "sequence.xyo.space" };
 
 // ------------------------------------------------------------------ hashing
@@ -198,14 +200,39 @@ const HEX40 = /^[0-9a-f]{40}$/;
 const isInt = (v) => Number.isSafeInteger(v);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
+/** The fields every receipt has. A receipt may carry one set of extras (below) and nothing else. */
+const PL_KEYS = ["block", "blockHash", "network", "pet", "schema", "seenAt", "v", "verified"];
+/**
+ * The four kinds of receipt, by the fields they add to PL_KEYS:
+ *   plain      none: one pet looked at a block
+ *   cowitness  of, peer: a second pet checked another pet's receipt for the same block
+ *   call       day, low, high, middle: the Diviner's call of the day's blocks, signed against the newest block when it was made
+ *   result     of, day, low, high, actual, outcome: how that call turned out, naming the call by its hash
+ * Every kind is still a receipt for a block (the block it was signed against), so a batch, a bundle and a ledger hold any of them the same way.
+ */
+const EXTRAS = {
+  cowitness: ["of", "peer"],
+  call: ["day", "high", "low", "middle"],
+  result: ["actual", "day", "high", "low", "of", "outcome"],
+};
+const receiptKind = (payload) => {
+  const extra = Object.keys(payload).filter((k) => !PL_KEYS.includes(k)).sort();
+  if (!extra.length) return "plain";
+  return Object.keys(EXTRAS).find((k) => same(extra, EXTRAS[k])) ?? null;
+};
+const FORECAST_DAY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const FORECAST_MAX = 10_000_000;
+/** What a forecast came to: below its range, above it, or inside. */
+export const forecastOutcome = (actual, low, high) => (actual < low ? "below" : actual > high ? "above" : "inside");
+
 /** Is this a sound receipt? { ok, why, summary }. Fails closed on anything it does not expect. */
 export const checkReceipt = async (bw, payload) => {
   const fail = (why) => ({ ok: false, why });
   if (!bw || typeof bw !== "object" || !payload || typeof payload !== "object") return fail("a receipt is a bound witness and a payload");
   const bwKeys = ["$signatures", "addresses", "payload_hashes", "payload_schemas", "previous_hashes", "schema"];
-  const plKeys = ["block", "blockHash", "network", "pet", "schema", "seenAt", "v", "verified"];
+  const kind = receiptKind(payload);
   if (!same(Object.keys(bw).sort(), bwKeys)) return fail("the bound witness has fields a receipt does not");
-  if (!same(Object.keys(payload).sort(), plKeys)) return fail("the payload has fields a receipt does not");
+  if (!kind) return fail("the payload has fields a receipt does not");
   if (bw.schema !== BW_SCHEMA) return fail("not a bound witness");
   for (const f of ["addresses", "payload_hashes", "payload_schemas", "previous_hashes", "$signatures"]) {
     if (!Array.isArray(bw[f]) || bw[f].length !== 1) return fail("one pet, one payload");
@@ -219,7 +246,25 @@ export const checkReceipt = async (bw, payload) => {
   if (typeof payload.blockHash !== "string" || !HEX64.test(payload.blockHash)) return fail("bad block hash");
   if (!isInt(payload.seenAt) || payload.seenAt <= 0) return fail("no time");
   if (typeof payload.pet !== "string" || !/^[a-z0-9]{1,16}$/.test(payload.pet)) return fail("bad pet");
-  if (!same(payload.verified, VERIFIED)) return fail("the checks are not the ones a witness makes");
+  if (!same(payload.verified, kind === "cowitness" ? COVERIFIED : VERIFIED)) return fail("the checks are not the ones a witness makes");
+  const count = (v) => isInt(v) && v >= 0 && v <= FORECAST_MAX;
+  if (kind === "cowitness") {
+    if (typeof payload.of !== "string" || !HEX64.test(payload.of)) return fail("bad receipt checked");
+    if (typeof payload.peer !== "string" || !HEX40.test(payload.peer)) return fail("bad peer");
+    if (payload.peer === address) return fail("a pet cannot co-witness its own receipt");
+  }
+  if (kind === "call" || kind === "result") {
+    if (typeof payload.day !== "string" || !FORECAST_DAY.test(payload.day)) return fail("bad day");
+    if (!count(payload.low) || !count(payload.high) || payload.low > payload.high) return fail("bad range");
+  }
+  if (kind === "call") {
+    if (!count(payload.middle) || payload.middle < payload.low || payload.middle > payload.high) return fail("the middle is outside the range");
+  }
+  if (kind === "result") {
+    if (typeof payload.of !== "string" || !HEX64.test(payload.of)) return fail("bad call");
+    if (!count(payload.actual)) return fail("bad result");
+    if (payload.outcome !== forecastOutcome(payload.actual, payload.low, payload.high)) return fail("the outcome is not what the range and the result say");
+  }
   const prev = bw.previous_hashes[0];
   if (prev !== null && !(typeof prev === "string" && HEX64.test(prev))) return fail("bad previous hash");
   if (bw.payload_hashes[0] !== (await dataHash(payload))) return fail("the payload is not the one signed");
@@ -229,8 +274,29 @@ export const checkReceipt = async (bw, payload) => {
   if (!signedBy(address, receiptHash, sig)) return fail("the signature is not the pet's");
   return {
     ok: true,
-    summary: { network: payload.network, block: payload.block, blockHash: payload.blockHash, seenAt: payload.seenAt, pet: payload.pet, address, receiptHash, previous: prev },
+    summary: { network: payload.network, block: payload.block, blockHash: payload.blockHash, seenAt: payload.seenAt, pet: payload.pet, address, receiptHash, previous: prev,
+      ...(kind === "plain" ? {} : { kind, ...Object.fromEntries(EXTRAS[kind].map((k) => [k, payload[k]])) }) },
   };
+};
+
+/**
+ * Does [co] really co-witness [peer]? Both must be sound receipts; [co] must be a co-witness, signed by someone other than the pet whose receipt it
+ * checked; it must name exactly that receipt (by hash) and that pet; and it must be about the same block, with the same hash, on the same network.
+ * What this shows: a second key looked at the same block and agreed with the first. It does not show the two keys are two people.
+ */
+export const checkCowitness = async (co, peer) => {
+  const fail = (why) => ({ ok: false, why });
+  const a = await checkReceipt(co?.bw, co?.payload);
+  if (!a.ok) return fail(`the co-witness is not sound: ${a.why}`);
+  const b = await checkReceipt(peer?.bw, peer?.payload);
+  if (!b.ok) return fail(`the receipt it names is not sound: ${b.why}`);
+  if (a.summary.kind !== "cowitness") return fail("that receipt does not co-witness anything");
+  if (b.summary.kind) return fail("only an ordinary receipt is co-witnessed");
+  if (a.summary.of !== b.summary.receiptHash) return fail("it names a different receipt");
+  if (a.summary.peer !== b.summary.address) return fail("it names a different pet");
+  if (a.summary.address === b.summary.address) return fail("a pet cannot co-witness its own receipt");
+  if (a.summary.network !== b.summary.network || a.summary.block !== b.summary.block || a.summary.blockHash !== b.summary.blockHash) return fail("it is about a different block");
+  return { ok: true, summary: { block: a.summary.block, network: a.summary.network, witness: b.summary.address, cowitness: a.summary.address } };
 };
 
 // ------------------------------------------------------------------ the deed
@@ -242,7 +308,10 @@ const DEED_FIELDS = {
   received: ["item", "from", "gift"],
   week: ["week", "receipts", "blocks", "sealed", "anchored", "root"],
   growth: ["pet", "first", "level", "days", "receipts", "bond"],
+  submission: ["receipts", "root"],
 };
+/** A Sentinel's submission names at most this many receipts: one bundle is one phone's hour or two of work, not a firehose. */
+export const SUBMISSION_MAX = 20;
 const SLUG = /^[a-z0-9_]{1,40}$/;
 const WEEK_ID = /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/;
 const COUNT = (v) => isInt(v) && v >= 0;
@@ -272,6 +341,7 @@ export const checkDeed = async (bw, payload) => {
     gift: () => !SLUG.test(payload.item) || !addr(payload.to),
     received: () => !SLUG.test(payload.item) || !addr(payload.from) || !(typeof payload.gift === "string" && HEX64.test(payload.gift)),
     week: () => !(typeof payload.week === "string" && WEEK_ID.test(payload.week)) || !["receipts", "blocks", "sealed", "anchored"].every((k) => COUNT(payload[k])) || !(typeof payload.root === "string" && HEX64.test(payload.root)),
+    submission: () => !isInt(payload.receipts) || payload.receipts < 1 || payload.receipts > SUBMISSION_MAX || !(typeof payload.root === "string" && HEX64.test(payload.root)),
     growth: () => !addr(payload.pet) || !(typeof payload.first === "string" && DAY.test(payload.first)) || !["level", "days", "receipts", "bond"].every((k) => COUNT(payload[k])) || payload.level > 30 || payload.days < 1,
   }[payload.kind]();
   if (bad) return fail(`bad ${payload.kind} deed`);
@@ -288,6 +358,49 @@ export const checkDeed = async (bw, payload) => {
 
 const nice = (slug) => String(slug).replace(/_/g, " ");
 
+/**
+ * Does [result] really settle [call]? Both sound; one a call and the other a result, by the same pet (the Diviner's key); the result names the call by
+ * its hash, for the same day and range; and it was signed at or after the call, against a block no earlier. The result's `actual` is the pet's own count
+ * of that day's blocks: this shows the call was made before the day was counted and scored as it says, not that the count is right.
+ */
+export const checkForecast = async (result, call) => {
+  const fail = (why) => ({ ok: false, why });
+  const r = await checkReceipt(result?.bw, result?.payload);
+  if (!r.ok) return fail(`the result is not sound: ${r.why}`);
+  const c = await checkReceipt(call?.bw, call?.payload);
+  if (!c.ok) return fail(`the call is not sound: ${c.why}`);
+  if (r.summary.kind !== "result") return fail("that receipt is not a result");
+  if (c.summary.kind !== "call") return fail("the receipt it names is not a call");
+  if (r.summary.of !== c.summary.receiptHash) return fail("it settles a different call");
+  if (r.summary.address !== c.summary.address) return fail("a call is settled by the pet that made it");
+  if (r.summary.day !== c.summary.day || r.summary.low !== c.summary.low || r.summary.high !== c.summary.high) return fail("it is for another day or another range");
+  if (r.summary.network !== c.summary.network || r.summary.block < c.summary.block || r.summary.seenAt < c.summary.seenAt) return fail("it was signed before the call");
+  return { ok: true, summary: { day: r.summary.day, low: r.summary.low, high: r.summary.high, actual: r.summary.actual, outcome: r.summary.outcome, pet: r.summary.address } };
+};
+
+/**
+ * Does the submission deed [deed] really name [receipts]? The deed must be sound and be a `submission`; the receipts must be sound, at most
+ * SUBMISSION_MAX of them, each once; and their Merkle root (the sentinel-batch rule, over each receipt's own hash) and count must be the ones the deed
+ * signed. What it shows: the key that signed the deed put its name to exactly these receipts. It shows no more about who that key is.
+ */
+export const checkSubmission = async (deed, receipts) => {
+  const fail = (why) => ({ ok: false, why });
+  const d = await checkDeed(deed?.bw, deed?.payload);
+  if (!d.ok) return fail(`the submission is not sound: ${d.why}`);
+  if (d.summary.kind !== "submission") return fail("that deed is not a submission");
+  if (!Array.isArray(receipts) || receipts.length < 1 || receipts.length > SUBMISSION_MAX) return fail("a submission names between one and " + SUBMISSION_MAX + " receipts");
+  const hashes = [];
+  for (const r of receipts) {
+    const c = await checkReceipt(r?.bw, r?.payload);
+    if (!c.ok) return fail(`a receipt in it is not sound: ${c.why}`);
+    hashes.push(c.summary.receiptHash);
+  }
+  if (new Set(hashes).size !== hashes.length) return fail("the same receipt twice");
+  if (d.summary.receipts !== hashes.length) return fail("the count is not the number of receipts");
+  if (d.summary.root !== (await batchRoot(hashes))) return fail("the root is not the root of those receipts");
+  return { ok: true, summary: { submitter: d.summary.address, receipts: hashes.length, root: d.summary.root } };
+};
+
 /** A deed as one plain sentence, saying only what it says. */
 export const describeDeed = (d) => {
   switch (d.kind) {
@@ -296,6 +409,7 @@ export const describeDeed = (d) => {
     case "gift": return `Gave ${nice(d.item)} to the pet at ${d.to}.`;
     case "received": return `Received ${nice(d.item)} from the pet at ${d.from}, in answer to the gift ${d.gift}.`;
     case "week": return `Week ${d.week}: ${d.receipts} receipt${d.receipts === 1 ? "" : "s"} for ${d.blocks} block${d.blocks === 1 ? "" : "s"}, ${d.sealed} day${d.sealed === 1 ? "" : "s"} sealed, ${d.anchored} on the chain. Its fingerprint is ${d.root}.`;
+    case "submission": return `The Sentinel at ${d.address} submitted ${d.receipts} receipt${d.receipts === 1 ? "" : "s"}, under the root ${d.root}.`;
     case "growth": return `The pet at ${d.pet} reached level ${d.level}: ${d.days} day${d.days === 1 ? "" : "s"} witnessed since ${d.first}, ${d.receipts} receipt${d.receipts === 1 ? "" : "s"}, ${d.bond} bond point${d.bond === 1 ? "" : "s"}. The keeper's own count.`;
     default: return "A deed.";
   }

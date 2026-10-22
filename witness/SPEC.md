@@ -184,7 +184,7 @@ checked; they measure nothing else.
 ## Deeds: what a pet owns and has done
 
 A second schema, `com.jimtheexplorer.pet.deed`, uses the same bound witness, hashing and signing as a receipt.
-A deed is signed by a pet's **Archivist** key, a key that holds nothing, and says one of six things. `seenAt` is
+A deed is signed by a pet's **Archivist** key, a key that holds nothing, and says one of seven things. `seenAt` is
 the phone's own clock, as in a receipt. The payload carries exactly `schema`, `v` (1), `kind`, `seenAt` and the
 fields of its kind; a verifier refuses a payload with any other field.
 
@@ -196,6 +196,7 @@ fields of its kind; a verifier refuses a payload with any other field.
 | `received`  | `item`, `from` (40 hex), `gift` (64 hex: the hash of the gift)  | the item was taken, in answer to that gift |
 | `week`      | `week` (`YYYY-Www`), `receipts`, `blocks`, `sealed`, `anchored` (integers, 0 or more), `root` (64 hex) | what the pets did that ISO week |
 | `growth`    | `pet` (40 hex: the pet's address), `first` (`YYYY-MM-DD`), `level` (0 to 30), `days` (at least 1), `receipts`, `bond` (integers, 0 or more) | the pet reached that level, by the keeper's own running count |
+| `submission`| `receipts` (integer, 1 to 20), `root` (64 hex) | the signer submits those receipts, named by their Merkle root: see "Pets witnessing one another" |
 
 A `growth` deed is made each time a pet's level rises. Its numbers are the keeper's own count of the days a pet has
 witnessed the chain (it needs a receipt that day), its receipts, and the bond with its person; level follows from them
@@ -235,6 +236,56 @@ existed by the time of the anchor and were not rewritten afterwards. That is all
 or valuable, it does not show that a giver gave up what they gave, and it covers only the deeds the phone still held
 when it sealed the week. The same period can also carry a daily witness anchor (`xl1-pet-witness`); the two are
 different records under different app names and never stand in for each other.
+
+## Pets witnessing one another
+
+A receipt a pet signs alone says that one key looked at a block. Two things make a receipt mean more.
+
+**A co-witness.** A pet can check another pet's receipt, and the block it names, for itself, and sign that it did. It is the same
+receipt (same schema, same `network`, `block`, `blockHash`, `seenAt`, `pet`) with two more payload fields and a longer `verified`:
+
+| field      | value |
+|------------|-------|
+| `of`       | 64 hex: the hash (the data hash of the bound witness) of the receipt it checked |
+| `peer`     | 40 hex: the address of the pet that signed that receipt |
+| `verified` | `["content-hash", "producer-signature", "peer-receipt"]` |
+
+A payload carries either both `of` and `peer` or neither; any other set of fields is refused, and a receipt that has them must list the longer
+`verified`. A pet cannot co-witness its own receipt (`peer` is never the signer). To check that a co-witness is about a receipt, a verifier takes
+both and requires: each is sound; the co-witness names the other's hash and address; the other is not itself a co-witness; the two are signed by
+different keys; and they agree on `network`, `block` and `blockHash`. `checkCowitness` in `witness.js` does exactly this, and
+`fixtures/cowitness-receipts.json` holds one made by the XYO SDK.
+
+What a co-witness shows is that a second key looked at the same block, checked the first key's receipt, and agreed. It does not show the two keys are
+two people: pets on one phone share an owner, so the app prefers a receipt from another phone's pet (fetched from XL1's data layer and checked) and
+falls back to a sibling only when there is none. The site marks a co-witness as checked against the receipt it names only when it holds that receipt.
+
+**A Sentinel's submission.** The phone's Sentinel is the one that sends. It signs a deed of kind `submission` (the seventh kind above, signed by the
+Sentinel's key rather than the Archivist's) naming the receipts it submits: `receipts` is the count, at most 20, and `root` is the Merkle root of the
+receipts' hashes by the same rule as a sentinel batch (below). The receipts travel with it. `checkSubmission` in `witness.js` requires that the deed
+is sound and is a submission, that every receipt is sound and none repeats, and that the count and root are those of the receipts. It shows that one
+key put its name to exactly these receipts, and no more about who that key is.
+
+A server takes a bundle at `POST /api/sentinel/bundle` with `{bw, payload, receipts: [{bw, payload}, ...]}`. It checks the deed, then holds each receipt to
+the standard a receipt sent alone is held to, answers for each one on its own (kept, already held, or refused with a reason), and keeps the Sentinel's
+address beside every receipt it kept.
+
+## The Diviner's calls and results
+
+Each morning the Diviner calls how many blocks the day will bring, as a range, and when the day ends it says how that went. Both are receipts: the same
+receipt as any other (a statement signed against a real block, here the newest one when it was signed), with extra payload fields and no others. A call
+carries `day` (`YYYY-MM-DD`), `low`, `high` and `middle` (integers, 0 to 10,000,000, with `low` at most `middle` at most `high`). A result carries `of` (64
+hex: the hash of the call it settles), `day`, `low`, `high`, `actual` (an integer) and `outcome`, which must be exactly `below` if `actual` is under `low`,
+`above` if it is over `high`, and `inside` otherwise. `verified` is the plain two checks, since the block is what was checked.
+
+Because every kind is a receipt for a block, a sentinel batch, a bundle and the ledger hold them without change, and a verifier that checks every receipt in a
+part checks these too. `checkForecast` in `witness.js` takes a result and a call and requires: both sound; the result names that call's hash; the same key signed
+both; the same day, `low` and `high`; and the result was signed at or after the call, against a block no earlier. `fixtures/forecast-receipts.json` holds a
+call (against mainnet block 1000) and its result (against block 1825700), made by the XYO SDK.
+
+What it shows: the call was made before the result, and not before the block it was signed against; a part of the ledger that holds it is written on the chain later,
+so it was not made after that. A call that turned out wrong stays wrong. What it does not show: that `actual` is the true number of blocks. It is the
+phone's own count, and nothing here makes it right. The evening's call of the race is only said, and is not a receipt.
 
 ## Sentinel batches: many pets, one fingerprint a day
 

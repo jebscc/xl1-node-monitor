@@ -1,0 +1,75 @@
+{
+ "priv": "4444444444444444444444444444444444444444444444444444444444444444",
+ "address": "7564105e977516c53be337314c7e53838967bdac",
+ "peer": {
+  "bw": {
+   "addresses": [
+    "19e7e376e7c213b7e7e7e46cc70a5dd086daff2a"
+   ],
+   "payload_hashes": [
+    "c6486b03ca687410b2211aea55465ff1b3cdd961ff069650dccc0096ab8dfdd7"
+   ],
+   "payload_schemas": [
+    "com.jimtheexplorer.pet.witness"
+   ],
+   "previous_hashes": [
+    null
+   ],
+   "schema": "network.xyo.boundwitness",
+   "$signatures": [
+    "025a2b9151dc5c400aa48973ec925f804adcc7228ebeac1245f444afea7ba87e5342f4ee0a9c6db942f022e186ec53a2790a354978d81986aac80ba5470504e6"
+   ]
+  },
+  "payload": {
+   "schema": "com.jimtheexplorer.pet.witness",
+   "v": 1,
+   "network": "mainnet",
+   "block": 1000,
+   "blockHash": "5091bda04ce962837ee527acee070f60ca5da3216e21ecf6dabd574838d155e3",
+   "seenAt": 1792333874,
+   "pet": "cat",
+   "verified": [
+    "content-hash",
+    "producer-signature"
+   ]
+  }
+ },
+ "receipts": [
+  {
+   "bw": {
+    "addresses": [
+     "7564105e977516c53be337314c7e53838967bdac"
+    ],
+    "payload_hashes": [
+     "aad3850fc334cf192fad5bea19ed6f6ef52c6fec2d8a19e42e1a4b4d6a74ce1b"
+    ],
+    "payload_schemas": [
+     "com.jimtheexplorer.pet.witness"
+    ],
+    "previous_hashes": [
+     null
+    ],
+    "schema": "network.xyo.boundwitness",
+    "$signatures": [
+     "150bdc32b5b74f5813389069812456293a074dbd5b3ded35e1ec48d31993f3d553a102896df405f90faa5e6cc5e69a007c841be44d623d3b9d21dc71f12c9c00"
+    ]
+   },
+   "payload": {
+    "schema": "com.jimtheexplorer.pet.witness",
+    "v": 1,
+    "network": "mainnet",
+    "block": 1000,
+    "blockHash": "5091bda04ce962837ee527acee070f60ca5da3216e21ecf6dabd574838d155e3",
+    "seenAt": 1792333934,
+    "pet": "robot",
+    "verified": [
+     "content-hash",
+     "producer-signature",
+     "peer-receipt"
+    ],
+    "of": "39a36447f0881a31e973aa59b8079c6c37cdd21a0b00a7ff420252d75f4c6ce7",
+    "peer": "19e7e376e7c213b7e7e7e46cc70a5dd086daff2a"
+   }
+  }
+ ]
+}

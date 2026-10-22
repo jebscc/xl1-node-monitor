@@ -178,6 +178,34 @@
     "receipts": 640,
     "bond": 52
    }
+  },
+  {
+   "bw": {
+    "addresses": [
+     "5cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb"
+    ],
+    "payload_hashes": [
+     "43c0a9c1ed5553506138c339eb0b34ce384af9506481cefe111486477f68a020"
+    ],
+    "payload_schemas": [
+     "com.jimtheexplorer.pet.deed"
+    ],
+    "previous_hashes": [
+     "1528807958f7f68133b2f6170285fc3a2734bb52ab9df7aa26fc0ea9d13006a1"
+    ],
+    "schema": "network.xyo.boundwitness",
+    "$signatures": [
+     "0ade02a306c4b8de5ccb5b7a599b36ac7e0cb0f1f0d155075ec7cdfcf2b6698572ceb9266bc16856a0d1bc4eff8be3a5feff37f34a358c8f79066aef555ec889"
+    ]
+   },
+   "payload": {
+    "schema": "com.jimtheexplorer.pet.deed",
+    "v": 1,
+    "kind": "submission",
+    "seenAt": 1792000600,
+    "receipts": 2,
+    "root": "04b07af832b113616271cd16a935522fc368158a15f4132e1df52ee9dec10497"
+   }
   }
  ]
 }

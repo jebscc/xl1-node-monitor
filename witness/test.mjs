@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { writeFileSync } from 'node:fs'
 
-import { walkLedger, readAnchor, verifyLedgerDay, BATCH_MAX, BATCH_SCHEMA, RECEIPT_SCHEMA, buildBatchDocument, filedReceipt, stripMeta, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
+import { COVERIFIED, SUBMISSION_MAX, checkCowitness, checkForecast, forecastOutcome, checkSubmission, walkLedger, readAnchor, verifyLedgerDay, BATCH_MAX, BATCH_SCHEMA, RECEIPT_SCHEMA, buildBatchDocument, filedReceipt, stripMeta, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const load = (n) => readFileSync(join(dir, n), 'utf8')
@@ -106,9 +106,54 @@ await test('a proof pack checks offline from the command line, and a changed blo
   assert.equal(run({ ...clone(pack), block: json('mainnet-500000.json') }), 1, 'another block')
 })
 
+await test('a co-witness the SDK made is sound, names the receipt it checked, and checks out against it', async () => {
+  const fx = json('cowitness-receipts.json')
+  const [co] = fx.receipts
+  const r = await checkReceipt(co.bw, co.payload)
+  assert.equal(r.ok, true, r.why)
+  assert.equal(r.summary.address, fx.address)
+  assert.equal(r.summary.peer, fx.peer.bw.addresses[0])
+  assert.equal(r.summary.of, (await checkReceipt(fx.peer.bw, fx.peer.payload)).summary.receiptHash)
+  assert.deepEqual(co.payload.verified, COVERIFIED)
+  const both = await checkCowitness(co, fx.peer)
+  assert.equal(both.ok, true, both.why)
+  assert.deepEqual(both.summary, { block: 1000, network: 'mainnet', witness: fx.peer.bw.addresses[0], cowitness: fx.address })
+  // an ordinary receipt carries neither field, and says nothing about a peer
+  assert.equal((await checkReceipt(A0.bw, A0.payload)).summary.of, undefined)
+  const verdict = await verifyReceipt(co, async () => ({ ok: true, status: 200, text: async () => load('mainnet-1000.json') }))
+  assert.equal(verdict.ok, true, 'a co-witness is a witness of the block as well: it is checked against the block like any receipt')
+})
+
+await test('a co-witness that was changed, mislabelled or pointed at the wrong receipt is refused', async () => {
+  const fx = json('cowitness-receipts.json')
+  const [co] = fx.receipts
+  const mutated = (fn) => { const c = clone(co); fn(c); return c }
+  // the reason is asserted: changing any field also breaks the signature, so a bare refusal would pass even with a rule removed
+  const FIELDS = 'the payload has fields a receipt does not'
+  const cases = {
+    'a changed receipt hash': [mutated((c) => { c.payload.of = 'ab'.repeat(32) }), 'the payload is not the one signed'],
+    'a changed peer': [mutated((c) => { c.payload.peer = 'cd'.repeat(20) }), 'the payload is not the one signed'],
+    'a bad receipt hash': [mutated((c) => { c.payload.of = 'zz' }), 'bad receipt checked'],
+    'the plain list of checks with the extra fields': [mutated((c) => { c.payload.verified = ['content-hash', 'producer-signature'] }), 'the checks are not the ones a witness makes'],
+    'the longer list of checks with no extra fields': [mutated((c) => { delete c.payload.of; delete c.payload.peer }), 'the checks are not the ones a witness makes'],
+    'only one of the two fields': [mutated((c) => { delete c.payload.peer }), FIELDS],
+    'an extra field': [mutated((c) => { c.payload.extra = 1 }), FIELDS],
+    'a pet checking itself': [mutated((c) => { c.payload.peer = fx.address }), 'a pet cannot co-witness its own receipt'],
+  }
+  for (const [name, [c, expected]] of Object.entries(cases)) assert.equal((await checkReceipt(c.bw, c.payload)).why, expected, name)
+  // a co-witness that is sound on its own can still be about someone else's receipt, or another block
+  const other = route.a.receipts[1]
+  assert.equal((await checkCowitness(co, other)).ok, false, 'a different receipt')
+  assert.equal((await checkCowitness(co, route.b.receipts[0])).ok, false, 'a different pet')
+  assert.equal((await checkCowitness(A0, fx.peer)).ok, false, 'an ordinary receipt co-witnesses nothing')
+  assert.equal((await checkCowitness(co, co)).ok, false, 'a co-witness is not what is co-witnessed')
+  const reflected = await checkCowitness({ bw: fx.peer.bw, payload: fx.peer.payload }, fx.peer)
+  assert.equal(reflected.ok, false, 'a receipt is not its own co-witness')
+})
+
 await test('deeds the SDK made are sound, say what they say, and are not receipts', async () => {
   const deeds = json('deed-receipts.json')
-  assert.equal(deeds.receipts.length, 6)
+  assert.equal(deeds.receipts.length, 7)
   for (const d of deeds.receipts) {
     const r = await checkDeed(d.bw, d.payload)
     assert.equal(r.ok, true, d.payload.kind)
@@ -123,6 +168,80 @@ await test('deeds the SDK made are sound, say what they say, and are not receipt
   assert.equal(growth.payload.kind, 'growth')
   assert.equal(describeDeed((await checkDeed(growth.bw, growth.payload)).summary),
     'The pet at 3ab9c1e07d5f4a6b8c2d1e0f9a8b7c6d5e4f3a2b reached level 4: 21 days witnessed since 2026-09-01, 640 receipts, 52 bond points. The keeper\'s own count.')
+})
+
+await test('the Diviner\'s call and its result, made by the SDK, are sound receipts and settle each other', async () => {
+  const fx = json('forecast-receipts.json')
+  const [call, result] = fx.receipts
+  const c = await checkReceipt(call.bw, call.payload)
+  const r = await checkReceipt(result.bw, result.payload)
+  assert.equal(c.ok, true, c.why)
+  assert.equal(r.ok, true, r.why)
+  assert.equal(c.summary.kind, 'call'); assert.equal(r.summary.kind, 'result')
+  assert.deepEqual([c.summary.day, c.summary.low, c.summary.high, c.summary.middle], ['2026-10-18', 1100, 1200, 1150])
+  assert.deepEqual([r.summary.actual, r.summary.outcome, r.summary.of], [1234, 'above', c.summary.receiptHash])
+  assert.equal(r.summary.previous, c.summary.receiptHash, 'the result is the next link in the Diviner\'s own chain')
+  const both = await checkForecast(result, call)
+  assert.equal(both.ok, true, both.why)
+  assert.deepEqual(both.summary, { day: '2026-10-18', low: 1100, high: 1200, actual: 1234, outcome: 'above', pet: fx.address })
+  // each is a receipt for a real block, and is checked against it like any other
+  const fetchOf = (n) => async () => ({ ok: true, status: 200, text: async () => load(`mainnet-${n}.json`) })
+  assert.equal((await verifyReceipt(call, fetchOf(1000))).ok, true)
+  assert.equal((await verifyReceipt(result, fetchOf(1825700))).ok, true)
+  assert.deepEqual(['below', 'inside', 'inside', 'above'].map((o, i) => forecastOutcome([99, 100, 200, 201][i], 100, 200)), ['below', 'inside', 'inside', 'above'])
+})
+
+await test('a call or result that was changed, mislabelled or pointed at the wrong call is refused', async () => {
+  const fx = json('forecast-receipts.json')
+  const [call, result] = fx.receipts
+  // the REASON is asserted, not only the refusal: changing any field also breaks the signature, so a bare "refused" would pass even with the rule removed
+  const why = async (r, field, value) => { const x = clone(r); x.payload[field] = value; return (await checkReceipt(x.bw, x.payload)).why }
+  for (const [field, value, expected] of [['day', '2026-13-01', 'bad day'], ['low', 1300, 'bad range'], ['high', -1, 'bad range'], ['middle', 1300, 'the middle is outside the range'],
+    ['middle', 'x', 'the middle is outside the range'], ['extra', 1, 'the payload has fields a receipt does not']]) assert.equal(await why(call, field, value), expected, `call ${field}`)
+  for (const [field, value, expected] of [['outcome', 'inside', 'the outcome is not what the range and the result say'], ['outcome', 'maybe', 'the outcome is not what the range and the result say'],
+    ['actual', -5, 'bad result'], ['of', 'zz', 'bad call'], ['day', 'today', 'bad day'], ['low', 1300, 'bad range']]) assert.equal(await why(result, field, value), expected, `result ${field}`)
+  const noOutcome = clone(result); delete noOutcome.payload.outcome
+  assert.equal((await checkReceipt(noOutcome.bw, noOutcome.payload)).why, 'the payload has fields a receipt does not', 'a result with a field missing is neither kind')
+  // a result with a self-consistent outcome that was edited still fails: the signature is over the payload
+  const edited = clone(result); edited.payload.actual = 1150; edited.payload.outcome = 'inside'
+  assert.equal((await checkReceipt(edited.bw, edited.payload)).ok, false, 'edited and made consistent, but not what was signed')
+  // settled by the wrong thing
+  assert.equal((await checkForecast(result, result)).ok, false, 'a result does not settle itself')
+  assert.equal((await checkForecast(call, call)).ok, false, 'a call is not a result')
+  assert.equal((await checkForecast(result, A0)).ok, false, 'an ordinary receipt is not a call')
+  assert.equal((await checkForecast(result, json('cowitness-receipts.json').receipts[0])).ok, false, 'a co-witness is not a call')
+  const another = clone(call); another.payload.high = 1300
+  assert.equal((await checkForecast(result, another)).ok, false, 'a call that is not the one named')
+  // a co-witness still cannot be the receipt that is co-witnessed, and a call is not co-witnessed
+  assert.equal((await checkCowitness(json('cowitness-receipts.json').receipts[0], call)).ok, false)
+})
+
+await test('a Sentinel\'s submission names exactly the receipts it signed, and anything else is refused', async () => {
+  const deeds = json('deed-receipts.json')
+  const sub = deeds.receipts[6]
+  assert.equal(sub.payload.kind, 'submission')
+  const named = route.a.receipts
+  const ok = await checkSubmission(sub, named)
+  assert.equal(ok.ok, true, ok.why)
+  assert.deepEqual(ok.summary, { submitter: deeds.address, receipts: 2, root: sub.payload.root })
+  assert.equal(describeDeed((await checkDeed(sub.bw, sub.payload)).summary), `The Sentinel at ${deeds.address} submitted 2 receipts, under the root ${sub.payload.root}.`)
+  // the order the receipts are listed in does not matter: the root is over their hashes
+  assert.equal((await checkSubmission(sub, [named[1], named[0]])).ok, true)
+  // anything else does
+  assert.equal((await checkSubmission(sub, [named[0]])).ok, false, 'a receipt left out')
+  assert.equal((await checkSubmission(sub, [...named, route.b.receipts[0]])).ok, false, 'a receipt added')
+  assert.equal((await checkSubmission(sub, [named[0], named[0]])).ok, false, 'the same receipt twice')
+  assert.equal((await checkSubmission(sub, [])).ok, false, 'nothing')
+  assert.equal((await checkSubmission(sub, Array(SUBMISSION_MAX + 1).fill(named[0]))).ok, false, 'too many')
+  const changed = clone(named[0]); changed.payload.block = 1001
+  assert.equal((await checkSubmission(sub, [changed, named[1]])).ok, false, 'a receipt that was changed')
+  const badRoot = clone(sub); badRoot.payload.root = 'ab'.repeat(32)
+  assert.equal((await checkSubmission(badRoot, named)).ok, false, 'a root that was changed')
+  assert.equal((await checkSubmission(deeds.receipts[0], named)).ok, false, 'a purchase is not a submission')
+  for (const [field, value] of [['receipts', 0], ['receipts', SUBMISSION_MAX + 1], ['root', 'zz']]) {
+    const c = clone(sub); c.payload[field] = value
+    assert.equal((await checkDeed(c.bw, c.payload)).ok, false, field)
+  }
 })
 
 await test('a deed with anything changed is refused', async () => {

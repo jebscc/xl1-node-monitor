@@ -108,7 +108,7 @@ await test('a proof pack checks offline from the command line, and a changed blo
 
 await test('deeds the SDK made are sound, say what they say, and are not receipts', async () => {
   const deeds = json('deed-receipts.json')
-  assert.equal(deeds.receipts.length, 5)
+  assert.equal(deeds.receipts.length, 6)
   for (const d of deeds.receipts) {
     const r = await checkDeed(d.bw, d.payload)
     assert.equal(r.ok, true, d.payload.kind)
@@ -119,12 +119,16 @@ await test('deeds the SDK made are sound, say what they say, and are not receipt
   }
   assert.equal(describeDeed((await checkDeed(deeds.receipts[0].bw, deeds.receipts[0].payload)).summary), 'Bought kite for 40 marks.')
   assert.equal((await checkDeed(A0.bw, A0.payload)).ok, false, 'a block receipt is not a deed')
+  const growth = deeds.receipts[5]
+  assert.equal(growth.payload.kind, 'growth')
+  assert.equal(describeDeed((await checkDeed(growth.bw, growth.payload)).summary),
+    'The pet at 3ab9c1e07d5f4a6b8c2d1e0f9a8b7c6d5e4f3a2b reached level 4: 21 days witnessed since 2026-09-01, 640 receipts, 52 bond points. The keeper\'s own count.')
 })
 
 await test('a deed with anything changed is refused', async () => {
-  const [bought, , gift, , week] = json('deed-receipts.json').receipts
+  const [bought, , gift, , week, growth] = json('deed-receipts.json').receipts
   const cases = [[bought, 'payload', 'price', 1], [bought, 'payload', 'item', 'hoodie'], [bought, 'payload', 'seenAt', 5], [bought, 'payload', 'kind', 'milestone'],
-    [gift, 'payload', 'to', 'ab'.repeat(19)], [week, 'payload', 'root', 'zz'], [week, 'payload', 'week', '2026-W54'], [week, 'bw', 'addresses', ['00'.repeat(20)]], [bought, 'bw', 'previous_hashes', ['cd'.repeat(32)]]]
+    [gift, 'payload', 'to', 'ab'.repeat(19)], [week, 'payload', 'root', 'zz'], [week, 'payload', 'week', '2026-W54'], [growth, 'payload', 'level', 31], [growth, 'payload', 'level', 5], [growth, 'payload', 'first', '2026-13-01'], [growth, 'payload', 'pet', 'zz'], [growth, 'payload', 'days', 0], [week, 'bw', 'addresses', ['00'.repeat(20)]], [bought, 'bw', 'previous_hashes', ['cd'.repeat(32)]]]
   for (const [d, where, field, value] of cases) {
     const r = clone(d)
     r[where][field] = value

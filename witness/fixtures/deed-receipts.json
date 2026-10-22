@@ -146,6 +146,38 @@
     "anchored": 1,
     "root": "1212121212121212121212121212121212121212121212121212121212121212"
    }
+  },
+  {
+   "bw": {
+    "addresses": [
+     "5cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb"
+    ],
+    "payload_hashes": [
+     "7886cdeee927383c2ac078688035f4e346d97f7b18af157843d0a5544021b999"
+    ],
+    "payload_schemas": [
+     "com.jimtheexplorer.pet.deed"
+    ],
+    "previous_hashes": [
+     "fb6c1b7b230ef7e00ed77b6b5d619bd1bd5f5ce502c521d7509663d8e8bbabe7"
+    ],
+    "schema": "network.xyo.boundwitness",
+    "$signatures": [
+     "16d92808762338aa1c2ef568b92d57605edf2bf51c0912de3b5debf08249b0b437ce940b3753d4cb750b486d69091dfedf96198163682a8dfcde3a9f0b3f1b37"
+    ]
+   },
+   "payload": {
+    "schema": "com.jimtheexplorer.pet.deed",
+    "v": 1,
+    "kind": "growth",
+    "seenAt": 1792000000,
+    "pet": "3ab9c1e07d5f4a6b8c2d1e0f9a8b7c6d5e4f3a2b",
+    "first": "2026-09-01",
+    "level": 4,
+    "days": 21,
+    "receipts": 640,
+    "bond": 52
+   }
   }
  ]
 }

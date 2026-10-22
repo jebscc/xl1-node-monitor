@@ -184,7 +184,7 @@ checked; they measure nothing else.
 ## Deeds: what a pet owns and has done
 
 A second schema, `com.jimtheexplorer.pet.deed`, uses the same bound witness, hashing and signing as a receipt.
-A deed is signed by a pet's **Archivist** key, a key that holds nothing, and says one of five things. `seenAt` is
+A deed is signed by a pet's **Archivist** key, a key that holds nothing, and says one of six things. `seenAt` is
 the phone's own clock, as in a receipt. The payload carries exactly `schema`, `v` (1), `kind`, `seenAt` and the
 fields of its kind; a verifier refuses a payload with any other field.
 
@@ -195,6 +195,14 @@ fields of its kind; a verifier refuses a payload with any other field.
 | `gift`      | `item`, `to` (40 hex: the receiving Archivist's address)        | the item is given to that address |
 | `received`  | `item`, `from` (40 hex), `gift` (64 hex: the hash of the gift)  | the item was taken, in answer to that gift |
 | `week`      | `week` (`YYYY-Www`), `receipts`, `blocks`, `sealed`, `anchored` (integers, 0 or more), `root` (64 hex) | what the pets did that ISO week |
+| `growth`    | `pet` (40 hex: the pet's address), `first` (`YYYY-MM-DD`), `level` (0 to 30), `days` (at least 1), `receipts`, `bond` (integers, 0 or more) | the pet reached that level, by the keeper's own running count |
+
+A `growth` deed is made each time a pet's level rises. Its numbers are the keeper's own count of the days a pet has
+witnessed the chain (it needs a receipt that day), its receipts, and the bond with its person; level follows from them
+by a published curve (points = days x 10 + receipts/20 capped at 5 per day + bond/2, level L needs 30 x L^1.7).
+It proves the keeper signed that count and that each level was reached after the one before (chained by the previous
+hash). The receipts it counts are checkable one by one; the count itself, once old receipts have been dropped from a
+phone, is the keeper's word, and says so.
 
 `root` is the sha256 of one line, `YYYY-Www|count|hash,hash,...`: the hashes of that week's receipts (the
 hash of each receipt's bound witness), once each, sorted, as the day's seal is made. Anyone holding

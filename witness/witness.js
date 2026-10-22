@@ -241,6 +241,7 @@ const DEED_FIELDS = {
   gift: ["item", "to"],
   received: ["item", "from", "gift"],
   week: ["week", "receipts", "blocks", "sealed", "anchored", "root"],
+  growth: ["pet", "first", "level", "days", "receipts", "bond"],
 };
 const SLUG = /^[a-z0-9_]{1,40}$/;
 const WEEK_ID = /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/;
@@ -271,6 +272,7 @@ export const checkDeed = async (bw, payload) => {
     gift: () => !SLUG.test(payload.item) || !addr(payload.to),
     received: () => !SLUG.test(payload.item) || !addr(payload.from) || !(typeof payload.gift === "string" && HEX64.test(payload.gift)),
     week: () => !(typeof payload.week === "string" && WEEK_ID.test(payload.week)) || !["receipts", "blocks", "sealed", "anchored"].every((k) => COUNT(payload[k])) || !(typeof payload.root === "string" && HEX64.test(payload.root)),
+    growth: () => !addr(payload.pet) || !(typeof payload.first === "string" && DAY.test(payload.first)) || !["level", "days", "receipts", "bond"].every((k) => COUNT(payload[k])) || payload.level > 30 || payload.days < 1,
   }[payload.kind]();
   if (bad) return fail(`bad ${payload.kind} deed`);
   const prev = bw.previous_hashes[0];
@@ -294,6 +296,7 @@ export const describeDeed = (d) => {
     case "gift": return `Gave ${nice(d.item)} to the pet at ${d.to}.`;
     case "received": return `Received ${nice(d.item)} from the pet at ${d.from}, in answer to the gift ${d.gift}.`;
     case "week": return `Week ${d.week}: ${d.receipts} receipt${d.receipts === 1 ? "" : "s"} for ${d.blocks} block${d.blocks === 1 ? "" : "s"}, ${d.sealed} day${d.sealed === 1 ? "" : "s"} sealed, ${d.anchored} on the chain. Its fingerprint is ${d.root}.`;
+    case "growth": return `The pet at ${d.pet} reached level ${d.level}: ${d.days} day${d.days === 1 ? "" : "s"} witnessed since ${d.first}, ${d.receipts} receipt${d.receipts === 1 ? "" : "s"}, ${d.bond} bond point${d.bond === 1 ? "" : "s"}. The keeper's own count.`;
     default: return "A deed.";
   }
 };

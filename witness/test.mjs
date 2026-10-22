@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { writeFileSync } from 'node:fs'
 
-import { COVERIFIED, SUBMISSION_MAX, checkCowitness, checkForecast, forecastOutcome, checkSubmission, walkLedger, readAnchor, verifyLedgerDay, BATCH_MAX, BATCH_SCHEMA, RECEIPT_SCHEMA, buildBatchDocument, filedReceipt, stripMeta, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
+import { COVERIFIED, MOODS, STAGES, stageOfDays, SUBMISSION_MAX, checkCowitness, checkForecast, forecastOutcome, checkSubmission, walkLedger, readAnchor, verifyLedgerDay, BATCH_MAX, BATCH_SCHEMA, RECEIPT_SCHEMA, buildBatchDocument, filedReceipt, stripMeta, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const load = (n) => readFileSync(join(dir, n), 'utf8')
@@ -214,6 +214,44 @@ await test('a call or result that was changed, mislabelled or pointed at the wro
   assert.equal((await checkForecast(result, another)).ok, false, 'a call that is not the one named')
   // a co-witness still cannot be the receipt that is co-witnessed, and a call is not co-witnessed
   assert.equal((await checkCowitness(json('cowitness-receipts.json').receipts[0], call)).ok, false)
+})
+
+await test('a pet\'s status, made by the SDK, is a sound receipt that says only what it says', async () => {
+  const fx = json('status-receipts.json')
+  const [st] = fx.receipts
+  const r = await checkReceipt(st.bw, st.payload)
+  assert.equal(r.ok, true, r.why)
+  assert.equal(r.summary.kind, 'status')
+  assert.deepEqual(
+    [r.summary.mood, r.summary.stage, r.summary.level, r.summary.days, r.summary.bond, r.summary.tricks, r.summary.rank, r.summary.field, r.summary.blocks, r.summary.hats, r.summary.items, r.summary.marks],
+    ['happy', 'young', 3, 21, 2, 3, 17, 120, 340, 4, 9, 250])
+  // it names no producer, no person, no phone and no pet name: only the pet's own key and what it says of itself
+  for (const k of Object.keys(st.payload)) assert.ok(!/producer|address|owner|name$|token|code|phone|wallet/i.test(k) || k === 'producer-signature', k)
+  // a status is a receipt for a block, and is checked against it like any other
+  const v = await verifyReceipt(st, async () => ({ ok: true, status: 200, text: async () => load('mainnet-1000.json') }))
+  assert.equal(v.ok, true)
+  assert.deepEqual(MOODS, ['happy', 'neutral', 'worried', 'sad', 'unknown'])
+  assert.deepEqual([0, 6, 7, 29, 30, 99, 100, 299, 300, 5000].map(stageOfDays), ['hatchling', 'hatchling', 'young', 'young', 'grown', 'grown', 'veteran', 'veteran', 'elder', 'elder'])
+  assert.deepEqual(STAGES.map(([n]) => n), ['hatchling', 'young', 'grown', 'veteran', 'elder'])
+})
+
+await test('a status with a mood, level, count or stage outside what is allowed is refused for that reason', async () => {
+  const [st] = json('status-receipts.json').receipts
+  // the reason is asserted: changing any field also breaks the signature, so a bare refusal would pass even with the rule removed
+  const why = async (field, value) => { const x = clone(st); x.payload[field] = value; return (await checkReceipt(x.bw, x.payload)).why }
+  for (const [field, value, expected] of [
+    ['mood', 'ecstatic', 'bad mood'], ['mood', 7, 'bad mood'],
+    ['level', 0, 'bad level'], ['level', 31, 'bad level'], ['level', 2.5, 'bad level'],
+    ['days', -1, 'bad days'], ['bond', 5, 'bad bond'], ['tricks', 21, 'bad tricks'], ['marks', 1e8, 'bad marks'], ['hats', 'many', 'bad hats'],
+    ['stage', 'elder', 'the stage is not the one those days make'], ['stage', 'toddler', 'the stage is not the one those days make'],
+    ['rank', 500, 'a rank cannot be below the last place'],
+    ['extra', 1, 'the payload has fields a receipt does not'],
+  ]) assert.equal(await why(field, value), expected, `${field}=${value}`)
+  const gone = clone(st); delete gone.payload.marks
+  assert.equal((await checkReceipt(gone.bw, gone.payload)).why, 'the payload has fields a receipt does not', 'a status with a field missing is no kind')
+  // an unknown rank (0) is allowed with any field size, and the best rank is 1
+  const unknown = clone(st); unknown.payload.rank = 0; unknown.payload.field = 0
+  assert.notEqual((await checkReceipt(unknown.bw, unknown.payload)).why, 'a rank cannot be below the last place')
 })
 
 await test('a Sentinel\'s submission names exactly the receipts it signed, and anything else is refused', async () => {

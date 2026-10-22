@@ -287,6 +287,30 @@ What it shows: the call was made before the result, and not before the block it 
 so it was not made after that. A call that turned out wrong stays wrong. What it does not show: that `actual` is the true number of blocks. It is the
 phone's own count, and nothing here makes it right. The evening's call of the race is only said, and is not a receipt.
 
+## A pet's status
+
+A pet can record how it is. A status is a receipt like any other (signed against the newest block when it was made) with twelve extra payload fields and no
+others, each a number inside a fixed range or a word from a fixed list, so there is nothing free-form in it to leak:
+
+| field    | value |
+|----------|-------|
+| `mood`   | `happy`, `neutral`, `worried`, `sad` or `unknown`: the pet's mood, which follows its producer's health |
+| `stage`  | `hatchling`, `young`, `grown`, `veteran` or `elder`, and it must be the stage `days` makes (0, 7, 30, 100, 300 days) |
+| `level`  | integer 1 to 30 |
+| `days`   | integer 0 to 100000: days the pet has witnessed the chain |
+| `bond`   | integer 0 to 4: the bond with its person, from "getting to know you" to "soulmate" |
+| `tricks` | integer 0 to 20: how many tricks it knows |
+| `rank`, `field`, `blocks` | integers: its producer's place today, how many producers are on the board, and the blocks that producer made today. 0 is "not known", and `rank` may not be below `field` |
+| `hats`, `items`, `marks` | integers: how many hats and things it owns, and the marks it has earned. Counts, never which |
+
+It never carries a name (the pet's or its person's), a producer's address, an account, a token, a code, a device or a wallet: a status is tied to the pet's own key and
+to nothing else. `checkReceipt` returns the fields as the summary with `kind` of `status`; `fixtures/status-receipts.json` holds one made by the XYO SDK.
+
+What it shows: this key said these things at this time, against this block, and not before it. What it does not show: that any of them is true. `rank`, `field` and `blocks` are
+what the pet read about a producer it does not name, so nobody can check them against the chain; the rest is the phone's own record.
+
+A phone records a status at most once an hour: when the mood, stage or level has changed (and at least half an hour after the last), and once a day whatever has changed.
+
 ## Sentinel batches: many pets, one fingerprint a day
 
 A pet whose owner runs no node and has no account (a **sentinel**) still signs its receipts. It sends them to one

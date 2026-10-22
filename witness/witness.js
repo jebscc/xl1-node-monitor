@@ -208,13 +208,20 @@ const PL_KEYS = ["block", "blockHash", "network", "pet", "schema", "seenAt", "v"
  *   cowitness  of, peer: a second pet checked another pet's receipt for the same block
  *   call       day, low, high, middle: the Diviner's call of the day's blocks, signed against the newest block when it was made
  *   result     of, day, low, high, actual, outcome: how that call turned out, naming the call by its hash
+ *   status     mood, stage, level, days, bond, tricks, rank, field, blocks, hats, items, marks: how a pet is, as numbers and words from fixed lists
  * Every kind is still a receipt for a block (the block it was signed against), so a batch, a bundle and a ledger hold any of them the same way.
  */
 const EXTRAS = {
   cowitness: ["of", "peer"],
   call: ["day", "high", "low", "middle"],
   result: ["actual", "day", "high", "low", "of", "outcome"],
+  status: ["blocks", "bond", "days", "field", "hats", "items", "level", "marks", "mood", "rank", "stage", "tricks"],
 };
+export const MOODS = ["happy", "neutral", "worried", "sad", "unknown"];
+/** The age stages and the days witnessed each begins at (the app's PetGrowth.Stage). A status's stage must be the one its days make. */
+export const STAGES = [["hatchling", 0], ["young", 7], ["grown", 30], ["veteran", 100], ["elder", 300]];
+export const stageOfDays = (days) => STAGES.filter(([, from]) => days >= from).pop()[0];
+const STATUS_MAX = { days: 100000, bond: 4, tricks: 20, rank: 100000, field: 100000, blocks: 1000000, hats: 1000, items: 1000, marks: 10000000 };
 const receiptKind = (payload) => {
   const extra = Object.keys(payload).filter((k) => !PL_KEYS.includes(k)).sort();
   if (!extra.length) return "plain";
@@ -256,6 +263,13 @@ export const checkReceipt = async (bw, payload) => {
   if (kind === "call" || kind === "result") {
     if (typeof payload.day !== "string" || !FORECAST_DAY.test(payload.day)) return fail("bad day");
     if (!count(payload.low) || !count(payload.high) || payload.low > payload.high) return fail("bad range");
+  }
+  if (kind === "status") {
+    if (!MOODS.includes(payload.mood)) return fail("bad mood");
+    if (!isInt(payload.level) || payload.level < 1 || payload.level > 30) return fail("bad level");
+    for (const [k, max] of Object.entries(STATUS_MAX)) if (!isInt(payload[k]) || payload[k] < 0 || payload[k] > max) return fail(`bad ${k}`);
+    if (payload.stage !== stageOfDays(payload.days)) return fail("the stage is not the one those days make");
+    if (payload.rank > 0 && payload.field < payload.rank) return fail("a rank cannot be below the last place");
   }
   if (kind === "call") {
     if (!count(payload.middle) || payload.middle < payload.low || payload.middle > payload.high) return fail("the middle is outside the range");

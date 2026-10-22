@@ -199,7 +199,7 @@ fields of its kind; a verifier refuses a payload with any other field.
 
 A `growth` deed is made each time a pet's level rises. Its numbers are the keeper's own count of the days a pet has
 witnessed the chain (it needs a receipt that day), its receipts, and the bond with its person; level follows from them
-by a published curve (points = days x 10 + receipts/20 capped at 5 per day + bond/2, level L needs 30 x L^1.7).
+by a published curve (points = days x 10 + receipts/20 capped at 5 per day + bond/2, level L needs 30 x (L-1)^1.7, so a pet is level 1 from the start).
 It proves the keeper signed that count and that each level was reached after the one before (chained by the previous
 hash). The receipts it counts are checkable one by one; the count itself, once old receipts have been dropped from a
 phone, is the keeper's word, and says so.

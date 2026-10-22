@@ -385,4 +385,6 @@ A pet can prove it belongs with other pets by signing a challenge with its own k
 
 A token that was lost is replaced the same way it was earned: a pet already on the account proves itself again with `recover: true` and no token, and the answer carries a new token (the old one stops working). `POST /api/pets/unlink {account_id, token, pet}` takes a pet off. `GET /api/pets/lookup?pet=<address>` answers the account a pet is on, or 404.
 
+A new phone has new pets with new keys, so it cannot prove itself to an account its pets were never on. For that, making an account also returns a one-time `recovery_code` (twenty Crockford base32 characters, shown in four groups; only its hash is kept). `POST /api/pets/link {pet, nonce, bw, payloads, recovery_code}` joins the proving pet to the account that code belongs to, and replaces the account's token. `POST /api/pets/recovery {account_id, token}` makes a fresh code and retires the old one. The code only manages which pets are on the account; it signs nothing, and it cannot give anyone the old pets' keys.
+
 `fixtures/link-proofs.json` holds two proofs made by the SDK over throwaway keys, which the server's tests check against.

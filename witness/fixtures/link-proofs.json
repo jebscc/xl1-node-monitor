@@ -1,0 +1,66 @@
+{
+  "nonce": "link-nonce-fixture-0001",
+  "domain": "jimtheexplorer.com",
+  "pets": [
+    {
+      "name": "cat",
+      "address": "7c6a3a69684fc4804c013f1c01036059f14e0592",
+      "bw": {
+        "addresses": [
+          "7c6a3a69684fc4804c013f1c01036059f14e0592"
+        ],
+        "payload_hashes": [
+          "185a9e0485d2934336e94006918b4069c2579ed5ba99c3a5cb0bde6907316dc3"
+        ],
+        "payload_schemas": [
+          "com.jimtheexplorer.pet.link"
+        ],
+        "previous_hashes": [
+          null
+        ],
+        "schema": "network.xyo.boundwitness",
+        "$signatures": [
+          "ac615b7bbbade02df13062e882b7d5ff479b03d181b4a06ad530a7c133a6fc53112121a20ffafed293386faea46acccf4cb0038bf7bd2a5e062e9dd23f228541"
+        ]
+      },
+      "payloads": [
+        {
+          "schema": "com.jimtheexplorer.pet.link",
+          "v": 1,
+          "domain": "jimtheexplorer.com",
+          "nonce": "link-nonce-fixture-0001"
+        }
+      ]
+    },
+    {
+      "name": "dog",
+      "address": "d2b43eaf61f7952498f4120f0e7b4ed68d9003bf",
+      "bw": {
+        "addresses": [
+          "d2b43eaf61f7952498f4120f0e7b4ed68d9003bf"
+        ],
+        "payload_hashes": [
+          "185a9e0485d2934336e94006918b4069c2579ed5ba99c3a5cb0bde6907316dc3"
+        ],
+        "payload_schemas": [
+          "com.jimtheexplorer.pet.link"
+        ],
+        "previous_hashes": [
+          null
+        ],
+        "schema": "network.xyo.boundwitness",
+        "$signatures": [
+          "ff7662a35823ea2c2d419825aabc919d05440a2f2438639ea203c157128a04d45fbcd966644a5b4903e2eb135428c63f415d8496de58823b9f843ac15d9e482b"
+        ]
+      },
+      "payloads": [
+        {
+          "schema": "com.jimtheexplorer.pet.link",
+          "v": 1,
+          "domain": "jimtheexplorer.com",
+          "nonce": "link-nonce-fixture-0001"
+        }
+      ]
+    }
+  ]
+}

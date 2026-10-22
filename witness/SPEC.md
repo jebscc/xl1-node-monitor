@@ -373,3 +373,14 @@ is tested byte for byte against the SDK's output using the same `fixtures/`.
 
 `v` is `1`. A change to what the fields mean, or to the set of fields, is a new `v`; a verifier refuses a `v` it
 does not know rather than guessing.
+
+## Linking pets into an account
+
+A pet can prove it belongs with other pets by signing a challenge with its own key, the key that signs its receipts. The XL1 Wallet can sign nothing but a transaction, so a wallet is never the proof; the pets' keys are.
+
+1. `POST /api/pets/link/nonce {pet}` answers `{nonce, domain, schema}`. The nonce is the server's, is spent on first use, and expires in ten minutes.
+2. The pet builds a bound witness (`BoundWitnessBuilder`, signed by its key) over one payload: `{schema: "com.jimtheexplorer.pet.link", v: 1, domain, nonce}`.
+3. `POST /api/pets/link {pet, nonce, bw, payloads: [payload]}` makes an account (the answer carries `account_id` and a `token`, shown once) or, with `account_id` and `token`, adds the pet to one. A pet is on one account; the first to prove it keeps it.
+4. `GET /api/pets/account/<account_id>` is public: the proven pets, an optional wallet shown as *named, not proved*, and the pets' recent receipts as pointers (as `/api/sentinel/today`), each with the part of the ledger that holds it and that part's transaction once it is written.
+
+`fixtures/link-proofs.json` holds two proofs made by the SDK over throwaway keys, which the server's tests check against.

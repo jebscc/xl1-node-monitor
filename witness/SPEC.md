@@ -292,12 +292,19 @@ a receipt exactly as the pet made it:
       "schema": "com.jimtheexplorer.pet.batch", "v": 1,
       "network": "mainnet",            // the chain the receipts' blocks are on, and the chain this is written to
       "day": "2026-10-20",             // the UTC day the receipts were received, as the batcher says; the BLOCK's time is what is signed
-      "part": 1, "final": true,        // a day over 1000 receipts is more parts; "final" is true on the last
+      "part": 1, "final": true,        // a day is one or more parts (over 1000 receipts, or written in windows); "final" is true on a part written once the day has ended
       "previous": null,                // the data hash of the manifest before this one in the ledger (any day, any part), or null for the first
       "root": "<64 hex>",              // the Merkle root of the receipt hashes (the data hash of each bound witness), by the rules above, so one receipt can still be proved without the rest
       "count": 2,
       "receipts": ["<64 hex>", ...]    // the filed receipts, by data hash, in ascending order, each once
     }
+
+**Parts of a day.** A day may be written in windows while it is still open: each window's receipts are the next part (`part` 2, 3, ...), naming the part
+before it, with `final` false. When the day ends, what is left is written as a last part with `final` true; if nothing is left, the last part
+written stays `final` false, because nothing can be added to a day once it has ended, and a later day's first part names it all the same. So
+`final` is a statement by the writer, not something a reader needs: the order is what is checked (a part follows the part before it, with the
+next number, in the same day; a later day's part 1 follows an earlier day's). Each part is one transaction, so a receipt waits at most one window
+for the chain.
 
 There is no field for who wrote the manifest: the transaction that carries it names its signer, as XYO's rules say, and each receipt names its pet.
 

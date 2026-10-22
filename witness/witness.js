@@ -611,7 +611,8 @@ export const verifyLedgerDay = async (txHash, fetchPayload, fetchBlock) => {
  * [chain] is newest first, each { digest, day, part, final }. [complete] is true only when the walk reached a manifest that names nothing
  * before it -- the start. A manifest that is named but not on the data layer is a GAP, and the walk stops there saying so (`why`, `gapAt`):
  * a missing day, or a data layer that lost one. Each manifest is checked against the hash that named it, so none can be swapped, and the
- * order is checked: a part follows the part before it of the same day, and a new day follows a finished earlier one. Receipts are not
+ * order is checked: a part follows the part before it of the same day, and a day's first part follows an earlier day's (whose last part
+ * need not be marked final: a day written in windows can end on a part written before the day ended). Receipts are not
  * re-checked here (verifyBatchDocument does that, for one manifest); this is the shape of the whole ledger.
  */
 export const walkLedger = async (digest, fetchPayload, { limit = 400 } = {}) => {
@@ -627,7 +628,7 @@ export const walkLedger = async (digest, fetchPayload, { limit = 400 } = {}) => 
     if (later) {
       const sameDay = got.day === later.day;
       if (sameDay && !(later.part === got.part + 1 && got.final === false)) return { ok: false, chain, complete: false, why: `the parts of ${got.day} do not follow one another` };
-      if (!sameDay && !(got.day < later.day && got.final === true && later.part === 1)) return { ok: false, chain, complete: false, why: `${later.day} does not follow ${got.day}` };
+      if (!sameDay && !(got.day < later.day && later.part === 1)) return { ok: false, chain, complete: false, why: `${later.day} does not follow ${got.day}` };
     }
     chain.push({ digest: want, day: got.day, part: got.part, final: got.final });
     later = got;

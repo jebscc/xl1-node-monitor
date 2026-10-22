@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.48.3"
+AGENT_VERSION = "1.48.4"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -4654,15 +4654,18 @@ def _ledger_url():
     return ATTEST_URL[:-len("/attest")] + "/attest-ledger" if ATTEST_URL.endswith("/attest") else ""
 
 
-def fetch_ledger_batch(day):
-    """The pet ledger's bytes for a finished day, from the backend: {"document": the manifest, "payloads": {hash: filed receipt}}, or None.
+def fetch_ledger_batch(day, digest=None):
+    """The pet ledger's bytes for a part of a day, from the backend: {"document": the manifest, "payloads": {hash: filed receipt}}, or None.
+
+    [digest] is the hash this node was asked to anchor, and names WHICH part of the day when there is more than one (rolling parts):
+    the backend refuses to guess, and the service refuses a manifest that does not hash to it.
 
     Checked for shape here (the service verifies every receipt and the hash before anything is written), because what this hands
     on is about to be filed to a data layer and committed in a transaction that cannot be taken back.
     """
     try:
         url = (BACKEND_URL + "/api/node/ledger-batch?"
-               + urllib.parse.urlencode({"node_id": NODE_ID, "day": day}))
+               + urllib.parse.urlencode({"node_id": NODE_ID, "day": day, **({"digest": digest} if digest else {})}))
         req = urllib.request.Request(url, headers={"X-Node-Token": NODE_TOKEN})
         with urllib.request.urlopen(req, timeout=60) as resp:
             if not (200 <= resp.status < 300):
@@ -4724,7 +4727,7 @@ def anchor_pending_diary():
         if not target:
             _warn_once("ledger-url", "a ledger day is waiting but this node's service has no ledger route (XL1_ATTEST_LEDGER_URL)")
             return
-        batch = fetch_ledger_batch(entry["month"])
+        batch = fetch_ledger_batch(entry["month"], entry["digest"])
         if not batch:
             return
         body.update(batch)

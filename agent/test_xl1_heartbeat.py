@@ -5211,6 +5211,7 @@ def test_a_waiting_day_of_the_ledger_is_fetched_from_the_backend_and_anchored_on
     posted.clear()
     agent.anchor_pending_diary()
     assert len(fetched) == 1 and "day=2026-09-20" in fetched[0] and "node_id=pi-1" in fetched[0]
+    assert "digest=" + _DIARY_DIGEST in fetched[0], "it says WHICH part of the day it was asked to write, so it can never be handed another"
     assert len(posted) == 1
     sent = posted[0]
     assert sent["kind"] == "ledger" and sent["month"] == "2026-09-20" and sent["digest"] == _DIARY_DIGEST

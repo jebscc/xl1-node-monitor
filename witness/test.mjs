@@ -358,6 +358,20 @@ await test('the ledger: walked back by its previous links, whole, with a gap nam
   const bad = await walkLedger(afterHash, served({ [afterHash]: after, [skewHash]: skewed }))
   assert.equal(bad.ok, false); assert.match(bad.why, /do not follow/)
   assert.equal((await walkLedger('zz', served({}))).ok, false)
+  // a day written in windows can end on a part that is not marked final; the next day's first part still follows it
+  const open = clone(one.document); open.part = 1; open.final = false; open.previous = null
+  const openHash = await dataHash(open)
+  const nextDay = { ...two.document, day: '2026-10-21', part: 1, final: true, previous: openHash }
+  const nextHash = await dataHash(nextDay)
+  const rolled = await walkLedger(nextHash, served({ [nextHash]: nextDay, [openHash]: open }))
+  assert.equal(rolled.ok, true, rolled.why); assert.equal(rolled.complete, true)
+  // but the same day cannot be followed by a part that skips one, and a later day cannot come before an earlier one
+  const skipped = { ...two.document, part: 3, previous: openHash }
+  const skippedHash = await dataHash(skipped)
+  assert.match((await walkLedger(skippedHash, served({ [skippedHash]: skipped, [openHash]: open }))).why, /do not follow/)
+  const backwards = { ...two.document, day: '2026-10-19', part: 1, previous: openHash }
+  const backHash = await dataHash(backwards)
+  assert.match((await walkLedger(backHash, served({ [backHash]: backwards, [openHash]: open }))).why, /does not follow/)
 })
 
 await test('verify-day.mjs: the saved real day passes offline (exit 0), and a tampered copy fails (exit 1), and a bad file is a 2', async () => {

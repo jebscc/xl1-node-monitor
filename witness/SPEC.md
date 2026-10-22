@@ -383,4 +383,6 @@ A pet can prove it belongs with other pets by signing a challenge with its own k
 3. `POST /api/pets/link {pet, nonce, bw, payloads: [payload]}` makes an account (the answer carries `account_id` and a `token`, shown once) or, with `account_id` and `token`, adds the pet to one. A pet is on one account; the first to prove it keeps it.
 4. `GET /api/pets/account/<account_id>` is public: the proven pets, an optional wallet shown as *named, not proved*, and the pets' recent receipts as pointers (as `/api/sentinel/today`), each with the part of the ledger that holds it and that part's transaction once it is written.
 
+A token that was lost is replaced the same way it was earned: a pet already on the account proves itself again with `recover: true` and no token, and the answer carries a new token (the old one stops working). `POST /api/pets/unlink {account_id, token, pet}` takes a pet off. `GET /api/pets/lookup?pet=<address>` answers the account a pet is on, or 404.
+
 `fixtures/link-proofs.json` holds two proofs made by the SDK over throwaway keys, which the server's tests check against.

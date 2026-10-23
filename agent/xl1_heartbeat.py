@@ -54,7 +54,7 @@ import urllib.request
 #
 # A version that two different behaviours share is not a version. PATCH is
 # cheap; a day spent proving which code is running is not.
-AGENT_VERSION = "1.48.4"
+AGENT_VERSION = "1.48.5"
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 NODE_TOKEN = os.environ.get("NODE_HEARTBEAT_TOKEN", "")
@@ -1347,12 +1347,24 @@ def _producer_request(address, params, timeout=180):
         with urllib.request.urlopen(PRODUCER_URL + "?" + query, timeout=timeout) as resp:
             if not (200 <= resp.status < 300):
                 return None
-            return json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError) as e:
         _warn_once("producer-request",
                    "producer endpoint unreachable at %s (%s); block production "
                    "will not be counted" % (PRODUCER_URL, type(e).__name__))
         return None
+    # THE ANSWER SAYS WHICH CHAIN IT READ, AND IT MUST BE THE ONE ASKED ABOUT. Found 2026-10-23: both producers' block
+    # totals held the SEQUENCE history on top of their mainnet one, because for a while a scan could be answered from the
+    # service's own default chain while the node was labelled for another. The query now names the network, and this
+    # checks the reply did what was asked: a scan that is not for this chain is dropped, not counted, because a total
+    # only ever adds and nothing takes a wrong block back out. An answer that names no network (older service) is kept.
+    asked = params.get("network") or NODE_NETWORK
+    if isinstance(data, dict) and data.get("network") not in (None, "", asked):
+        _warn_once("producer-network",
+                   "the producer endpoint answered for %r when %r was asked; that scan is not counted"
+                   % (data.get("network"), asked))
+        return None
+    return data
 
 
 def fetch_backfill_chunk(name):

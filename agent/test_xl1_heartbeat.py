@@ -5295,3 +5295,54 @@ def test_the_collector_reports_the_answer_and_never_the_reward_address():
     assert 'payload["reward_matches_producer"] = _matches' in src
     assert "_matches is not None" in src, "unknown is left out, not sent as a false"
     assert 'payload["reward_address"]' not in src, "the reward address stays on this machine"
+
+
+def _stub_producer_answer(monkeypatch, body, node_network="mainnet"):
+    """The local service answering with [body]; returns the list of warnings the agent raised."""
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return json.dumps(body).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    warned = []
+    monkeypatch.setattr(agent, "PRODUCER_URL", "http://127.0.0.1:8090/producer")
+    monkeypatch.setattr(agent, "NODE_NETWORK", node_network)
+    monkeypatch.setattr(agent.urllib.request, "urlopen", lambda url, timeout=None: _Resp())
+    monkeypatch.setattr(agent, "_warn_once", lambda key, message: warned.append((key, message)))
+    return warned
+
+
+def test_a_scan_answered_for_another_chain_is_dropped_not_counted(monkeypatch):
+    """The service's own default chain must never be counted as the node's.
+
+    Both producers' block totals ended up holding their SEQUENCE history on top of the mainnet one
+    (2026-10-23: 22,937 stored against 9,725 + 13,192 measured). A total only adds, so the answer has to be
+    refused at the door. Watched failing: without the check this returns the sequence scan.
+    """
+    warned = _stub_producer_answer(monkeypatch, {"network": "sequence", "produced": 2651, "fromBlock": 550000, "toBlock": 599999})
+    assert agent._producer_request("abc123", {"from": 550000, "to": 599999}) is None
+    assert warned and warned[0][0] == "producer-network" and "'sequence'" in warned[0][1] and "'mainnet'" in warned[0][1]
+
+
+def test_a_scan_for_the_chain_asked_about_is_kept_and_so_is_one_that_names_none(monkeypatch):
+    warned = _stub_producer_answer(monkeypatch, {"network": "mainnet", "produced": 3})
+    assert agent._producer_request("abc123", {"from": 1, "to": 9}) == {"network": "mainnet", "produced": 3}
+    warned2 = _stub_producer_answer(monkeypatch, {"produced": 3})           # an older service says nothing of the chain
+    assert agent._producer_request("abc123", {"from": 1, "to": 9}) == {"produced": 3}
+    assert not warned and not warned2
+
+
+def test_a_caller_that_asks_for_another_chain_is_held_to_that_one(monkeypatch):
+    warned = _stub_producer_answer(monkeypatch, {"network": "sequence", "produced": 1})
+    assert agent._producer_request("abc123", {"from": 1, "to": 9, "network": "sequence"}) == {"network": "sequence", "produced": 1}
+    assert not warned
+    warned = _stub_producer_answer(monkeypatch, {"network": "mainnet", "produced": 1})
+    assert agent._producer_request("abc123", {"from": 1, "to": 9, "network": "sequence"}) is None
+    assert warned

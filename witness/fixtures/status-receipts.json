@@ -1,51 +1,101 @@
 {
- "priv": "6666666666666666666666666666666666666666666666666666666666666666",
- "address": "db2430b4e9ac14be6554d3942822be74811a1af9",
- "receipts": [
-  {
-   "bw": {
-    "addresses": [
-     "db2430b4e9ac14be6554d3942822be74811a1af9"
-    ],
-    "payload_hashes": [
-     "62edb5434dc5b606d733b93f26049b347d8fb9e96e93b03277915a12a7f294b8"
-    ],
-    "payload_schemas": [
-     "com.jimtheexplorer.pet.witness"
-    ],
-    "previous_hashes": [
-     null
-    ],
-    "schema": "network.xyo.boundwitness",
-    "$signatures": [
-     "b94421434592d48c68115491eff6da92e22b540bda337db6fe0df97ef13cb3ab2b5b3aafe6d6de7f76a47f43bd8742669ce9385abf957366582f4310c0068188"
-    ]
-   },
-   "payload": {
-    "schema": "com.jimtheexplorer.pet.witness",
-    "v": 1,
-    "network": "mainnet",
-    "block": 1000,
-    "blockHash": "5091bda04ce962837ee527acee070f60ca5da3216e21ecf6dabd574838d155e3",
-    "seenAt": 1792333994,
-    "pet": "dragon",
-    "verified": [
-     "content-hash",
-     "producer-signature"
-    ],
-    "mood": "happy",
-    "stage": "young",
-    "level": 3,
-    "days": 21,
-    "bond": 2,
-    "tricks": 3,
-    "rank": 17,
-    "field": 120,
-    "blocks": 340,
-    "hats": 4,
-    "items": 9,
-    "marks": 250
-   }
+  "priv": "6666666666666666666666666666666666666666666666666666666666666666",
+  "address": "db2430b4e9ac14be6554d3942822be74811a1af9",
+  "receipts": [
+    {
+      "bw": {
+        "addresses": [
+          "db2430b4e9ac14be6554d3942822be74811a1af9"
+        ],
+        "payload_hashes": [
+          "62edb5434dc5b606d733b93f26049b347d8fb9e96e93b03277915a12a7f294b8"
+        ],
+        "payload_schemas": [
+          "com.jimtheexplorer.pet.witness"
+        ],
+        "previous_hashes": [
+          null
+        ],
+        "schema": "network.xyo.boundwitness",
+        "$signatures": [
+          "b94421434592d48c68115491eff6da92e22b540bda337db6fe0df97ef13cb3ab2b5b3aafe6d6de7f76a47f43bd8742669ce9385abf957366582f4310c0068188"
+        ]
+      },
+      "payload": {
+        "schema": "com.jimtheexplorer.pet.witness",
+        "v": 1,
+        "network": "mainnet",
+        "block": 1000,
+        "blockHash": "5091bda04ce962837ee527acee070f60ca5da3216e21ecf6dabd574838d155e3",
+        "seenAt": 1792333994,
+        "pet": "dragon",
+        "verified": [
+          "content-hash",
+          "producer-signature"
+        ],
+        "mood": "happy",
+        "stage": "young",
+        "level": 3,
+        "days": 21,
+        "bond": 2,
+        "tricks": 3,
+        "rank": 17,
+        "field": 120,
+        "blocks": 340,
+        "hats": 4,
+        "items": 9,
+        "marks": 250
+      }
+    },
+    {
+      "bw": {
+        "addresses": [
+          "db2430b4e9ac14be6554d3942822be74811a1af9"
+        ],
+        "payload_hashes": [
+          "c98064ae635af73d8e08e17ca67b252e9ffa66e2321ebbf99350cc57762c03ef"
+        ],
+        "payload_schemas": [
+          "com.jimtheexplorer.pet.witness"
+        ],
+        "previous_hashes": [
+          "e2da3401048140f68897ca3915f2a1e19403d96212231653ed97dc1f573b9fc7"
+        ],
+        "schema": "network.xyo.boundwitness",
+        "$signatures": [
+          "add78d39a35f0865a242841aac670b3e131cf4a228d250cd3e13b06041bec83d2688cb7ef2cef1d80692086974fc09557b9b012ba3e5f3358eb785601044834c"
+        ]
+      },
+      "payload": {
+        "schema": "com.jimtheexplorer.pet.witness",
+        "v": 1,
+        "network": "mainnet",
+        "block": 1000,
+        "blockHash": "5091bda04ce962837ee527acee070f60ca5da3216e21ecf6dabd574838d155e3",
+        "seenAt": 1792337594,
+        "pet": "dragon",
+        "verified": [
+          "content-hash",
+          "producer-signature"
+        ],
+        "mood": "happy",
+        "stage": "young",
+        "level": 3,
+        "days": 21,
+        "bond": 2,
+        "tricks": 3,
+        "rank": 17,
+        "field": 120,
+        "blocks": 340,
+        "hats": 4,
+        "items": 9,
+        "marks": 250,
+        "watch": "8cedd6a9586a9d1bc95124743b98f52dd36881f907056a0e9bd023e632512edd"
+      }
+    }
+  ],
+  "watch": {
+    "salt": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    "producer": "0123456789abcdef0123456789abcdef01234567"
   }
- ]
 }

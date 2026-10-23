@@ -225,12 +225,24 @@ const STATUS_MAX = { days: 100000, bond: 4, tricks: 20, rank: 100000, field: 100
 const receiptKind = (payload) => {
   const extra = Object.keys(payload).filter((k) => !PL_KEYS.includes(k)).sort();
   if (!extra.length) return "plain";
+  // a status may also carry `watch`, a commitment to the producer its pet watches (see watchCommitment); no other kind may
+  const bare = extra.filter((k) => k !== "watch");
+  if (bare.length !== extra.length) return same(bare, EXTRAS.status) ? "status" : null;
   return Object.keys(EXTRAS).find((k) => same(extra, EXTRAS[k])) ?? null;
 };
 const FORECAST_DAY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const FORECAST_MAX = 10_000_000;
 /** What a forecast came to: below its range, above it, or inside. */
 export const forecastOutcome = (actual, low, high) => (actual < low ? "below" : actual > high ? "above" : "inside");
+
+/**
+ * The commitment a status can carry to the producer its pet watches: sha256 of "pet-watch:v1|<salt>|<producer address, lower case>". The salt is a random
+ * secret the owner's phone keeps; without it the commitment says nothing about which producer, and with it (and the address) the owner can prove it.
+ */
+export const watchCommitment = (salt, producer) => sha256Hex(`pet-watch:v1|${String(salt)}|${String(producer).toLowerCase()}`);
+/** Does this salt and producer open this commitment? Only the owner, who holds the salt, can show it. */
+export const checkWatch = async (commitment, salt, producer) =>
+  typeof commitment === "string" && HEX64.test(commitment) && typeof salt === "string" && salt.length >= 16 && (await watchCommitment(salt, producer)) === commitment;
 
 /** Is this a sound receipt? { ok, why, summary }. Fails closed on anything it does not expect. */
 export const checkReceipt = async (bw, payload) => {
@@ -270,6 +282,7 @@ export const checkReceipt = async (bw, payload) => {
     for (const [k, max] of Object.entries(STATUS_MAX)) if (!isInt(payload[k]) || payload[k] < 0 || payload[k] > max) return fail(`bad ${k}`);
     if (payload.stage !== stageOfDays(payload.days)) return fail("the stage is not the one those days make");
     if (payload.rank > 0 && payload.field < payload.rank) return fail("a rank cannot be below the last place");
+    if ("watch" in payload && !(typeof payload.watch === "string" && HEX64.test(payload.watch))) return fail("bad watch");
   }
   if (kind === "call") {
     if (!count(payload.middle) || payload.middle < payload.low || payload.middle > payload.high) return fail("the middle is outside the range");
@@ -289,7 +302,8 @@ export const checkReceipt = async (bw, payload) => {
   return {
     ok: true,
     summary: { network: payload.network, block: payload.block, blockHash: payload.blockHash, seenAt: payload.seenAt, pet: payload.pet, address, receiptHash, previous: prev,
-      ...(kind === "plain" ? {} : { kind, ...Object.fromEntries(EXTRAS[kind].map((k) => [k, payload[k]])) }) },
+      ...(kind === "plain" ? {} : { kind, ...Object.fromEntries(EXTRAS[kind].map((k) => [k, payload[k]])) }),
+      ...(kind === "status" && "watch" in payload ? { watch: payload.watch } : {}) },
   };
 };
 

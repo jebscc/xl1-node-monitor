@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { writeFileSync } from 'node:fs'
 
-import { COVERIFIED, MOODS, STAGES, stageOfDays, SUBMISSION_MAX, checkCowitness, checkForecast, forecastOutcome, checkSubmission, walkLedger, readAnchor, verifyLedgerDay, BATCH_MAX, BATCH_SCHEMA, RECEIPT_SCHEMA, buildBatchDocument, filedReceipt, stripMeta, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
+import { COVERIFIED, MOODS, checkWatch, watchCommitment, STAGES, stageOfDays, SUBMISSION_MAX, checkCowitness, checkForecast, forecastOutcome, checkSubmission, walkLedger, readAnchor, verifyLedgerDay, BATCH_MAX, BATCH_SCHEMA, RECEIPT_SCHEMA, buildBatchDocument, filedReceipt, stripMeta, verifyBatchDocument, batchLeaf, batchRoot, bytesToHex, checkBlock, checkDeed, checkReceipt, dataHash, describeDeed, keccak256, recoverAddresses, signedBy, verifyBatchProof, verifyReceipt } from './witness.js'
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const load = (n) => readFileSync(join(dir, n), 'utf8')
@@ -233,6 +233,30 @@ await test('a pet\'s status, made by the SDK, is a sound receipt that says only 
   assert.deepEqual(MOODS, ['happy', 'neutral', 'worried', 'sad', 'unknown'])
   assert.deepEqual([0, 6, 7, 29, 30, 99, 100, 299, 300, 5000].map(stageOfDays), ['hatchling', 'hatchling', 'young', 'young', 'grown', 'grown', 'veteran', 'veteran', 'elder', 'elder'])
   assert.deepEqual(STAGES.map(([n]) => n), ['hatchling', 'young', 'grown', 'veteran', 'elder'])
+})
+
+await test('a status can commit to the producer its pet watches, and only the salt opens it', async () => {
+  const fx = json('status-receipts.json')
+  const [plain, withWatch] = fx.receipts
+  const r = await checkReceipt(withWatch.bw, withWatch.payload)
+  assert.equal(r.ok, true, r.why)
+  assert.equal(r.summary.kind, 'status')
+  assert.equal(r.summary.watch, withWatch.payload.watch)
+  assert.equal((await checkReceipt(plain.bw, plain.payload)).summary.watch, undefined, 'a status without one is still a status, and says nothing of a producer')
+  // the commitment is what the producer's address and the owner's salt make, and nothing else opens it
+  const { salt, producer } = fx.watch
+  assert.equal(await watchCommitment(salt, producer), withWatch.payload.watch)
+  assert.equal(await checkWatch(withWatch.payload.watch, salt, producer), true)
+  assert.equal(await checkWatch(withWatch.payload.watch, salt, producer.toUpperCase()), true, 'an address is the same address in either case')
+  assert.equal(await checkWatch(withWatch.payload.watch, salt, '1'.repeat(40)), false, 'another producer')
+  assert.equal(await checkWatch(withWatch.payload.watch, 'f'.repeat(64), producer), false, 'another salt')
+  assert.equal(await checkWatch(withWatch.payload.watch, 'short', producer), false, 'a guessable salt is not accepted')
+  assert.equal(JSON.stringify(withWatch.payload).includes(producer), false, 'the producer is nowhere in the receipt')
+  // a bad commitment is refused for that reason; and only a status may carry one
+  const bad = clone(withWatch); bad.payload.watch = 'nope'
+  assert.equal((await checkReceipt(bad.bw, bad.payload)).why, 'bad watch')
+  const other = clone(json('cowitness-receipts.json').receipts[0]); other.payload.watch = withWatch.payload.watch
+  assert.equal((await checkReceipt(other.bw, other.payload)).why, 'the payload has fields a receipt does not')
 })
 
 await test('a status with a mood, level, count or stage outside what is allowed is refused for that reason', async () => {

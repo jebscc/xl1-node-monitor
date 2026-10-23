@@ -289,7 +289,7 @@ phone's own count, and nothing here makes it right. The evening's call of the ra
 
 ## A pet's status
 
-A pet can record how it is. A status is a receipt like any other (signed against the newest block when it was made) with twelve extra payload fields and no
+A pet can record how it is. A status is a receipt like any other (signed against the newest block when it was made) with twelve extra payload fields (and one optional, `watch`, below) and no
 others, each a number inside a fixed range or a word from a fixed list, so there is nothing free-form in it to leak:
 
 | field    | value |
@@ -308,6 +308,13 @@ to nothing else. `checkReceipt` returns the fields as the summary with `kind` of
 
 What it shows: this key said these things at this time, against this block, and not before it. What it does not show: that any of them is true. `rank`, `field` and `blocks` are
 what the pet read about a producer it does not name, so nobody can check them against the chain; the rest is the phone's own record.
+
+A status may also carry one more field, `watch`: 64 lower-case hex characters, `sha256("pet-watch:v1|" + salt + "|" + producer)` where `producer` is the address of the
+one producer the pet watches, in lower case, and `salt` is a random secret (at least 16 characters) that only the pet's owner holds. It is left out for a pet that
+watches several producers or none, and no other kind of receipt may carry it. Without the salt it says nothing about which producer: it cannot be reversed or guessed
+from the address. With the salt and the address the owner can show that this pet, at this block, watched that producer, and anyone can check it
+(`watchCommitment` and `checkWatch` in `witness.js`; `watch_commitment` and `check_watch` in the backend). It does not show that the producer is real, or that the pet
+watched it for any longer than this one status; and a pet that loses its salt can no longer open it. Statuses made before this field existed are still valid without it.
 
 A phone records a status at most once an hour: when the mood, stage or level has changed (and at least half an hour after the last), and once a day whatever has changed.
 

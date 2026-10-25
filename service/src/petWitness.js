@@ -337,6 +337,7 @@ const DEED_FIELDS = {
   week: ["week", "receipts", "blocks", "sealed", "anchored", "root"],
   growth: ["pet", "first", "level", "days", "receipts", "bond"],
   submission: ["receipts", "root"],
+  built: ["project", "tier", "done"],
 };
 /** A Sentinel's submission names at most this many receipts: one bundle is one phone's hour or two of work, not a firehose. */
 export const SUBMISSION_MAX = 20;
@@ -370,6 +371,7 @@ export const checkDeed = async (bw, payload) => {
     received: () => !SLUG.test(payload.item) || !addr(payload.from) || !(typeof payload.gift === "string" && HEX64.test(payload.gift)),
     week: () => !(typeof payload.week === "string" && WEEK_ID.test(payload.week)) || !["receipts", "blocks", "sealed", "anchored"].every((k) => COUNT(payload[k])) || !(typeof payload.root === "string" && HEX64.test(payload.root)),
     submission: () => !isInt(payload.receipts) || payload.receipts < 1 || payload.receipts > SUBMISSION_MAX || !(typeof payload.root === "string" && HEX64.test(payload.root)),
+    built: () => !SLUG.test(payload.project) || !isInt(payload.tier) || payload.tier < 1 || payload.tier > 5 || !isInt(payload.done) || payload.done <= 0,
     growth: () => !addr(payload.pet) || !(typeof payload.first === "string" && DAY.test(payload.first)) || !["level", "days", "receipts", "bond"].every((k) => COUNT(payload[k])) || payload.level > 30 || payload.days < 1,
   }[payload.kind]();
   if (bad) return fail(`bad ${payload.kind} deed`);
@@ -439,6 +441,7 @@ export const describeDeed = (d) => {
     case "week": return `Week ${d.week}: ${d.receipts} receipt${d.receipts === 1 ? "" : "s"} for ${d.blocks} block${d.blocks === 1 ? "" : "s"}, ${d.sealed} day${d.sealed === 1 ? "" : "s"} sealed, ${d.anchored} on the chain. Its fingerprint is ${d.root}.`;
     case "submission": return `The Sentinel at ${d.address} submitted ${d.receipts} receipt${d.receipts === 1 ? "" : "s"}, under the root ${d.root}.`;
     case "growth": return `The pet at ${d.pet} reached level ${d.level}: ${d.days} day${d.days === 1 ? "" : "s"} witnessed since ${d.first}, ${d.receipts} receipt${d.receipts === 1 ? "" : "s"}, ${d.bond} bond point${d.bond === 1 ? "" : "s"}. The keeper's own count.`;
+    case "built": return `The Builders finished tier ${d.tier} of ${nice(d.project)} on ${new Date(d.done * 1000).toISOString().slice(0, 10)}.`;
     default: return "A deed.";
   }
 };

@@ -153,7 +153,7 @@ await test('a co-witness that was changed, mislabelled or pointed at the wrong r
 
 await test('deeds the SDK made are sound, say what they say, and are not receipts', async () => {
   const deeds = json('deed-receipts.json')
-  assert.equal(deeds.receipts.length, 7)
+  assert.equal(deeds.receipts.length, 8)
   for (const d of deeds.receipts) {
     const r = await checkDeed(d.bw, d.payload)
     assert.equal(r.ok, true, d.payload.kind)
@@ -168,6 +168,26 @@ await test('deeds the SDK made are sound, say what they say, and are not receipt
   assert.equal(growth.payload.kind, 'growth')
   assert.equal(describeDeed((await checkDeed(growth.bw, growth.payload)).summary),
     'The pet at 3ab9c1e07d5f4a6b8c2d1e0f9a8b7c6d5e4f3a2b reached level 4: 21 days witnessed since 2026-09-01, 640 receipts, 52 bond points. The keeper\'s own count.')
+})
+
+await test('a built deed (signed by the app, checked here) says what it says, and every way of bending it is refused', async () => {
+  const deeds = json('deed-receipts.json')
+  const built = deeds.receipts[7]
+  assert.equal(built.payload.kind, 'built')
+  const ok = await checkDeed(built.bw, built.payload)
+  assert.equal(ok.ok, true, ok.why)
+  assert.equal(describeDeed(ok.summary), 'The Builders finished tier 2 of library on 2026-10-19.')
+  assert.equal(ok.summary.previous, (await checkDeed(deeds.receipts[6].bw, deeds.receipts[6].payload)).summary.receiptHash, 'it follows the deed before it in the keeper\'s own chain')
+  for (const [field, value, why] of [['tier', 0, 'tier below 1'], ['tier', 6, 'tier above 5'], ['tier', 1.5, 'tier not whole'], ['project', 'Library', 'project not a slug'], ['project', '', 'no project'], ['done', 0, 'no finish time'], ['done', -5, 'negative finish time']]) {
+    const bad = clone(built); bad.payload[field] = value
+    assert.equal((await checkDeed(bad.bw, bad.payload)).ok, false, why)
+  }
+  const extra = clone(built); extra.payload.mayor = 'me'
+  assert.equal((await checkDeed(extra.bw, extra.payload)).ok, false, 'a field a built deed does not have')
+  const missing = clone(built); delete missing.payload.done
+  assert.equal((await checkDeed(missing.bw, missing.payload)).ok, false, 'a field it lacks')
+  const moved = clone(built); moved.payload.tier = 3
+  assert.equal((await checkDeed(moved.bw, moved.payload)).ok, false, 'the payload is not the one signed')
 })
 
 await test('the Diviner\'s call and its result, made by the SDK, are sound receipts and settle each other', async () => {

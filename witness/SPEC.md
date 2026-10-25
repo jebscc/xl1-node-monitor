@@ -184,7 +184,7 @@ checked; they measure nothing else.
 ## Deeds: what a pet owns and has done
 
 A second schema, `com.jimtheexplorer.pet.deed`, uses the same bound witness, hashing and signing as a receipt.
-A deed is signed by a pet's **Archivist** key, a key that holds nothing, and says one of seven things. `seenAt` is
+A deed is signed by a pet's **Archivist** key, a key that holds nothing, and says one of eight things. `seenAt` is
 the phone's own clock, as in a receipt. The payload carries exactly `schema`, `v` (1), `kind`, `seenAt` and the
 fields of its kind; a verifier refuses a payload with any other field.
 
@@ -197,6 +197,7 @@ fields of its kind; a verifier refuses a payload with any other field.
 | `week`      | `week` (`YYYY-Www`), `receipts`, `blocks`, `sealed`, `anchored` (integers, 0 or more), `root` (64 hex) | what the pets did that ISO week |
 | `growth`    | `pet` (40 hex: the pet's address), `first` (`YYYY-MM-DD`), `level` (0 to 30), `days` (at least 1), `receipts`, `bond` (integers, 0 or more) | the pet reached that level, by the keeper's own running count |
 | `submission`| `receipts` (integer, 1 to 20), `root` (64 hex) | the signer submits those receipts, named by their Merkle root: see "Pets witnessing one another" |
+| `built`     | `project` (slug), `tier` (integer, 1 to 5), `done` (integer: seconds since 1970 when the job finished) | the town's Builders finished that tier of that place at that time |
 
 A `growth` deed is made each time a pet's level rises. Its numbers are the keeper's own count of the days a pet has
 witnessed the chain (it needs a receipt that day), its receipts, and the bond with its person; level follows from them
@@ -204,6 +205,12 @@ by a published curve (points = days x 10 + receipts/20 capped at 5 per day + bon
 It proves the keeper signed that count and that each level was reached after the one before (chained by the previous
 hash). The receipts it counts are checkable one by one; the count itself, once old receipts have been dropped from a
 phone, is the keeper's word, and says so.
+
+A `built` deed is made once for each job the Builders finish in the pets' town (a new place, or a bigger tier of one; a house upgrade is not one), by the keeper that signs
+the rest, and says only what the phone's own record says: that this job was finished at that time. `done` is the finish time the phone had written down, and the deed's
+`seenAt` is when the keeper signed it, which may be later (a job that finished while the app was shut is signed when the app is next open). It proves the keeper signed that
+statement; nothing about the town can be checked from it but what the other deeds say, and it carries no coordinates, names or amounts. It joins the week's deed ledger
+below like any other deed.
 
 `root` is the sha256 of one line, `YYYY-Www|count|hash,hash,...`: the hashes of that week's receipts (the
 hash of each receipt's bound witness), once each, sorted, as the day's seal is made. Anyone holding

@@ -206,6 +206,35 @@
     "receipts": 2,
     "root": "04b07af832b113616271cd16a935522fc368158a15f4132e1df52ee9dec10497"
    }
+  },
+  {
+   "bw": {
+    "addresses": [
+     "5cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb"
+    ],
+    "payload_hashes": [
+     "1d94ecbf992cf4a262058c9ed9b3e41173edc05e6cf8a695d88c23f6c7968e4a"
+    ],
+    "payload_schemas": [
+     "com.jimtheexplorer.pet.deed"
+    ],
+    "previous_hashes": [
+     "a5039a9ef0773b5a3486f97e4b2e9db510806c0f5e3d07dec650638e309d57da"
+    ],
+    "schema": "network.xyo.boundwitness",
+    "$signatures": [
+     "9e8665e0fcbfb2da00c8bc4f822f6c0280cda2286576b7814429da762fb18e251e0d93b1333356df07db25a4987cd7d591a35f8249286c496e30ad91ab750c40"
+    ]
+   },
+   "payload": {
+    "schema": "com.jimtheexplorer.pet.deed",
+    "v": 1,
+    "kind": "built",
+    "seenAt": 1792400060,
+    "project": "library",
+    "tier": 2,
+    "done": 1792400000
+   }
   }
  ]
 }

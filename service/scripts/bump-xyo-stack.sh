@@ -4,6 +4,8 @@
 #
 #   bash scripts/bump-xyo-stack.sh           show what would change
 #   bash scripts/bump-xyo-stack.sh --apply   change it, then run every gate
+#   ... --compatible                         take the newest versions that FIT TOGETHER
+#                                            rather than the newest of each (see below)
 #
 # WHY THIS EXISTS. On 2026-09-22 the stack was pinned to 5.6.0 by hand, and
 # 5.6.1 had been published while the work was going on. Nothing was wrong with
@@ -33,7 +35,15 @@
 set -u
 
 APPLY=0
-[ "${1:-}" = "--apply" ] && APPLY=1
+COMPAT=0
+for _a in "$@"; do
+  case "$_a" in
+    --apply) APPLY=1 ;;
+    --compatible) COMPAT=1 ;;
+    *) printf 'bump-xyo-stack: unknown option %s (use --apply, --compatible)
+' "$_a" >&2; exit 2 ;;
+  esac
+done
 
 cd "$(dirname "$0")/.." || { echo "cannot reach the repository root"; exit 1; }
 ROOT="$(pwd)"
@@ -152,12 +162,45 @@ latest() {   # latest <package>
     | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -1
 }
 
-head_ "Pinned here, against what npm has"
+# --compatible: THE NEWEST SET THAT FITS TOGETHER, NOT THE NEWEST OF EACH.
+#
+# The stack's packages do not all move to a new major on the same day. On 2026-11-20 (and again when
+# xl1-sdk 5.10.0 came out) @xyo-network/sdk 9 was published while xl1-sdk and xl1-protocol still asked
+# for sdk 7 or 8: "the newest of everything" could not be satisfied, the peer audit below correctly
+# refused it, and the operator was left with no way to take the parts that DO fit. This asks
+# scripts/compatible-stack.mjs for the newest version of each that meets every other's peer
+# requirements, never lowering anything below what is pinned, and the same gates then prove it.
+RESOLVED=""
+if [ "$COMPAT" = 1 ]; then
+  # Reading peer ranges needs node and nothing else: the host's if it has one, otherwise the service's image.
+  if ! command -v node >/dev/null 2>&1 && [ "$RUNNER" = none ]; then fail "--compatible needs node (on the host or in docker) to read the peer requirements"; exit 2; fi
+  [ -f "$SVC/scripts/compatible-stack.mjs" ] || { fail "no scripts/compatible-stack.mjs in this tree"; exit 2; }
+  _res_err="/tmp/compat-stack.$$"
+  if command -v node >/dev/null 2>&1; then
+    RESOLVED="$( cd "$SVC" && node scripts/compatible-stack.mjs package.json 2>"$_res_err" )"
+  else
+    RESOLVED="$(svc_sh "node scripts/compatible-stack.mjs package.json" 2>"$_res_err")"
+  fi
+  _res_rc=$?
+  [ -s "$_res_err" ] && sed -n 's/^compatible-stack: /   held: /p' "$_res_err" | while IFS= read -r _l; do note "${_l#   held: }"; done
+  rm -f "$_res_err"
+  if [ "$_res_rc" != 0 ] || ! printf '%s
+' "$RESOLVED" | grep -q '='; then
+    fail "could not work out a compatible set (the registry may be unreachable)."; exit 1
+  fi
+fi
+
+if [ "$COMPAT" = 1 ]; then head_ "Pinned here, against the newest set that fits together"; else head_ "Pinned here, against what npm has"; fi
 MOVES=""
 UNREACHED=""
 while IFS="$(printf '\t')" read -r name have; do
   [ -n "$name" ] || continue
-  want="$(latest "$name")"
+  if [ "$COMPAT" = 1 ]; then
+    want="$(printf '%s
+' "$RESOLVED" | sed -n "s|^$name=||p" | head -1)"
+  else
+    want="$(latest "$name")"
+  fi
   if [ -z "$want" ]; then
     # NOT TREATED AS "UP TO DATE". A registry that cannot be reached tells us
     # nothing, and the shape of this script makes silence look like agreement.
@@ -183,7 +226,8 @@ if [ -z "$MOVES" ]; then
     warn "nothing to move among the ones that answered, and some did not answer."
     exit 1
   fi
-  good "every pinned package is already the newest published."
+  if [ "$COMPAT" = 1 ]; then good "every pinned package is already the newest that fits with the others."
+  else good "every pinned package is already the newest published."; fi
   exit 0
 fi
 

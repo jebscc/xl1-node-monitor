@@ -851,8 +851,22 @@ find_bump() {
   done
 }
 
+# THE COMPATIBLE VERSION OF CHOICE 7 (choice c). Choice 7 takes the newest published version of every
+# package and then proves them; when the stack's packages have not all moved to a new major together
+# (2026-11-20: @xyo-network/sdk 9 out while xl1-sdk and xl1-protocol still ask for sdk 7 or 8) the peer
+# audit refuses, correctly, and the operator is left with nothing. This takes the newest set that FITS
+# TOGETHER instead, never lowering anything below what is pinned, and the same gates prove that.
+a_service_compat() {
+  SDK_COMPAT=1
+  a_service
+  _rc=$?
+  SDK_COMPAT=0
+  return $_rc
+}
+
 a_service() {
-  say "${B}Update the XYO SDK${X}"
+  if [ "${SDK_COMPAT:-0}" = 1 ]; then say "${B}Update the XYO SDK -- the newest versions that fit together${X}"
+  else say "${B}Update the XYO SDK${X}"; fi
   # THIS TAKES THE NEWEST PUBLISHED VERSIONS AND PROVES THEM. The pins are
   # exact versions in package.json, so moving them is a change to that file;
   # the bump script asks npm what is newest, writes it, resolves the lockfile
@@ -871,7 +885,11 @@ a_service() {
     err "no checkout of the anchor service here, so nothing to update."
     return 1
   fi
-  confirm_action "Moves the SDK pins to the newest published versions, runs every gate, and REBUILDS the anchor service onto them." || return 1
+  if [ "${SDK_COMPAT:-0}" = 1 ]; then
+    confirm_action "Moves the SDK pins to the newest versions that fit together (a package is held back where another needs it older, and nothing goes below what is pinned), runs every gate, and REBUILDS the anchor service onto them." || return 1
+  else
+    confirm_action "Moves the SDK pins to the newest published versions, runs every gate, and REBUILDS the anchor service onto them." || return 1
+  fi
   _before="$(xyo_stack)"
   note "pinned in this checkout now:"
   printf '%s%s%s\n' "$D" "$_before" "$X"
@@ -887,7 +905,9 @@ a_service() {
   # covers both the pins moving and the rebuild regardless of which path gets
   # there. deploy_now is the same call the normal path makes two lines below
   # this one, after an actual bump -- not a second, different deploy.
-  if report_behind; then
+  # (Not in the compatible mode: report_behind asks whether anything is newer than the pins, and with
+  # the newest sdk held back for a good reason the answer is always yes. The bump script decides there.)
+  if [ "${SDK_COMPAT:-0}" != 1 ] && report_behind; then
     report_running
     deploy_now || return 1
     return 0
@@ -902,9 +922,25 @@ a_service() {
   fi
   # IT BORROWS NODE FROM THE SERVICE'S OWN IMAGE, so this host needs no
   # toolchain -- which is the point, the Pi has neither node nor pnpm.
-  do_cmd "sudo bash $_bump --apply" || return 1
+  if [ "${SDK_COMPAT:-0}" = 1 ]; then
+    do_cmd "sudo bash $_bump --apply --compatible" || return 1
+  else
+    do_cmd "sudo bash $_bump --apply" || {
+      # THE REFUSAL TO EXPECT: the newest of everything cannot be satisfied when one package has moved
+      # to a new major before the packages that depend on it. Say what to do rather than leave a failure.
+      warn "if the peer audit above failed, the newest versions do not fit together yet."
+      warn "choice c takes the newest set that does."
+      return 1
+    }
+  fi
 
   _after="$(xyo_stack)"
+  if [ "$_before" = "$_after" ] && [ "${SDK_COMPAT:-0}" = 1 ]; then
+    ok "already on the newest versions that fit together; nothing to move"
+    report_running
+    deploy_now
+    return $?
+  fi
   if [ "$_before" = "$_after" ]; then
     err "the pins did not move. The bump puts the files back when a gate"
     err "fails, so this checkout is as it was -- read the gate above."
@@ -1507,6 +1543,7 @@ ITEMS="
 5|Update the node CLI (build, promote, restart)|a_build_image
 6|Promote an image and restart onto it|a_promote
 7|Update the XYO SDK (and deploy it)|a_service
+c|Update the XYO SDK, versions that fit together (deploy)|a_service_compat
 8|Update the heartbeat agent|a_agent
 9|Logs|a_logs
 i|Update the node image recipe (xl1-docker-images)|a_recipe

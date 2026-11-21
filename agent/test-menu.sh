@@ -1093,6 +1093,23 @@ else
   bad "choice 7 is not in the table under a name this checks"
 fi
 
+# CHOICE c: THE SDK UPDATE THAT TAKES WHAT FITS. Choice 7 takes the newest of every package and the peer audit
+# rightly refuses when one package has moved to a new major before the ones that depend on it (2026-11-20, and
+# again with xl1-sdk 5.10.0). Without this the operator had no way to take the parts that do fit.
+if printf '%s' "$SRC" | grep -q '^c|.*|a_service_compat$'; then ok "choice c is in the table"; else bad "choice c (the compatible SDK update) is missing"; fi
+COMPAT_FN="$(printf '%s' "$SRC" | sed -n '/^a_service_compat() {/,/^}/p')"
+if printf '%s' "$COMPAT_FN" | grep -q 'SDK_COMPAT=1' && printf '%s' "$COMPAT_FN" | grep -q 'a_service'; then
+  ok "it is the same action as 7, in the compatible mode"
+else
+  bad "choice c is not choice 7 with the mode set" "a second copy of the deploy path would drift from the first"
+fi
+if printf '%s' "$COMPAT_FN" | grep -q 'SDK_COMPAT=0'; then ok "and the mode is put back, so the next choice 7 is not compatible by accident"; else bad "SDK_COMPAT is left set after choice c"; fi
+if printf '%s' "$SRC" | grep -q 'sudo bash \$_bump --apply --compatible'; then ok "it runs the bump script with --compatible"; else bad "choice c does not pass --compatible"; fi
+# the shortcut that skips the bump when "nothing is newer" must not run in this mode: with the newest sdk held
+# back for a reason, something is ALWAYS newer, and the bump script is the one that knows why
+if printf '%s' "$SRC" | grep -q 'SDK_COMPAT:-0}" != 1 \] && report_behind'; then ok "the 'already newest' shortcut is not taken in the compatible mode"; else bad "report_behind decides in the compatible mode" "it would say 'behind' for ever"; fi
+if printf '%s' "$SRC" | grep -q 'choice c takes the newest set that does'; then ok "choice 7 says what to do when the newest versions do not fit"; else bad "choice 7's refusal does not point at choice c"; fi
+
 # --- the build must not bury the thing it was asked about --------------------
 #
 # buildkit redraws its progress in place on a terminal and APPENDS when it

@@ -353,7 +353,13 @@ gate_file() { # gate_file <label> <file that must exist> <command...>
 }
 
 gate "resolving the lockfile" pnpm install --no-frozen-lockfile || exit 1
-gate "installing as the build does" pnpm install --frozen-lockfile || exit 1
+# FROM A CLEAN node_modules, AS THE DOCKERFILE BUILDS. pnpm does not remove the packages a previous,
+# failed bump left in node_modules/.pnpm, and the peer audit reads that directory: on 2026-11-21 the
+# newest set that fits together (sdk held on 8.1.2) failed with "@xyo-network/sdk@9.0.0 ... got" copies
+# that an earlier attempt had installed and nothing had cleared -- versions this run never asked for.
+# Reproduced and fixed: the same lockfile audits clean from a fresh install. So the install the audit
+# reads is a fresh one, and a stale tree can neither fail a good bump nor pass a bad one.
+gate "installing as the build does" rm -rf node_modules "&&" pnpm install --frozen-lockfile || exit 1
 gate "typecheck" pnpm run typecheck || exit 1
 gate_file "peer audit" scripts/peer-audit.mjs node scripts/peer-audit.mjs . || exit 1
 gate_file "the anchored hash" test-attestation-hash.mjs "$(py_prefix)node test-attestation-hash.mjs" || exit 1

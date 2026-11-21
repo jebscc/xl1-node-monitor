@@ -480,43 +480,6 @@ fi
 # not create. Every wizard run puts the node back into that state, and the
 # failure arrives AFTER a successful build -- which is why it read twice as
 # "the deploy worked and then did not".
-# --- falling behind ----------------------------------------------------------
-#
-# A merged bump reaches the node only when the checkout is pulled, so a node
-# can sit a patch behind for a week with nothing saying so -- which is exactly
-# what happened: the panel read "5.6.1 available" while the service ran 5.6.0
-# and the deploy reported success both times, correctly.
-printf '
-falling behind
-'
-BEHIND="$(printf '%s' "$SRC" | sed -n '/^report_behind() {/,/^}/p')"
-
-if printf '%s' "$DEPLOY" | grep -q 'report_behind'; then
-  ok "the deploy says when npm has something newer"
-else
-  bad "nothing compares the pins against the registry"       "a node stays a version behind and every run reports success"
-fi
-
-# IT ONLY REPORTS. Rewriting package.json here would put the Pi on a version
-# no typecheck in this repository has ever seen, and the lockfile beside it
-# would stop describing the tree -- which `pnpm install --frozen-lockfile`,
-# the image build's own step, then refuses.
-if printf '%s' "$BEHIND" | grep -qE '(>|tee|sed -i).*package\.json'; then
-  bad "it edits package.json on the node"       "the lockfile would no longer describe the tree, and the build would refuse it"
-else
-  ok "it reports rather than rewriting the pins on the node"
-fi
-if printf '%s' "$BEHIND" | grep -q 'xyo_stack'; then
-  ok "the list of packages comes from the file, not a second copy"
-else
-  bad "the package list is written out again" "one of the two copies goes stale"
-fi
-if printf '%s' "$BEHIND" | grep -q 'command -v curl'; then
-  ok "no curl means it says so rather than reporting everything current"
-else
-  bad "a missing curl would read as up to date"       "the quietest way to be behind is to be told you are not"
-fi
-
 # --- what is actually running ------------------------------------------------
 #
 # A THIRD READING, and the one that was missing. The checkout can pin 5.6.1
@@ -1032,7 +995,7 @@ fi
 # deploying afterwards would rebuild the code that was already there and
 # report it as an update.
 B_BUMP="$(printf '%s' "$SVC" | grep -n 'bump.*--apply' | head -1 | cut -d: -f1)"
-B_MOVED="$(printf '%s' "$SVC" | grep -n 'the pins did not move' | head -1 | cut -d: -f1)"
+B_MOVED="$(printf '%s' "$SVC" | grep -n 'nothing to move' | head -1 | cut -d: -f1)"
 # THE deploy_now AFTER THE MOVED CHECK, not the first one in the function.
 # There are now two: report_behind's own early-return path calls it before
 # any bump is even attempted, for the "already current, container just never
@@ -1085,7 +1048,7 @@ else
 fi
 
 # The label is the only thing most operators read before pressing the key.
-if printf '%s' "$SRC" | grep -q '7|Update the XYO SDK (and deploy it)|a_service'; then
+if printf '%s' "$SRC" | grep -q '7|Update the XYO SDK, newest that fits (deploy)|a_service'; then
   ok "the menu says it deploys"
 elif printf '%s' "$SRC" | grep -q '7|.*no deploy'; then
   bad "the menu still promises not to deploy" "it does now"
@@ -1093,22 +1056,16 @@ else
   bad "choice 7 is not in the table under a name this checks"
 fi
 
-# CHOICE c: THE SDK UPDATE THAT TAKES WHAT FITS. Choice 7 takes the newest of every package and the peer audit
-# rightly refuses when one package has moved to a new major before the ones that depend on it (2026-11-20, and
-# again with xl1-sdk 5.10.0). Without this the operator had no way to take the parts that do fit.
-if printf '%s' "$SRC" | grep -q '^c|.*|a_service_compat$'; then ok "choice c is in the table"; else bad "choice c (the compatible SDK update) is missing"; fi
-COMPAT_FN="$(printf '%s' "$SRC" | sed -n '/^a_service_compat() {/,/^}/p')"
-if printf '%s' "$COMPAT_FN" | grep -q 'SDK_COMPAT=1' && printf '%s' "$COMPAT_FN" | grep -q 'a_service'; then
-  ok "it is the same action as 7, in the compatible mode"
-else
-  bad "choice c is not choice 7 with the mode set" "a second copy of the deploy path would drift from the first"
-fi
-if printf '%s' "$COMPAT_FN" | grep -q 'SDK_COMPAT=0'; then ok "and the mode is put back, so the next choice 7 is not compatible by accident"; else bad "SDK_COMPAT is left set after choice c"; fi
-if printf '%s' "$SRC" | grep -q 'sudo bash \$_bump --apply --compatible'; then ok "it runs the bump script with --compatible"; else bad "choice c does not pass --compatible"; fi
-# the shortcut that skips the bump when "nothing is newer" must not run in this mode: with the newest sdk held
-# back for a reason, something is ALWAYS newer, and the bump script is the one that knows why
-if printf '%s' "$SRC" | grep -q 'SDK_COMPAT:-0}" != 1 \] && report_behind'; then ok "the 'already newest' shortcut is not taken in the compatible mode"; else bad "report_behind decides in the compatible mode" "it would say 'behind' for ever"; fi
-if printf '%s' "$SRC" | grep -q 'choice c takes the newest set that does'; then ok "choice 7 says what to do when the newest versions do not fit"; else bad "choice 7's refusal does not point at choice c"; fi
+# CHOICE 7 TAKES THE NEWEST SET THAT FITS, and there is no second choice for it. It used to take the newest of every
+# package and the peer audit rightly refused when one package had moved to a new major before the ones that depend
+# on it (2026-11-20, and again with xl1-sdk 5.10.0); a separate choice c took what fitted, and two choices that
+# read alike were confusing (the operator asked whether c replaced 7), so they were merged.
+if printf '%s' "$SRC" | grep -q '^c|'; then bad "there is still a choice c" "it was merged into 7"; else ok "there is one SDK update choice, not two"; fi
+if printf '%s' "$SRC" | grep -qE 'a_service_compat|SDK_COMPAT'; then bad "the two-mode wiring is still there" "a mode flag nothing sets"; else ok "no mode flag is left over"; fi
+if printf '%s' "$SRC" | grep -q 'sudo bash \$_bump --apply --compatible'; then ok "choice 7 runs the bump script with --compatible"; else bad "choice 7 does not pass --compatible"; fi
+if printf '%s' "$SRC" | grep -qE 'sudo bash \$_bump --apply( |")' && ! printf '%s' "$SRC" | grep -q 'sudo bash \$_bump --apply --compatible'; then bad "choice 7 takes the newest of each again"; else ok "and never the all-or-nothing form"; fi
+if printf '%s' "$SRC" | grep -q 'already on the newest versions that fit together; nothing to move'; then ok "unchanged pins are a good answer, and still deploy"; else bad "unchanged pins are reported as a failure"; fi
+if printf '%s' "$SRC" | grep -qE 'report_behind'; then bad "report_behind is still there" "with the newest sdk held back for a reason it would say behind for ever"; else ok "nothing asks whether anything is newer than the pins before the bump"; fi
 
 # HELD IS NOT BEHIND. After choice c the pins are deliberately a major below the newest @xyo-network/sdk, and a
 # note on choice 7 that kept saying "9.0.0 available" read as an update that had not happened (2026-11-21, with the
@@ -1126,8 +1083,8 @@ else
   bad "an unparsed range could hide a real update as 'held'"
 fi
 NOTE7="$(printf '%s' "$SRC" | sed -n '/# 7 -- THE XYO STACK/,/# 8 -- THE HEARTBEAT AGENT/p')"
-if printf '%s' "$NOTE7" | grep -q 'peer_block' && printf '%s' "$NOTE7" | grep -q 'choice c takes what does'; then
-  ok "choice 7 says held, and points at choice c, instead of listing the packages as behind"
+if printf '%s' "$NOTE7" | grep -q 'peer_block' && printf '%s' "$NOTE7" | grep -q '7 takes what does'; then
+  ok "choice 7 says held, and that 7 takes what fits, instead of listing the packages as behind"
 else
   bad "choice 7's note still calls a held release 'behind'"
 fi

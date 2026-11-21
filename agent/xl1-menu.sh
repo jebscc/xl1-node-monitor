@@ -841,31 +841,6 @@ report_running() {
   fi
 }
 
-report_behind() {
-  [ -f "$SERVICE_DIR/package.json" ] || return 0
-  command -v curl >/dev/null 2>&1 || { note "no curl, so npm was not asked"; return 0; }
-  # CAPTURED, NOT WRITTEN TO A TEMP FILE. The loop runs in a subshell because
-  # it is on the right of a pipe, so anything it sets is lost -- the first
-  # version carried the answer out through /tmp and needed an `rm` afterwards,
-  # which is a command running outside do_cmd. The test that forbids that
-  # caught it, and the fix is to need neither.
-  _behind="$(xyo_stack | while read -r _name _have; do
-    [ -n "$_name" ] || continue
-    _new="$(xyo_latest "$_name")"
-    [ -n "$_new" ] || continue
-    [ "$_new" = "$_have" ] && continue
-    printf '   %s %s -> %s available
-' "$_name" "$_have" "$_new"
-  done)"
-  if [ -n "$_behind" ]; then
-    warn "newer releases are published than this checkout pins:"
-    printf '%s%s%s\n' "$Y" "$_behind" "$X"
-    return 1
-  fi
-  ok "every pinned package is the newest published"
-  return 0
-}
-
 # WHERE THE BUMP SCRIPT IS. It ships inside the service in the published tree
 # and beside it in the private one, so both are looked at rather than one
 # being assumed -- the node has the published layout.
@@ -876,23 +851,17 @@ find_bump() {
   done
 }
 
-# THE COMPATIBLE VERSION OF CHOICE 7 (choice c). Choice 7 takes the newest published version of every
-# package and then proves them; when the stack's packages have not all moved to a new major together
-# (2026-11-20: @xyo-network/sdk 9 out while xl1-sdk and xl1-protocol still ask for sdk 7 or 8) the peer
-# audit refuses, correctly, and the operator is left with nothing. This takes the newest set that FITS
-# TOGETHER instead, never lowering anything below what is pinned, and the same gates prove that.
-a_service_compat() {
-  SDK_COMPAT=1
-  a_service
-  _rc=$?
-  SDK_COMPAT=0
-  return $_rc
-}
-
+# CHOICE 7 TAKES THE NEWEST SET OF VERSIONS THAT FIT TOGETHER, not the newest of each. It used to take the
+# newest published version of every package and then prove them; when the stack's packages had not all moved
+# to a new major together (2026-11-20, and again with xl1-sdk 5.10.0: @xyo-network/sdk 9 out while xl1-sdk and
+# xl1-protocol still asked for sdk 7 or 8) the peer audit refused, correctly, and left the operator with
+# nothing. There was briefly a second choice (c) for the fitting set; two choices that read alike were one
+# too many, so this is it. A package is held back only where another needs it older, nothing goes below
+# what is pinned, and the bump script says why for each. The strict all-or-nothing form is still there on the
+# command line: bump-xyo-stack.sh --apply, with no --compatible.
 a_service() {
-  if [ "${SDK_COMPAT:-0}" = 1 ]; then say "${B}Update the XYO SDK -- the newest versions that fit together${X}"
-  else say "${B}Update the XYO SDK${X}"; fi
-  # THIS TAKES THE NEWEST PUBLISHED VERSIONS AND PROVES THEM. The pins are
+  say "${B}Update the XYO SDK -- the newest versions that fit together${X}"
+  # THIS TAKES THE NEWEST VERSIONS THAT FIT AND PROVES THEM. The pins are
   # exact versions in package.json, so moving them is a change to that file;
   # the bump script asks npm what is newest, writes it, resolves the lockfile
   # and runs every gate in the tree, putting the files back if any fails.
@@ -910,66 +879,30 @@ a_service() {
     err "no checkout of the anchor service here, so nothing to update."
     return 1
   fi
-  if [ "${SDK_COMPAT:-0}" = 1 ]; then
-    confirm_action "Moves the SDK pins to the newest versions that fit together (a package is held back where another needs it older, and nothing goes below what is pinned), runs every gate, and REBUILDS the anchor service onto them." || return 1
-  else
-    confirm_action "Moves the SDK pins to the newest published versions, runs every gate, and REBUILDS the anchor service onto them." || return 1
-  fi
+  confirm_action "Moves the SDK pins to the newest versions that fit together (a package is held back where another needs it older, and nothing goes below what is pinned), runs every gate, and REBUILDS the anchor service onto them." || return 1
   _before="$(xyo_stack)"
   note "pinned in this checkout now:"
   printf '%s%s%s\n' "$D" "$_before" "$X"
   [ "$REPO_IS_CLONE" = 1 ] && do_cmd "cd $REPO && git pull --ff-only"
 
-  # THIS BRANCH USED TO STOP HERE: pins already at the newest published
-  # version, nothing for bump-xyo-stack.sh to do, so it printed deploy_line's
-  # manual command and returned -- the one path through this function that
-  # did not keep the comment two screens up ("AND THEN IT DEPLOYS"). A
-  # checkout that pulled ahead of a container nobody had rebuilt yet is
-  # exactly the state that comment describes, and the operator already gave
-  # consent for it in the confirm_action at the top of this function, which
-  # covers both the pins moving and the rebuild regardless of which path gets
-  # there. deploy_now is the same call the normal path makes two lines below
-  # this one, after an actual bump -- not a second, different deploy.
-  # (Not in the compatible mode: report_behind asks whether anything is newer than the pins, and with
-  # the newest sdk held back for a good reason the answer is always yes. The bump script decides there.)
-  if [ "${SDK_COMPAT:-0}" != 1 ] && report_behind; then
-    report_running
-    deploy_now || return 1
-    return 0
-  fi
-
   _bump="$(find_bump)"
   if [ -z "$_bump" ]; then
-    err "there are newer releases and no bump-xyo-stack.sh in this checkout"
-    err "to take them with. The wizard (choice 4) re-fetches main, which"
+    err "no bump-xyo-stack.sh in this checkout"
+    err "to update with. The wizard (choice 4) re-fetches main, which"
     err "brings it."
     return 1
   fi
   # IT BORROWS NODE FROM THE SERVICE'S OWN IMAGE, so this host needs no
   # toolchain -- which is the point, the Pi has neither node nor pnpm.
-  if [ "${SDK_COMPAT:-0}" = 1 ]; then
-    do_cmd "sudo bash $_bump --apply --compatible" || return 1
-  else
-    do_cmd "sudo bash $_bump --apply" || {
-      # THE REFUSAL TO EXPECT: the newest of everything cannot be satisfied when one package has moved
-      # to a new major before the packages that depend on it. Say what to do rather than leave a failure.
-      warn "if the peer audit above failed, the newest versions do not fit together yet."
-      warn "choice c takes the newest set that does."
-      return 1
-    }
-  fi
+  do_cmd "sudo bash $_bump --apply --compatible" || return 1
 
   _after="$(xyo_stack)"
-  if [ "$_before" = "$_after" ] && [ "${SDK_COMPAT:-0}" = 1 ]; then
+  if [ "$_before" = "$_after" ]; then
+    # nothing to move is a good answer, and the container may still be older than the checkout, so it deploys
     ok "already on the newest versions that fit together; nothing to move"
     report_running
     deploy_now
     return $?
-  fi
-  if [ "$_before" = "$_after" ]; then
-    err "the pins did not move. The bump puts the files back when a gate"
-    err "fails, so this checkout is as it was -- read the gate above."
-    return 1
   fi
   ok "the XYO SDK moved:"
   printf '%s\n' "$_after" | comm -13 <(printf '%s\n' "$_before") - \
@@ -1510,7 +1443,7 @@ scan_updates() { # -> key|text lines, one per choice that has something waiting
   elif [ "$_n" -gt 1 ]; then
     printf '7|%s, and %d more package(s)\n' "$_first" "$((_n - 1))"
   elif [ "$_held" -gt 0 ]; then
-    printf '7|newest SDK does not fit yet (%s); choice c takes what does\n' "$_hfirst"
+    printf '7|newest SDK does not fit yet (%s); 7 takes what does\n' "$_hfirst"
   fi
 
   # 8 -- THE HEARTBEAT AGENT. Both file reads: the one that is RUNNING and the
@@ -1578,8 +1511,7 @@ ITEMS="
 4|Run the wizard (bootstrap-pi.sh)|a_wizard
 5|Update the node CLI (build, promote, restart)|a_build_image
 6|Promote an image and restart onto it|a_promote
-7|Update the XYO SDK (and deploy it)|a_service
-c|Update the XYO SDK, versions that fit together (deploy)|a_service_compat
+7|Update the XYO SDK, newest that fits (deploy)|a_service
 8|Update the heartbeat agent|a_agent
 9|Logs|a_logs
 i|Update the node image recipe (xl1-docker-images)|a_recipe

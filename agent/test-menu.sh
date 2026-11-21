@@ -1110,6 +1110,53 @@ if printf '%s' "$SRC" | grep -q 'sudo bash \$_bump --apply --compatible'; then o
 if printf '%s' "$SRC" | grep -q 'SDK_COMPAT:-0}" != 1 \] && report_behind'; then ok "the 'already newest' shortcut is not taken in the compatible mode"; else bad "report_behind decides in the compatible mode" "it would say 'behind' for ever"; fi
 if printf '%s' "$SRC" | grep -q 'choice c takes the newest set that does'; then ok "choice 7 says what to do when the newest versions do not fit"; else bad "choice 7's refusal does not point at choice c"; fi
 
+# HELD IS NOT BEHIND. After choice c the pins are deliberately a major below the newest @xyo-network/sdk, and a
+# note on choice 7 that kept saying "9.0.0 available" read as an update that had not happened (2026-11-21, with the
+# anchor already running the new set). A release is "held" when a package pinned NOW asks for the package in a range
+# that leaves out its major; that is read from the registry, and it is said as held, not as behind.
+PB="$(printf '%s' "$SRC" | sed -n '/^peer_block() {/,/^}/p')"
+if [ -n "$PB" ] && printf '%s' "$PB" | grep -q 'peerDependencies' && printf '%s' "$PB" | grep -q 'registry.npmjs.org'; then
+  ok "a held release is worked out from the registry's own peer requirements"
+else
+  bad "there is no reading of why a newer release is not taken"
+fi
+if printf '%s' "$PB" | grep -q 'case "\$_pb_range" in'; then
+  ok "a range it does not understand is never counted as a block"
+else
+  bad "an unparsed range could hide a real update as 'held'"
+fi
+NOTE7="$(printf '%s' "$SRC" | sed -n '/# 7 -- THE XYO STACK/,/# 8 -- THE HEARTBEAT AGENT/p')"
+if printf '%s' "$NOTE7" | grep -q 'peer_block' && printf '%s' "$NOTE7" | grep -q 'choice c takes what does'; then
+  ok "choice 7 says held, and points at choice c, instead of listing the packages as behind"
+else
+  bad "choice 7's note still calls a held release 'behind'"
+fi
+# only the packages that are NOT held count towards "behind": the held ones are skipped before the counter moves
+if printf '%s' "$NOTE7" | tr '\n' ' ' | grep -q '_held=\$((_held + 1)).*continue.*_n=\$((_n + 1))'; then
+  ok "a held package is not counted as behind"
+else
+  bad "a held package would still be counted as behind"
+fi
+# the function itself, with a fake registry (no network): the Pi's real case
+FAKEBIN="$(mktemp -d)"
+cat > "$FAKEBIN/curl" <<'CURLEOF'
+#!/bin/sh
+case "$*" in
+  *xl1-sdk/5.10.0*)      echo '{"name":"@xyo-network/xl1-sdk","peerDependencies":{"zod":"^4.6","@xyo-network/sdk":"^7.4 || ^8.0","@ariestools/sdk":"^8.3 || ^9.0"}}' ;;
+  *xl1-protocol/5.10.0*) echo '{"peerDependencies":{"@xyo-network/sdk":"^7.4 || ^8.0"}}' ;;
+  *)                     echo '{"peerDependencies":{}}' ;;
+esac
+CURLEOF
+chmod +x "$FAKEBIN/curl"
+xyo_stack() { printf '  @xyo-network/xl1-protocol 5.10.0\n  @xyo-network/xl1-sdk 5.10.0\n'; }
+eval "$PB"
+HELD="$(PATH="$FAKEBIN:$PATH" peer_block "@xyo-network/sdk" "9.0.0")"
+FREE="$(PATH="$FAKEBIN:$PATH" peer_block "@xyo-network/sdk" "8.2.0")"
+rm -rf "$FAKEBIN"
+if [ -n "$HELD" ] && printf '%s' "$HELD" | grep -q 'asks for @xyo-network/sdk'; then ok "sdk 9 is held by an xl1 package that asks for 7 or 8"; else bad "sdk 9 is not reported as held" "$HELD"; fi
+if [ -z "$FREE" ]; then ok "and sdk 8 is not held by it"; else bad "a release the ranges admit is reported as held" "$FREE"; fi
+unset -f xyo_stack peer_block
+
 # --- the build must not bury the thing it was asked about --------------------
 #
 # buildkit redraws its progress in place on a terminal and APPENDS when it

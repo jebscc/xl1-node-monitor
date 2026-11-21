@@ -9,11 +9,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {
-    "@ariestools/sdk": "9.0.1",
-    "@xyo-network/sdk": "8.1.0",
-    "@xyo-network/sdk-protocol": "8.0.3",
-    "@xyo-network/xl1-protocol": "5.8.7",
-    "@xyo-network/xl1-sdk": "5.8.7",
+    "@ariestools/sdk": "9.0.3",
+    "@xyo-network/sdk": "8.1.2",
+    "@xyo-network/sdk-protocol": "8.0.4",
+    "@xyo-network/xl1-protocol": "5.10.0",
+    "@xyo-network/xl1-sdk": "5.10.0",
     "ajv": "8.20.0",
     "dotenv": "^17.2.3",
     "express": "4.21.2",

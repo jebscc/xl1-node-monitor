@@ -769,6 +769,31 @@ xyo_latest() { # xyo_latest <package> -> version, or nothing
     | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' | head -1
 }
 
+# WHY A NEWER RELEASE IS NOT TAKEN: whether one of the stack's own packages, AT THE VERSION PINNED NOW,
+# asks for [pkg] in a range that leaves out the newest release's major. Prints "<holder> asks for <pkg>
+# <range>" for the first that does, nothing otherwise. The newest @xyo-network/sdk is 9 while xl1-sdk
+# and xl1-protocol 5.10.0 still ask for 7 or 8: that is not "behind", it is held, deliberately, by choice
+# c (and by the peer audit under choice 7), and a note that keeps saying "9.0.0 available" for weeks
+# reads as an update that did not happen. Read from the registry's own peerDependencies; a range this
+# does not understand (a comparison, a wildcard) is never counted as a block.
+peer_block() { # peer_block <pkg> <newest version>
+  _pb_major="${2%%.*}"
+  _pb_key="$(printf '%s' "$1" | sed 's|/|\\/|g')"
+  xyo_stack | while read -r _hn _hv; do
+    [ -n "$_hn" ] || continue
+    _pb_json="$(curl -fsSL --max-time 20 "https://registry.npmjs.org/$_hn/$_hv" 2>/dev/null | tr -d '\n')"
+    _pb_peers="$(printf '%s' "$_pb_json" | sed -n 's/.*"peerDependencies" *: *{\([^}]*\)}.*/\1/p')"
+    _pb_range="$(printf '%s' "$_pb_peers" | sed -n 's/.*"'"$_pb_key"'" *: *"\([^"]*\)".*/\1/p')"
+    [ -n "$_pb_range" ] || continue
+    case "$_pb_range" in *">"*|*"<"*|*"*"*|*x*|*X*) continue ;; esac
+    _pb_majors="$(printf '%s' "$_pb_range" | tr '|' '\n' | sed -n 's/^[^0-9]*\([0-9][0-9]*\).*/\1/p')"
+    [ -n "$_pb_majors" ] || continue
+    printf '%s\n' "$_pb_majors" | grep -qx "$_pb_major" && continue
+    printf '%s asks for %s %s\n' "$_hn" "$1" "$_pb_range"
+    break
+  done
+}
+
 # WHAT THE CONTAINER IS ACTUALLY RUNNING, which is a third reading and the
 # one that was missing. The checkout can pin 5.6.1 while the running image was
 # built from 5.6.0, and then "every pinned package is the newest published" is
@@ -1461,6 +1486,8 @@ scan_updates() { # -> key|text lines, one per choice that has something waiting
   # merely counted, because "3 behind" does not say whether it matters.
   _first=""
   _n=0
+  _held=0
+  _hfirst=""
   for _pair in $(xyo_stack | sed -n 's/^  \(.*\) \(.*\)$/\1=\2/p'); do
     _pname="${_pair%%=*}"
     _phave="${_pair#*=}"
@@ -1468,6 +1495,13 @@ scan_updates() { # -> key|text lines, one per choice that has something waiting
     [ -n "$_pnew" ] || continue
     _reached=1
     [ "$_pnew" = "$_phave" ] && continue
+    # HELD, NOT BEHIND: a newer release the packages already pinned cannot yet work with
+    _why="$(peer_block "$_pname" "$_pnew")"
+    if [ -n "$_why" ]; then
+      _held=$((_held + 1))
+      [ -z "$_hfirst" ] && _hfirst="$_why"
+      continue
+    fi
     _n=$((_n + 1))
     [ -z "$_first" ] && _first="$_pname $_phave -> $_pnew"
   done
@@ -1475,6 +1509,8 @@ scan_updates() { # -> key|text lines, one per choice that has something waiting
     printf '7|%s\n' "$_first"
   elif [ "$_n" -gt 1 ]; then
     printf '7|%s, and %d more package(s)\n' "$_first" "$((_n - 1))"
+  elif [ "$_held" -gt 0 ]; then
+    printf '7|newest SDK does not fit yet (%s); choice c takes what does\n' "$_hfirst"
   fi
 
   # 8 -- THE HEARTBEAT AGENT. Both file reads: the one that is RUNNING and the
